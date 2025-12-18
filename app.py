@@ -13,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# CSS PERSONALIZADO (Mantendo o estilo "fofo" aprovado)
+# CSS PERSONALIZADO
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700&display=swap');
@@ -21,82 +21,49 @@ st.markdown("""
     html, body, [class*="css"] {
         font-family: 'Quicksand', sans-serif;
     }
-
-    /* Fundo Geral - Cinza Suave */
-    .stApp {
-        background-color: #F7F7F7;
-    }
-
-    /* Títulos em Laranja Nascel */
-    h1, h2, h3, h4 {
-        color: #FF6F00 !important;
-        font-weight: 700;
-    }
-
-    /* Cards de Upload (O Meio da Tela) */
+    .stApp { background-color: #F7F7F7; }
+    h1, h2, h3, h4 { color: #FF6F00 !important; font-weight: 700; }
     div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
-        background-color: white;
-        padding: 20px;
-        border-radius: 20px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+        background-color: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
     }
-
-    /* File Uploader "Fofo" */
-    .stFileUploader {
-        padding: 10px;
-        border: 2px dashed #FFCC80;
-        border-radius: 15px;
-        text-align: center;
-    }
-
-    /* Botões - Laranjas e Redondinhos */
-    .stButton>button {
-        background-color: #FF6F00;
-        color: white;
-        border-radius: 25px;
-        border: none;
-        font-weight: bold;
-        padding: 10px 30px;
-        width: 100%;
-    }
-    .stButton>button:hover {
-        background-color: #E65100;
-    }
-    
-    /* Métricas */
-    div[data-testid="metric-container"] {
-        border-left: 5px solid #FF6F00;
-        background-color: #FFF3E0;
-        border-radius: 10px;
-    }
+    .stFileUploader { padding: 10px; border: 2px dashed #FFCC80; border-radius: 15px; text-align: center; }
+    .stButton>button { background-color: #FF6F00; color: white; border-radius: 25px; border: none; font-weight: bold; padding: 10px 30px; width: 100%; }
+    .stButton>button:hover { background-color: #E65100; }
+    div[data-testid="metric-container"] { border-left: 5px solid #FF6F00; background-color: #FFF3E0; border-radius: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. SIDEBAR (AJUSTE: Logo Direto) ---
+# --- 2. SIDEBAR (CORRIGIDO O CAMINHO DA IMAGEM) ---
 with st.sidebar:
-    # Aqui chamamos o logo diretamente. 
-    # Certifique-se que o arquivo 'logo_nascel.png' está na raiz do seu GitHub.
-    st.image("logo_nascel.png", use_column_width=True)
+    # AJUSTE CRÍTICO: Caminho atualizado conforme sua pasta .streamlit
+    caminho_logo = ".streamlit/nascel sem fundo.png"
+    
+    if os.path.exists(caminho_logo):
+        st.image(caminho_logo, use_column_width=True)
+    else:
+        # Tenta na raiz caso você mova o arquivo depois
+        if os.path.exists("nascel sem fundo.png"):
+            st.image("nascel sem fundo.png", use_column_width=True)
+        else:
+            st.markdown("<h1 style='color:#FF6F00; text-align:center;'>Nascel</h1>", unsafe_allow_html=True)
     
     st.markdown("---")
     st.info("💡 **Dica:** Carregue os arquivos nas caixas ao centro para iniciar.")
 
-# --- 3. ÁREA PRINCIPAL (Imagem Sentinela) ---
+# --- 3. ÁREA PRINCIPAL ---
 
-# Tenta carregar a imagem banner, se não tiver, usa um título texto como fallback
+# Verifica se existe o banner, senão usa texto
 if os.path.exists("sentinela_banner.png"):
-    # Centralizando a imagem
     col_spacer1, col_img, col_spacer2 = st.columns([1, 4, 1])
     with col_img:
         st.image("sentinela_banner.png", use_column_width=True)
 else:
-    # Fallback se a imagem não estiver na pasta
     st.markdown("<h1 style='text-align: center; color: #FF6F00; font-size: 3em;'>SENTINELA</h1>", unsafe_allow_html=True)
     st.markdown("<h3 style='text-align: center; color: #666;'>Sistema de Auditoria Fiscal</h3>", unsafe_allow_html=True)
 
-st.markdown("<br>", unsafe_allow_html=True) # Espaço
+st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ÁREA DE UPLOAD (OS 6 BOTÕES NO MEIO) ---
+# --- ÁREA DE UPLOAD ---
 col_ent, col_sai = st.columns(2, gap="large")
 
 with col_ent:
@@ -113,21 +80,40 @@ with col_sai:
     up_sai_aut = st.file_uploader("🔍 Relatório Autenticidade (Sefaz)", type=['xlsx', 'csv'], key="sai_aut")
     up_sai_ger = st.file_uploader("⚙️ Regras Gerenciais (Opcional)", type=['xlsx'], key="sai_ger")
 
-# --- 4. LÓGICA DO SISTEMA (CÓDIGO ORIGINAL PERFEITO) ---
+# --- 4. LÓGICA DO SISTEMA (BASES CORRIGIDAS) ---
 
-# Carregar Bases TIPI/PIS (Invisível)
 @st.cache_data
 def carregar_bases():
     bases = {"TIPI": {}, "PC": {}}
-    if os.path.exists("TIPI.xlsx"):
-        try:
-            d = pd.read_excel("TIPI.xlsx", dtype=str)
-            bases["TIPI"] = dict(zip(d.iloc[:,0].str.replace(r'\D','',regex=True), d.iloc[:,1].str.replace(',','.')))
-        except: pass
+    
+    # AJUSTE CRÍTICO: Caminhos atualizados para buscar dentro da pasta .streamlit
+    # Lista de locais possíveis para o TIPI
+    locais_tipi = [".streamlit/tipi.xlsx", "tipi.xlsx"]
+    for local in locais_tipi:
+        if os.path.exists(local):
+            try:
+                d = pd.read_excel(local, dtype=str)
+                bases["TIPI"] = dict(zip(d.iloc[:,0].str.replace(r'\D','',regex=True), d.iloc[:,1].str.replace(',','.')))
+                break
+            except: pass
+
+    # Lista de locais possíveis para o PIS/COFINS (Nome corrigido conforme seu print)
+    locais_pc = [".streamlit/CST_Pis_Cofins.xlsx", "CST_Pis_Cofins.xlsx"]
+    for local in locais_pc:
+        if os.path.exists(local):
+            try:
+                # Ajuste conforme estrutura do seu arquivo CST_Pis_Cofins
+                d = pd.read_excel(local, dtype=str)
+                # Assumindo NCM na col 0 e CST Saída na col 2 (ajuste se necessário)
+                if d.shape[1] >= 3:
+                    bases["PC"] = dict(zip(d.iloc[:,0].str.replace(r'\D','',regex=True), d.iloc[:,2]))
+                break
+            except: pass
+            
     return bases
+
 bases = carregar_bases()
 
-# Função Extração XML
 def processar_xml(files, tipo):
     if not files: return pd.DataFrame()
     data = []
@@ -150,7 +136,6 @@ def processar_xml(files, tipo):
                 prod = det.find('prod')
                 imp = det.find('imposto')
                 
-                # Helper valor
                 def v(n, t, fl=False):
                     if n is None: return 0.0 if fl else ""
                     x = n.find(t)
@@ -167,14 +152,12 @@ def processar_xml(files, tipo):
                 }
                 
                 if imp:
-                    # ICMS
                     icms = imp.find('ICMS')
                     if icms:
                         for c in icms:
                             if c.find('CST') is not None: row['CST_ICMS'] = c.find('CST').text
                             elif c.find('CSOSN') is not None: row['CST_ICMS'] = c.find('CSOSN').text
                             if c.find('pICMS') is not None: row['Aliq_ICMS'] = float(c.find('pICMS').text)
-                    # IPI
                     ipi = imp.find('IPI')
                     if ipi:
                         for c in ipi:
@@ -184,7 +167,6 @@ def processar_xml(files, tipo):
         except: pass
     return pd.DataFrame(data)
 
-# Função Autenticidade
 def cruzar_status(df, file):
     if df.empty: return df
     if not file: 
@@ -199,9 +181,8 @@ def cruzar_status(df, file):
         df['Status_Sefaz'] = "Erro Arquivo Status"
     return df
 
-# Função Auditoria TIPI
 def auditar_ipi(df):
-    if df.empty or not bases["TIPI"]: return df
+    if df.empty or not bases.get("TIPI"): return df
     def check(row):
         esp = bases["TIPI"].get(str(row['NCM']))
         if not esp: return "NCM Off"
@@ -213,7 +194,6 @@ def auditar_ipi(df):
 
 # --- 5. EXIBIÇÃO DOS RESULTADOS ---
 
-# Processamento
 df_e = cruzar_status(processar_xml(up_ent_xml, "Entrada"), up_ent_aut)
 df_s = auditar_ipi(cruzar_status(processar_xml(up_sai_xml, "Saída"), up_sai_aut))
 
@@ -232,7 +212,6 @@ else:
         
         err_e = len(df_e[~df_e['Status_Sefaz'].str.contains('Autoriz|OK|Não Verif', na=False, case=False)]) if not df_e.empty else 0
         err_s = len(df_s[~df_s['Status_Sefaz'].str.contains('Autoriz|OK|Não Verif', na=False, case=False)]) if not df_s.empty else 0
-        
         c2.metric("Alertas Sefaz", err_e + err_s)
         
         div_ipi = len(df_s[df_s['Auditoria_IPI'].str.contains('Div', na=False)]) if not df_s.empty and 'Auditoria_IPI' in df_s.columns else 0
@@ -240,11 +219,9 @@ else:
 
     with tab2:
         if not df_e.empty: st.dataframe(df_e, use_container_width=True)
-    
     with tab3:
         if not df_s.empty: st.dataframe(df_s, use_container_width=True)
         
-    # Botão Download Gigante e Laranja
     st.markdown("<br>", unsafe_allow_html=True)
     col_dl, _ = st.columns([1,2])
     with col_dl:
