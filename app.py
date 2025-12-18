@@ -9,7 +9,7 @@ import os
 st.set_page_config(page_title="Sentinela Fiscal Pro", layout="wide")
 st.title("🛡️ Sentinela: Auditoria Fiscal (ICMS & IPI)")
 
-# --- 1. CARREGAR BASES MESTRE + TIPI (COM RASTREAMENTO INTELIGENTE) ---
+# --- 1. CARREGAR BASES MESTRE + TIPI (COM RADAR DE NCM) ---
 @st.cache_data
 def carregar_bases_mestre():
     # A. Planilha do Cliente (Regras Internas)
@@ -23,48 +23,49 @@ def carregar_bases_mestre():
     else:
         return None, None, None, None
 
-    # B. TIPI Oficial (Modo Rastreamento Automático)
+    # B. TIPI Oficial (Lógica de Radar)
     caminho_tipi = "TIPI.xlsx"
     df_tipi = pd.DataFrame()
     
     if os.path.exists(caminho_tipi):
         try:
-            # 1. Lê o arquivo bruto sem cabeçalho
+            # Lê o arquivo inteiro como texto, sem cabeçalho
             df_raw = pd.read_excel(caminho_tipi, header=None, dtype=str)
             
-            # 2. Rastreamento: Procura qual coluna tem cara de NCM
-            col_ncm_idx = -1
+            # --- O RADAR ---
+            col_ncm = -1
+            max_matches = 0
             
-            # Percorre as primeiras 10 colunas para achar o NCM
-            for i in range(min(10, len(df_raw.columns))):
-                # Conta quantos valores batem com o padrão NCM (xxxx.xx.xx)
-                matches = df_raw.iloc[:, i].astype(str).str.count(r'^\d{4}\.\d{2}\.\d{2}').sum()
-                # Se tiver mais de 50 linhas com esse padrão, achamos a coluna certa!
-                if matches > 50:
-                    col_ncm_idx = i
-                    break
-            
-            if col_ncm_idx != -1:
-                # Se achou o NCM, filtra as linhas que são NCM
-                mask = df_raw.iloc[:, col_ncm_idx].astype(str).str.contains(r'^\d{4}\.\d{2}\.\d{2}', regex=True, na=False)
-                df_temp = df_raw[mask].copy()
+            # Varre todas as colunas para ver qual tem mais NCMs
+            for col_idx in range(len(df_raw.columns)):
+                # Conta quantas células parecem NCM (4dig.2dig.2dig)
+                col_data = df_raw.iloc[:, col_idx].astype(str)
+                matches = col_data.str.count(r'\d{4}\.\d{2}\.\d{2}').sum()
                 
-                # Assume que a Alíquota é a próxima coluna não vazia à direita
-                # Geralmente é índice + 1 ou + 2
-                col_aliq_idx = col_ncm_idx + 1
+                if matches > max_matches:
+                    max_matches = matches
+                    col_ncm = col_idx
+
+            # Se achou uma coluna com mais de 10 NCMs, bingo!
+            if col_ncm != -1 and max_matches > 10:
+                # Filtra apenas as linhas que têm NCM nessa coluna
+                mask = df_raw.iloc[:, col_ncm].astype(str).str.contains(r'\d{4}\.\d{2}\.\d{2}', na=False)
+                df_tipi = df_raw[mask].copy()
                 
-                # Seleciona as duas colunas
-                df_tipi = df_temp.iloc[:, [col_ncm_idx, col_aliq_idx]]
+                # Assume: Coluna encontrada = NCM, Coluna seguinte = Alíquota
+                # Se a alíquota estiver muito longe, ajustar o +1 para +2
+                df_tipi = df_tipi.iloc[:, [col_ncm, col_ncm + 1]]
                 df_tipi.columns = ['NCM', 'ALIQ']
                 
                 # Limpeza Final
                 df_tipi['NCM'] = df_tipi['NCM'].str.replace('.', '', regex=False).str.strip()
                 df_tipi['ALIQ'] = df_tipi['ALIQ'].str.upper().replace('NT', '0').str.strip().str.replace(',', '.')
+                
             else:
-                print("Não foi possível localizar a coluna de NCM automaticamente.")
+                st.warning("⚠️ O Radar não encontrou padrões de NCM no arquivo TIPI.xlsx.")
                 
         except Exception as e:
-            print(f"Erro ao processar TIPI: {e}")
+            st.error(f"Erro crítico ao ler TIPI: {e}")
             df_tipi = pd.DataFrame()
 
     return df_gerencial, df_tribut, df_inter, df_tipi
