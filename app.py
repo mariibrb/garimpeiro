@@ -7,7 +7,7 @@ import os
 # --- 1. CONFIGURAÇÃO ---
 st.set_page_config(page_title="Sentinela - Nascel", page_icon="🛡️", layout="wide")
 
-# --- 2. ESTILO VISUAL (CSS) ---
+# --- 2. CSS PERSONALIZADO ---
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
@@ -20,32 +20,28 @@ st.markdown("""
     .feature-card {
         background-color: white; padding: 20px; border-radius: 10px;
         border: 1px solid #E0E0E0; text-align: center; height: 100%;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05); transition: all 0.3s ease;
     }
+    .feature-card:hover { transform: translateY(-3px); border-color: #FF8C00; }
     .card-icon { font-size: 2rem; display: block; margin-bottom: 10px; }
     
-    /* Destaque para área de Autenticidade */
-    .auth-area {
-        background-color: #f8f9fa; border: 1px solid #dee2e6;
-        border-radius: 10px; padding: 20px; margin-top: 10px;
-    }
-    
     /* Botões */
-    .stButton button { width: 100%; border-radius: 8px; font-weight: 600; }
-    .stButton button[type="primary"] { background-color: #FF8C00; border-color: #FF8C00; }
+    .stButton button { width: 100%; border-radius: 8px; font-weight: 600; margin-top: 10px; }
     
+    /* Uploaders */
     [data-testid='stFileUploader'] section { background-color: #FFF8F0; border: 1px dashed #FF8C00; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. FUNÇÕES (SIMPLIFICADAS PARA O EXEMPLO) ---
+# --- 3. FUNÇÕES (Lógica básica) ---
 def extrair_xml(arquivos):
     lista = []
     for arq in arquivos:
         try:
             arq.seek(0)
             xml_str = arq.read().decode('utf-8', errors='ignore')
-            root = ET.fromstring(re.sub(r' xmlns="[^"]+"', '', xml_str))
+            xml_str = re.sub(r' xmlns="[^"]+"', '', xml_str) # Remove namespaces
+            root = ET.fromstring(xml_str)
             
             inf = root.find('.//infNFe')
             ide = root.find('.//ide')
@@ -57,13 +53,13 @@ def extrair_xml(arquivos):
         except: pass
     return pd.DataFrame(lista)
 
-def ler_status_sefaz(arquivo):
+def ler_status(arquivo):
     if not arquivo: return {}
     try:
         if arquivo.name.endswith('.xlsx'): df = pd.read_excel(arquivo, dtype=str)
         else: df = pd.read_csv(arquivo, dtype=str)
-        # Ajuste as colunas conforme seu arquivo real da Sefaz (ex: Coluna 0 é chave, Coluna 5 é status)
-        return dict(zip(df.iloc[:, 0], df.iloc[:, 5]))
+        # Ajuste as colunas conforme seu arquivo da Sefaz (ex: col 0 = chave, col 5 = status)
+        return dict(zip(df.iloc[:, 0].str.replace(r'\D', '', regex=True), df.iloc[:, 5]))
     except: return {}
 
 # --- 4. CABEÇALHO ---
@@ -71,7 +67,8 @@ col_logo, col_text = st.columns([1, 5])
 with col_logo:
     path = "nascel sem fundo.png" if os.path.exists("nascel sem fundo.png") else ".streamlit/nascel sem fundo.png"
     if os.path.exists(path): st.image(path, width=150)
-    else: st.write("LOGO")
+    else: st.markdown("### NASCEL")
+
 with col_text:
     st.markdown('<div class="main-title">Sentinela Fiscal</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-title">Central de Auditoria e Compliance</div>', unsafe_allow_html=True)
@@ -79,93 +76,92 @@ with col_text:
 st.divider()
 
 # =========================================================
-# SEÇÃO 1: UPLOAD DOS XMLS (MATÉRIA PRIMA)
+# 1. IMPORTAÇÃO DOS XMLS (MATÉRIA PRIMA)
 # =========================================================
-st.markdown("### 📂 1. Arquivos XML (Entradas e Saídas)")
+st.markdown("### 📂 1. Arquivos XML")
 c1, c2 = st.columns(2, gap="medium")
+
 with c1:
-    st.markdown('<div class="feature-card"><span class="card-icon">📥</span><b>Entradas</b></div>', unsafe_allow_html=True)
-    xml_ent = st.file_uploader("Up Entradas", type=["xml"], accept_multiple_files=True, label_visibility="collapsed", key="in")
+    st.markdown('<div class="feature-card"><span class="card-icon">📥</span><b>Entradas XML</b></div>', unsafe_allow_html=True)
+    xml_ent = st.file_uploader("Entradas XML", type=["xml"], accept_multiple_files=True, label_visibility="collapsed", key="xml_in")
+
 with c2:
-    st.markdown('<div class="feature-card"><span class="card-icon">📤</span><b>Saídas</b></div>', unsafe_allow_html=True)
-    xml_sai = st.file_uploader("Up Saidas", type=["xml"], accept_multiple_files=True, label_visibility="collapsed", key="out")
+    st.markdown('<div class="feature-card"><span class="card-icon">📤</span><b>Saídas XML</b></div>', unsafe_allow_html=True)
+    xml_sai = st.file_uploader("Saídas XML", type=["xml"], accept_multiple_files=True, label_visibility="collapsed", key="xml_out")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 # =========================================================
-# SEÇÃO 2: AUTENTICIDADE (COM OS 2 BOTÕES QUE VOCÊ PEDIU)
+# 2. AUTENTICIDADE (UPLOADS SEPARADOS + BOTÕES DE AÇÃO)
 # =========================================================
 st.markdown("### 🛡️ 2. Validação de Autenticidade")
+c3, c4 = st.columns(2, gap="medium")
 
-# Container visual cinza para agrupar essa lógica
-with st.container():
-    st.markdown('<div class="auth-area">', unsafe_allow_html=True)
+# --- LADO ESQUERDO: AUTENTICIDADE ENTRADAS ---
+with c3:
+    st.markdown('<div class="feature-card">', unsafe_allow_html=True)
+    st.markdown('<span class="card-icon">📋</span><b>Relatório Sefaz (Entradas)</b>', unsafe_allow_html=True)
     
-    # Passo A: O Arquivo de Referência (Único para os dois botões)
-    st.markdown("**Passo A: Envie o relatório de Status da Sefaz (.xlsx)**")
-    file_status = st.file_uploader("Upload Status Sefaz", type=["xlsx", "csv"], label_visibility="collapsed", key="status")
+    # 1. Upload específico para Entradas
+    file_status_ent = st.file_uploader("Relatório Entradas", type=["xlsx", "csv"], label_visibility="collapsed", key="st_in")
     
-    st.markdown("<br>", unsafe_allow_html=True)
+    # 2. Botão de Verificar Entradas
+    if st.button("🔍 Validar Entradas", type="primary"):
+        if xml_ent and file_status_ent:
+            df = extrair_xml(xml_ent)
+            status = ler_status(file_status_ent)
+            if not df.empty:
+                df['Status Sefaz'] = df['Chave'].map(status).fillna("Não encontrado")
+                st.success("Validado!")
+                st.dataframe(df, use_container_width=True, height=200)
+        else:
+            st.warning("⚠️ Preciso dos XMLs de Entrada (item 1) e do Relatório acima.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# --- LADO DIREITO: AUTENTICIDADE SAÍDAS ---
+with c4:
+    st.markdown('<div class="feature-card">', unsafe_allow_html=True)
+    st.markdown('<span class="card-icon">📋</span><b>Relatório Sefaz (Saídas)</b>', unsafe_allow_html=True)
     
-    # Passo B: Os Dois Botões de Ação
-    st.markdown("**Passo B: Escolha qual validação executar**")
+    # 1. Upload específico para Saídas
+    file_status_sai = st.file_uploader("Relatório Saídas", type=["xlsx", "csv"], label_visibility="collapsed", key="st_out")
     
-    col_btn_ent, col_btn_sai = st.columns(2, gap="large")
-    
-    # --- BOTÃO 1: AUTENTICIDADE ENTRADAS ---
-    with col_btn_ent:
-        st.info("Verifica se as notas de compra estão Autorizadas ou Canceladas.")
-        if st.button("🔍 Verificar Entradas", type="primary", use_container_width=True):
-            if not xml_ent:
-                st.error("Falta os XMLs de Entrada (Seção 1).")
-            elif not file_status:
-                st.error("Falta o arquivo de Status Sefaz (Acima).")
-            else:
-                # Lógica Entradas
-                df = extrair_xml(xml_ent)
-                status_dict = ler_status_sefaz(file_status)
-                if not df.empty:
-                    df['Status'] = df['Chave'].map(status_dict).fillna("Não Encontrado")
-                    st.success("Entradas Verificadas!")
-                    st.dataframe(df, use_container_width=True)
-    
-    # --- BOTÃO 2: AUTENTICIDADE SAÍDAS ---
-    with col_btn_sai:
-        st.info("Verifica status das vendas e procura Pulos de Numeração.")
-        if st.button("🔍 Verificar Saídas", type="primary", use_container_width=True):
-            if not xml_sai:
-                st.error("Falta os XMLs de Saída (Seção 1).")
-            elif not file_status:
-                st.error("Falta o arquivo de Status Sefaz (Acima).")
-            else:
-                # Lógica Saídas
-                df = extrair_xml(xml_sai)
-                status_dict = ler_status_sefaz(file_status)
-                if not df.empty:
-                    df['Status'] = df['Chave'].map(status_dict).fillna("Não Encontrado")
-                    st.success("Saídas Verificadas!")
-                    st.dataframe(df, use_container_width=True)
-    
+    # 2. Botão de Verificar Saídas
+    if st.button("🔍 Validar Saídas", type="primary"):
+        if xml_sai and file_status_sai:
+            df = extrair_xml(xml_sai)
+            status = ler_status(file_status_sai)
+            if not df.empty:
+                df['Status Sefaz'] = df['Chave'].map(status).fillna("Não encontrado")
+                st.success("Validado!")
+                st.dataframe(df, use_container_width=True, height=200)
+        else:
+            st.warning("⚠️ Preciso dos XMLs de Saída (item 1) e do Relatório acima.")
     st.markdown('</div>', unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 # =========================================================
-# SEÇÃO 3: RELATÓRIOS GERENCIAIS (INDEPENDENTES)
+# 3. RELATÓRIOS GERENCIAIS
 # =========================================================
-st.markdown("### 📊 3. Relatórios Gerenciais (Independente do Status)")
-c_g1, c_g2 = st.columns(2, gap="medium")
+st.markdown("### 📊 3. Relatórios Gerenciais")
+c5, c6 = st.columns(2, gap="medium")
 
-with c_g1:
-    if st.button("📈 Gerar Relatório Entradas"):
-        if xml_ent: 
-            st.toast("Gerando relatório...")
-            st.dataframe(extrair_xml(xml_ent).head()) # Exemplo
-        else: st.warning("Suba os XMLs de entrada primeiro.")
+with c5:
+    if st.button("📈 Gerar Gerencial Entradas", use_container_width=True):
+        if xml_ent:
+            st.toast("Gerando Dashboard de Entradas...")
+            # Coloque sua lógica gerencial aqui
+            st.dataframe(extrair_xml(xml_ent).head()) 
+        else:
+            st.error("Faltam os XMLs de Entrada.")
 
-with c_g2:
-    if st.button("📈 Gerar Relatório Saídas"):
-        if xml_sai: 
-            st.toast("Gerando relatório...")
-            st.dataframe(extrair_xml(xml_sai).head()) # Exemplo
-        else: st.warning("Suba os XMLs de saída primeiro.")
+with c6:
+    if st.button("📈 Gerar Gerencial Saídas", use_container_width=True):
+        if xml_sai:
+            st.toast("Gerando Dashboard de Saídas...")
+            # Coloque sua lógica gerencial aqui
+            st.dataframe(extrair_xml(xml_sai).head())
+        else:
+            st.error("Faltam os XMLs de Saída.")
