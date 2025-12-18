@@ -237,7 +237,7 @@ if (xml_saidas or xml_entradas) and rel_status:
         
         df_ipi['Análise IPI'] = df_ipi.apply(f_analise_ipi, axis=1)
 
-        # 3. PIS E COFINS (NOVA LÓGICA PELO EXCEL)
+        # 3. PIS E COFINS (NOVA LÓGICA)
         df_pc = df_s.copy()
 
         def f_analise_pis_cofins(row):
@@ -280,6 +280,7 @@ if (xml_saidas or xml_entradas) and rel_status:
         if not df_s.empty: df_s.to_excel(writer, index=False, sheet_name='Saídas')
         if not df_s.empty: df_icms.to_excel(writer, index=False, sheet_name='ICMS')
         if not df_s.empty: df_ipi.to_excel(writer, index=False, sheet_name='IPI')
+        # AQUI ESTÁ A CRIAÇÃO DA ABA QUE VOCÊ PEDIU:
         if not df_s.empty: df_pc.to_excel(writer, index=False, sheet_name='Pis_Cofins')
 
     st.success("✅ Auditoria Completa: Entradas, Saídas, ICMS, IPI e Pis_Cofins geradas!")
