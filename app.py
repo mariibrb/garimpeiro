@@ -5,9 +5,9 @@ import io
 import re
 
 st.set_page_config(page_title="Sentinela - Auditoria AP", layout="wide")
-st.title("🛡️ Sentinela: Extração + Auditoria de Status (Coluna AP)")
+st.title("🛡️ Sentinela: Extração + Auditoria AP (Posição A e F)")
 
-# --- 1. DEFINIÇÃO DAS FUNÇÕES ---
+# --- 1. FUNÇÃO DE EXTRAÇÃO ---
 def extrair_tags_estilo_query(xml_content):
     ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
     try:
@@ -72,29 +72,28 @@ def extrair_tags_estilo_query(xml_content):
         itens_extraidos.append(registro)
     return itens_extraidos
 
-# --- 2. INTERFACE (UPLOADS) ---
+# --- 2. INTERFACE ---
 xml_files = st.file_uploader("1. Selecione os ficheiros XML", accept_multiple_files=True, type='xml')
-report_file = st.file_uploader("2. Selecione o Relatório de Status (Coluna AP)", type=['xlsx', 'csv'])
+report_file = st.file_uploader("2. Selecione o Relatório (Chave na A, Status na F)", type=['xlsx', 'csv'])
 
-# --- 3. LÓGICA PRINCIPAL (SÓ RODA SE AMBOS EXISTIREM) ---
+# --- 3. PROCESSAMENTO ---
 if xml_files and report_file:
-    # Lendo o Relatório de Status
     try:
+        # Carrega o relatório
         if report_file.name.endswith('.csv'):
             df_status = pd.read_csv(report_file, dtype=str)
         else:
             df_status = pd.read_excel(report_file, dtype=str)
         
-        df_status.columns = [str(c).strip() for c in df_status.columns]
+        # Define posições fixas: Coluna A (0) e Coluna F (5)
+        # Usamos .iloc para garantir a posição independente do nome
+        chaves_relatorio = df_status.iloc[:, 0].astype(str).apply(lambda x: re.sub(r'\D', '', x)).str.strip()
+        status_relatorio = df_status.iloc[:, 5].astype(str).str.strip()
         
-        # Identifica as colunas de cruzamento
-        col_chave_rel = 'Chave de Acesso' if 'Chave de Acesso' in df_status.columns else df_status.columns[0]
-        col_status_rel = 'Situação' if 'Situação' in df_status.columns else df_status.columns[-1]
-
-        # Limpeza na chave do relatório (só números)
-        df_status[col_chave_rel] = df_status[col_chave_rel].apply(lambda x: re.sub(r'\D', '', str(x)))
-
-        # Extração XML
+        # Cria dicionário de busca rápida {Chave: Status}
+        status_dict = dict(zip(chaves_relatorio, status_relatorio))
+        
+        # Extrai XMLs
         lista_consolidada = []
         for f in xml_files:
             lista_consolidada.extend(extrair_tags_estilo_query(f.read()))
@@ -102,23 +101,20 @@ if xml_files and report_file:
         if lista_consolidada:
             df_base = pd.DataFrame(lista_consolidada)
             
-            # Limpeza na chave do XML (só números)
-            df_base['Chave de Acesso'] = df_base['Chave de Acesso'].apply(lambda x: re.sub(r'\D', '', str(x)))
+            # Limpa chaves do XML para bater com o relatório
+            df_base['Chave de Acesso'] = df_base['Chave de Acesso'].apply(lambda x: re.sub(r'\D', '', str(x))).str.strip()
 
-            # Dicionário de Status
-            status_dict = pd.Series(df_status[col_status_rel].values, index=df_status[col_chave_rel]).to_dict()
+            # --- CRIA A COLUNA AP ---
+            df_base['AP'] = df_base['Chave de Acesso'].map(status_dict).fillna("Não Encontrada no Relatório")
             
-            # Mapeamento da Coluna AP
-            df_base['AP'] = df_base['Chave de Acesso'].map(status_dict).fillna("Não Localizada no Relatório")
+            st.success("Auditoria da Coluna AP finalizada!")
+            st.dataframe(df_base[['Chave de Acesso', 'Número NF', 'AP']].head(15))
             
-            st.success("Cruzamento concluído com sucesso!")
-            st.dataframe(df_base[['Chave de Acesso', 'Número NF', 'AP']].head(10))
-            
-            # Botão de Download
+            # Download
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
                 df_base.to_excel(writer, index=False, sheet_name='Base_XML')
-            st.download_button("📥 Baixar Planilha Final", buffer.getvalue(), "Base_XML_Auditoria.xlsx")
-            
+            st.download_button("📥 Baixar Base_XML com Auditoria", buffer.getvalue(), "Base_XML_Auditada.xlsx")
+
     except Exception as e:
-        st.error(f"Erro ao processar: {e}")
+        st.error(f"Erro no processamento: {e}")
