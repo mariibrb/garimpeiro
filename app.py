@@ -1,307 +1,411 @@
 import streamlit as st
 import pandas as pd
+import xml.etree.ElementTree as ET
 import io
+import re
+import os
 
-# ==============================================================================
-# CONFIGURAÇÃO DA PÁGINA
-# ==============================================================================
+# --- 1. CONFIGURAÇÃO VISUAL (LAYOUT NOVO) ---
 st.set_page_config(
-    page_title="Auditoria Fiscal Mirão",
-    page_icon="🔎",
-    layout="wide"
+    page_title="Nascel | Auditoria",
+    page_icon="🧡",
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
+# CSS PERSONALIZADO (Visual Fofo, Laranja e Compacto)
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600;700&display=swap');
+
+    html, body, [class*="css"] {
+        font-family: 'Quicksand', sans-serif;
+    }
+    
+    /* Remove espaço em branco do topo */
+    div.block-container {
+        padding-top: 2rem !important;
+        padding-bottom: 1rem !important;
+    }
+
+    /* Cores e Fundos */
+    .stApp { background-color: #F7F7F7; }
+    h1, h2, h3, h4 { color: #FF6F00 !important; font-weight: 700; }
+    
+    /* Box Branca dos Uploads */
+    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
+        background-color: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    }
+    
+    /* Uploaders */
+    .stFileUploader { padding: 10px; border: 2px dashed #FFCC80; border-radius: 15px; text-align: center; }
+    
+    /* Botões */
+    .stButton>button { background-color: #FF6F00; color: white; border-radius: 25px; border: none; font-weight: bold; padding: 10px 30px; width: 100%; }
+    .stButton>button:hover { background-color: #E65100; }
+    
+    /* Métricas */
+    div[data-testid="metric-container"] { border-left: 5px solid #FF6F00; background-color: #FFF3E0; border-radius: 10px; }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- 2. SIDEBAR (LOGO NASCEL) ---
+with st.sidebar:
+    caminho_logo = ".streamlit/nascel sem fundo.png"
+    if os.path.exists(caminho_logo):
+        st.image(caminho_logo, use_column_width=True)
+    elif os.path.exists("nascel sem fundo.png"):
+        st.image("nascel sem fundo.png", use_column_width=True)
+    else:
+        st.markdown("<h1 style='color:#FF6F00; text-align:center;'>Nascel</h1>", unsafe_allow_html=True)
+    
+    st.markdown("---")
+    st.info("💡 **Dica:** Carregue os arquivos nas caixas ao centro para iniciar.")
+
+# --- 3. TÍTULO PRINCIPAL (SENTINELA) ---
+caminho_titulo = ".streamlit/Sentinela.png"
+
+if os.path.exists(caminho_titulo):
+    col_c1, col_tit, col_c2 = st.columns([3, 4, 3])
+    with col_tit:
+        st.image(caminho_titulo, use_column_width=True)
+elif os.path.exists("Sentinela.png"):
+    col_c1, col_tit, col_c2 = st.columns([3, 4, 3])
+    with col_tit:
+        st.image("Sentinela.png", use_column_width=True)
+else:
+    st.markdown("<h1 style='text-align: center; color: #FF6F00; margin-bottom:0;'>SENTINELA</h1>", unsafe_allow_html=True)
+    st.markdown("<h4 style='text-align: center; color: #666; margin-top:0;'>Sistema de Auditoria Fiscal</h4>", unsafe_allow_html=True)
+
+# --- 4. ÁREA DE UPLOAD (6 BOTÕES) ---
+col_ent, col_sai = st.columns(2, gap="large")
+
+with col_ent:
+    st.markdown("### 📥 1. Entradas")
+    st.markdown("---")
+    up_ent_xml = st.file_uploader("📂 XMLs de Notas Fiscais", type='xml', accept_multiple_files=True, key="ent_xml")
+    up_ent_aut = st.file_uploader("🔍 Relatório Autenticidade (Sefaz)", type=['xlsx', 'csv'], key="ent_aut")
+    up_ent_ger = st.file_uploader("⚙️ Regras Gerenciais (Opcional)", type=['xlsx'], key="ent_ger")
+
+with col_sai:
+    st.markdown("### 📤 2. Saídas")
+    st.markdown("---")
+    up_sai_xml = st.file_uploader("📂 XMLs de Notas Fiscais", type='xml', accept_multiple_files=True, key="sai_xml")
+    up_sai_aut = st.file_uploader("🔍 Relatório Autenticidade (Sefaz)", type=['xlsx', 'csv'], key="sai_aut")
+    up_sai_ger = st.file_uploader("⚙️ Regras Gerenciais (Opcional)", type=['xlsx'], key="sai_ger")
+
 # ==============================================================================
-# FUNÇÕES DE LÓGICA (BACKEND)
+# --- 5. O CÉREBRO ROBUSTO ---
 # ==============================================================================
 
 @st.cache_data
-def carregar_bases(arquivo):
-    """
-    Lê a planilha 'Bases Tribut' (Regras da Empresa).
-    Mapeia as colunas A até I conforme a estrutura fixa definida.
-    """
-    try:
-        # Lê colunas A até I (0 a 8) e força NCM como texto
-        df = pd.read_excel(arquivo, usecols="A:I", dtype=str)
-        
-        # Renomeia as colunas pelo índice para garantir consistência
-        # A=NCM, C=CST_Int, D=Aliq_Int, E=Reduc_Int, G=CST_Ext
-        novas_colunas = [
-            'NCM', 'Desc_Int', 'CST_Int', 'Aliq_Int', 'Reducao_Int',
-            'Desc_Ext', 'CST_Ext', 'Aliq_Ext_Ref', 'Info_Extra'
-        ]
-        
-        # Ajusta caso o arquivo tenha cabeçalhos ou não
-        if len(df.columns) == 9:
-            df.columns = novas_colunas
-        else:
-            st.error(f"O arquivo de bases deve ter exatamente colunas de A a I. Encontradas: {len(df.columns)}")
-            return None
-            
-        # Tratamento de dados numéricos
-        # Converte percentuais (ex: 41,67%) para float
-        def limpar_percentual(val):
-            if pd.isna(val): return 0.0
-            val = str(val).replace('%', '').replace(',', '.')
-            try:
-                # Se for maior que 1 (ex: 41.67), divide por 100. Se for 0.4167, mantém.
-                num = float(val)
-                return num / 100 if num > 1 else num
-            except:
-                return 0.0
+def carregar_bases_mestre():
+    df_tipi = pd.DataFrame()
+    df_pc_base = pd.DataFrame()
 
-        df['Reducao_Int'] = df['Reducao_Int'].apply(limpar_percentual)
-        df['Aliq_Int'] = df['Aliq_Int'].apply(limpar_percentual)
-        
-        # Limpeza de NCM e CST (remove pontos e espaços)
-        df['NCM'] = df['NCM'].str.replace('.', '', regex=False).str.strip()
-        df['CST_Int'] = df['CST_Int'].str.replace('.0', '', regex=False).str.strip()
-        df['CST_Ext'] = df['CST_Ext'].str.replace('.0', '', regex=False).str.strip()
-        
-        return df
-    except Exception as e:
-        st.error(f"Erro ao processar arquivo de bases: {e}")
+    def encontrar_arquivo(nome_base):
+        possibilidades = [
+            nome_base, nome_base.lower(), 
+            f".streamlit/{nome_base}", f".streamlit/{nome_base.lower()}",
+            "CST_Pis_Cofins.xlsx", ".streamlit/CST_Pis_Cofins.xlsx",
+            "tipi.xlsx", ".streamlit/tipi.xlsx"
+        ]
+        for p in possibilidades:
+            if os.path.exists(p): return p
         return None
 
-def auditar_icms(df_notas, df_regras):
-    """
-    Motor de Cálculo: Cruza notas com regras e audita CST e Valores.
-    """
-    # 1. Preparação das Notas
-    df_notas.columns = df_notas.columns.str.strip().str.upper() # Padroniza caixa alta
-    
-    # Tenta identificar colunas chave automaticamente
-    col_ncm = next((c for c in df_notas.columns if 'NCM' in c), 'NCM')
-    col_cfop = next((c for c in df_notas.columns if 'CFOP' in c), 'CFOP')
-    col_cst = next((c for c in df_notas.columns if 'CST' in c), 'CST')
-    col_val_prod = next((c for c in df_notas.columns if 'VALOR' in c and 'PROD' in c), None) # Ex: Valor Produto
-    col_val_icms = next((c for c in df_notas.columns if 'VALOR' in c and 'ICMS' in c), None) # Ex: Valor ICMS
-    
-    if not col_val_prod or not col_val_icms:
-        return pd.DataFrame(), "Erro: Não encontrei colunas de 'Valor Produto' ou 'Valor ICMS' no arquivo."
+    # A. TIPI
+    caminho_tipi = encontrar_arquivo("tipi.xlsx")
+    if caminho_tipi:
+        try:
+            df_raw = pd.read_excel(caminho_tipi, dtype=str)
+            df_tipi = df_raw.iloc[:, [0, 1]].copy()
+            df_tipi.columns = ['NCM', 'ALIQ']
+            df_tipi['NCM'] = df_tipi['NCM'].str.replace(r'\D', '', regex=True).str.zfill(8)
+            df_tipi['ALIQ'] = df_tipi['ALIQ'].str.upper().replace('NT', '0').str.strip().str.replace(',', '.')
+        except: pass
 
-    # Garante NCM como texto limpo
-    df_notas[col_ncm] = df_notas[col_ncm].astype(str).str.replace('.', '', regex=False).str.strip()
-    
-    # 2. Cruzamento (Merge)
-    df_final = pd.merge(df_notas, df_regras, left_on=col_ncm, right_on='NCM', how='left')
-    
-    resultados = []
+    # B. PIS & COFINS
+    caminho_pc = encontrar_arquivo("CST_Pis_Cofins.xlsx")
+    if caminho_pc:
+        try:
+            df_pc_raw = pd.read_excel(caminho_pc, dtype=str)
+            if len(df_pc_raw.columns) >= 3:
+                df_pc_base = df_pc_raw.iloc[:, [0, 1, 2]].copy()
+                df_pc_base.columns = ['NCM', 'CST_ENT', 'CST_SAI']
+                df_pc_base['NCM'] = df_pc_base['NCM'].str.replace(r'\D', '', regex=True).str.zfill(8)
+                df_pc_base['CST_SAI'] = df_pc_base['CST_SAI'].str.replace(r'\D', '', regex=True).str.zfill(2)
+        except: pass
 
-    # 3. Iteração Linha a Linha (Auditoria)
-    for index, row in df_final.iterrows():
-        status = "OK"
-        detalhe_erro = ""
-        icms_calculado = 0.0
-        
-        # Variáveis da linha
-        ncm_nota = row[col_ncm]
-        cfop_nota = str(row[col_cfop])
-        cst_nota = str(row[col_cst]).replace('.0', '').strip()
-        val_prod = float(str(row[col_val_prod]).replace(',', '.')) if pd.notna(row[col_val_prod]) else 0.0
-        val_icms_nota = float(str(row[col_val_icms]).replace(',', '.')) if pd.notna(row[col_val_icms]) else 0.0
-        
-        # Regras vindas da base
-        cst_regra_int = str(row['CST_Int']) if pd.notna(row['CST_Int']) else None
-        cst_regra_ext = str(row['CST_Ext']) if pd.notna(row['CST_Ext']) else None
-        
-        # --- LÓGICA DE DECISÃO (O CÉREBRO) ---
-        
-        if pd.isna(cst_regra_int):
-            status = "⚠️ NCM SEM REGRA"
-            detalhe_erro = "Cadastrar na aba Bases"
-        
-        else:
-            # Define se é Interna (CFOP 5...) ou Interestadual (CFOP 6...)
-            eh_interna = cfop_nota.startswith('5')
+    return df_tipi, df_pc_base
+
+# Carrega as bases
+df_tipi, df_pc_base = carregar_bases_mestre()
+
+# Prepara Dicionários para busca rápida
+bases = {"TIPI": {}, "PC": {}}
+if not df_tipi.empty:
+    bases["TIPI"] = dict(zip(df_tipi['NCM'], df_tipi['ALIQ']))
+if not df_pc_base.empty:
+    bases["PC"] = dict(zip(df_pc_base['NCM'], df_pc_base['CST_SAI']))
+
+
+# --- FUNÇÃO DE EXTRAÇÃO ---
+def extrair_tags_com_raio_x(arquivos_upload, origem):
+    itens_validos = []
+    arquivos_com_erro = []
+
+    for arquivo in arquivos_upload:
+        try:
+            content = arquivo.read()
+            try: xml_str = content.decode('utf-8')
+            except: xml_str = content.decode('latin-1')
+
+            xml_str_clean = re.sub(r' xmlns="[^"]+"', '', xml_str)
+            xml_str_clean = re.sub(r' xmlns:xsi="[^"]+"', '', xml_str_clean)
+            xml_str_clean = re.sub(r' xsi:schemaLocation="[^"]+"', '', xml_str_clean)
             
-            if eh_interna:
-                # === CENÁRIO INTERNO ===
-                cst_esperado = cst_regra_int
-                reducao = float(row['Reducao_Int']) if pd.notna(row['Reducao_Int']) else 1.0
+            root = ET.fromstring(xml_str_clean)
+
+            if "resNFe" in root.tag or root.find(".//resNFe") is not None: continue
+            if "procEventoNFe" in root.tag or root.find(".//retEvento") is not None: continue
+            
+            infNFe = root.find('.//infNFe')
+            if infNFe is None:
+                arquivos_com_erro.append({"Arquivo": arquivo.name, "Motivo": "XML desconhecido"})
+                continue
+
+            dets = root.findall(f".//det")
+            if not dets:
+                arquivos_com_erro.append({"Arquivo": arquivo.name, "Motivo": "Sem Produtos"})
+                continue
+
+            ide = root.find(f".//ide")
+            emit = root.find(f".//emit")
+            dest = root.find(f".//dest")
+            chave = infNFe.attrib.get('Id', '')[3:]
+
+            for det in dets:
+                prod = det.find(f"prod")
+                imposto = det.find(f"imposto")
                 
-                # Se a alíquota vier da base, usa ela. Senão, usa 18% padrão.
-                aliquota = float(row['Aliq_Int']) if pd.notna(row['Aliq_Int']) and row['Aliq_Int'] > 0 else 0.18
-                
-                # 1. Valida CST
-                if cst_nota != cst_esperado:
-                    status = "❌ ERRO CST"
-                    detalhe_erro = f"Nota: {cst_nota} | Regra: {cst_esperado} (Int)"
-                
-                # 2. Calcula ICMS (Apenas para tributados)
-                if cst_esperado in ['00', '20', '90']:
-                    icms_calculado = val_prod * reducao * aliquota
-                    
-            else:
-                # === CENÁRIO INTERESTADUAL ===
-                cst_esperado = cst_regra_ext
-                # Geralmente não tem redução interestadual, base 100%
-                reducao = 1.0 
-                aliquota = 0.12 # Padrão Interestadual (ajustar se necessário 4% ou 7%)
-                
-                # 1. Valida CST
-                if cst_nota != cst_esperado:
-                    status = "❌ ERRO CST"
-                    detalhe_erro = f"Nota: {cst_nota} | Regra: {cst_esperado} (Ext)"
-                
-                # 2. Calcula ICMS
-                if cst_esperado in ['00', '20', '90']:
-                    icms_calculado = val_prod * reducao * aliquota
+                def get_val(node, tag, tipo=str):
+                    if node is None: return 0.0 if tipo == float else ""
+                    res = node.find(f"{tag}")
+                    if res is not None and res.text:
+                        return float(res.text) if tipo == float else res.text
+                    return 0.0 if tipo == float else ""
 
-            # --- VALIDAÇÃO FINAL DE VALORES ---
-            # Se o CST estiver OK, verificamos o valor financeiro
-            if "ERRO CST" not in status and "NCM SEM REGRA" not in status:
-                # Verifica isentos
-                if cst_esperado in ['40', '41', '50', '51', '60']:
-                    if val_icms_nota > 0:
-                        status = "❌ ERRO VALOR"
-                        detalhe_erro = "Produto Isento/Diferido com imposto cobrado"
-                else:
-                    # Verifica valores (tolerância de 5 centavos)
-                    diferenca = abs(val_icms_nota - icms_calculado)
-                    if diferenca > 0.05:
-                        status = "❌ ERRO VALOR"
-                        detalhe_erro = f"Dif: R$ {diferenca:.2f} (Calc: {icms_calculado:.2f})"
+                def get_pis_cofins(grupo, campo):
+                    if imposto is None: return ""
+                    node = imposto.find(f"{grupo}")
+                    if node is not None:
+                        for child in node:
+                            res = child.find(f"{campo}")
+                            if res is not None: return res.text
+                    return ""
 
-        resultados.append({
-            'NCM': ncm_nota,
-            'CFOP': cfop_nota,
-            'CST_Nota': cst_nota,
-            'CST_Esperado': cst_esperado if pd.notna(cst_regra_int) else '',
-            'Vl_Produto': val_prod,
-            'ICMS_Nota': val_icms_nota,
-            'ICMS_Correto': round(icms_calculado, 2),
-            'STATUS': status,
-            'Detalhe': detalhe_erro
-        })
-        
-    return pd.DataFrame(resultados), "Sucesso"
+                # Valores ICMS
+                cst_icms, aliq_icms, val_icms = "", 0.0, 0.0
+                if imposto is not None:
+                    node_icms = imposto.find(f"ICMS")
+                    if node_icms:
+                        for child in node_icms:
+                            if child.find(f"CST") is not None: cst_icms = child.find(f"CST").text
+                            elif child.find(f"CSOSN") is not None: cst_icms = child.find(f"CSOSN").text
+                            if child.find(f"pICMS") is not None: aliq_icms = float(child.find(f"pICMS").text)
+                            if child.find(f"vICMS") is not None: val_icms = float(child.find(f"vICMS").text)
 
-# ==============================================================================
-# INTERFACE VISUAL (FRONTEND)
-# ==============================================================================
+                # Valores IPI
+                cst_ipi, aliq_ipi = "", 0.0
+                if imposto is not None:
+                    node_ipi = imposto.find(f"IPI")
+                    if node_ipi:
+                        for child in node_ipi:
+                            if child.find(f"CST") is not None: cst_ipi = child.find(f"CST").text
+                            if child.find(f"pIPI") is not None: aliq_ipi = float(child.find(f"pIPI").text)
 
-# --- BARRA LATERAL (SIDEBAR) ---
-with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/2910/2910768.png", width=50)
-    st.title("Configurações")
-    st.markdown("---")
-    
-    # 1. UPLOAD DA BASE DE REGRAS
-    st.subheader("1. Base de Regras")
-    st.caption("Upload do Excel com colunas A até I (NCM, CST, Reduções...)")
-    
-    file_bases = st.file_uploader("Carregar 'Bases Tribut.xlsx'", type=["xlsx"], key="base_regra")
-    
-    df_regras_carregada = None
-    
-    if file_bases:
-        df_regras_carregada = carregar_bases(file_bases)
-        if df_regras_carregada is not None:
-            st.success("✅ Bases Carregadas com Sucesso!")
-            # Mostra prévia pequena para confirmação
-            with st.expander("Ver prévia das regras"):
-                st.dataframe(df_regras_carregada.head(3), hide_index=True)
-    else:
-        st.error("⚠️ Pendente: Carregue a tabela de regras.")
+                registro = {
+                    "Origem": origem,
+                    "Arquivo": arquivo.name,
+                    "Número NF": get_val(ide, 'nNF'),
+                    "UF Emit": emit.find(f"enderEmit/UF").text if emit is not None and emit.find(f"enderEmit/UF") is not None else "",
+                    "UF Dest": dest.find(f"enderDest/UF").text if dest is not None and dest.find(f"enderDest/UF") is not None else "",
+                    "Cód Prod": get_val(prod, 'cProd'),
+                    "Desc Prod": get_val(prod, 'xProd'),
+                    "NCM": get_val(prod, 'NCM'),
+                    "CFOP": get_val(prod, 'CFOP'),
+                    "vProd": get_val(prod, 'vProd', float),
+                    "CST ICMS": cst_icms,
+                    "Alq ICMS": aliq_icms,
+                    "ICMS": val_icms,
+                    "CST IPI": cst_ipi,
+                    "Aliq IPI": aliq_ipi,
+                    "CST PIS": get_pis_cofins('PIS', 'CST'),
+                    "CST COFINS": get_pis_cofins('COFINS', 'CST'),
+                    "Chave de Acesso": chave
+                }
+                itens_validos.append(registro)
 
-    st.markdown("---")
+        except Exception as e:
+            arquivos_com_erro.append({"Arquivo": arquivo.name, "Motivo": f"Erro de Leitura: {str(e)}"})
 
-    # 2. UPLOAD DA TIPI (Apenas armazenamento)
-    st.subheader("2. Tabela TIPI")
-    st.caption("Upload do arquivo oficial do Governo (Opcional para consulta).")
-    file_tipi = st.file_uploader("Carregar TIPI.xlsx", type=["xlsx"], key="tipi")
-    
-    if file_tipi:
-        st.info("✅ TIPI armazenada na memória.")
+    return pd.DataFrame(itens_validos), arquivos_com_erro
 
-# --- ÁREA PRINCIPAL ---
-
-st.title("Auditoria Fiscal Inteligente - ICMS")
-st.markdown("""
-Esta ferramenta cruza o **Relatório do Sistema** com a **Base de Regras** carregada ao lado.
-Ela identifica automaticamente se a operação é **Interna** ou **Interestadual** pelo CFOP.
-""")
-
-st.divider()
-
-# ÁREA DE UPLOAD DO RELATÓRIO DO DIA A DIA
-col_upload, col_btn = st.columns([3, 1])
-
-with col_upload:
-    uploaded_file = st.file_uploader("📂 **Carregue o Relatório de Notas (Excel ou CSV)**", type=["csv", "xlsx"])
-
-# BOTÃO DE AÇÃO
-if uploaded_file and df_regras_carregada is not None:
-    
-    # Lê o arquivo do usuário
+# --- FUNÇÃO DE STATUS ---
+def cruzar_status(df, file):
+    if df.empty: return df
+    if not file: 
+        df['Status_Sefaz'] = "Não Verificado"
+        return df
     try:
-        if uploaded_file.name.endswith('.csv'):
-            # Tenta ler CSV (padrão Brasil ; ou ,)
-            try:
-                df_notas_input = pd.read_csv(uploaded_file, sep=';', decimal=',')
-            except:
-                uploaded_file.seek(0)
-                df_notas_input = pd.read_csv(uploaded_file, sep=',', decimal='.')
-        else:
-            df_notas_input = pd.read_excel(uploaded_file)
-            
-        st.write(f"Arquivo carregado: **{uploaded_file.name}** ({len(df_notas_input)} linhas)")
-        
-        st.markdown("###")
-        if st.button("🚀 EXECUTAR AUDITORIA AGORA", type="primary", use_container_width=True):
-            
-            with st.spinner("Analisando NCM por NCM, validando CSTs e recalculando impostos..."):
-                # CHAMA O MOTOR DE AUDITORIA
-                df_resultado, msg = auditar_icms(df_notas_input, df_regras_carregada)
-                
-                if not df_resultado.empty:
-                    # MÉTRICAS
-                    total = len(df_resultado)
-                    erros = df_resultado[df_resultado['STATUS'] != 'OK'].shape[0]
-                    acuracia = ((total - erros) / total) * 100
-                    
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Total Analisado", total)
-                    c2.metric("Inconsistências", erros, delta=-erros, delta_color="inverse")
-                    c3.metric("Acurácia Fiscal", f"{acuracia:.1f}%")
-                    
-                    st.divider()
-                    
-                    # TABELA COLORIDA
-                    st.subheader("📋 Detalhamento da Análise")
-                    
-                    def colorir_linha(val):
-                        color = '#d4edda' if val == 'OK' else '#f8d7da' # Verde ou Vermelho claro
-                        return f'background-color: {color}'
-                    
-                    st.dataframe(
-                        df_resultado.style.applymap(colorir_linha, subset=['STATUS']),
-                        use_container_width=True,
-                        height=500
-                    )
-                    
-                    # DOWNLOAD
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                        df_resultado.to_excel(writer, index=False, sheet_name='Auditoria_ICMS')
-                        
-                    st.download_button(
-                        label="📥 BAIXAR RELATÓRIO COMPLETO (.XLSX)",
-                        data=buffer,
-                        file_name="Resultado_Auditoria_ICMS.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="secondary"
-                    )
-                else:
-                    st.error(msg)
-                    
-    except Exception as e:
-        st.error(f"Erro ao ler o arquivo: {e}")
+        if file.name.endswith('xlsx'): s = pd.read_excel(file, dtype=str)
+        else: s = pd.read_csv(file, dtype=str)
+        mapping = dict(zip(s.iloc[:,0].str.replace(r'\D','',regex=True), s.iloc[:,-1]))
+        df['Status_Sefaz'] = df['Chave de Acesso'].map(mapping).fillna("Não Localizado")
+    except:
+        df['Status_Sefaz'] = "Erro Arquivo Status"
+    return df
 
-elif uploaded_file and df_regras_carregada is None:
-    st.warning("👈 Por favor, carregue a **Base de Regras** na barra lateral esquerda para habilitar a auditoria.")
+# --- FUNÇÃO AUDITORIA ---
+def auditar_ipi(df):
+    if df.empty or not bases.get("TIPI"): return df
+    def check(row):
+        esp = bases["TIPI"].get(str(row['NCM']))
+        if not esp: return "NCM Off"
+        if esp == 'NT': return "OK"
+        try: return "OK" if abs(row['Aliq IPI'] - float(esp)) < 0.1 else f"Div (XML:{row['Aliq IPI']} | TIPI:{esp})"
+        except: return "Erro"
+    df['Auditoria_IPI'] = df.apply(check, axis=1)
+    return df
 
+# --- 6. EXECUÇÃO DO PROCESSAMENTO ---
+
+# Processa Entradas
+df_e, erros_e = extrair_tags_com_raio_x(up_ent_xml, "Entrada") if up_ent_xml else (pd.DataFrame(), [])
+df_e = cruzar_status(df_e, up_ent_aut)
+
+# Processa Saídas
+df_s, erros_s = extrair_tags_com_raio_x(up_sai_xml, "Saída") if up_sai_xml else (pd.DataFrame(), [])
+df_s = cruzar_status(df_s, up_sai_aut)
+df_s = auditar_ipi(df_s) # Aplica IPI apenas nas saídas
+
+st.markdown("---")
+
+if df_e.empty and df_s.empty:
+    st.info("👆 Aguardando arquivos... Carregue os XMLs e relatórios nas caixas acima.")
 else:
-    st.info("Aguardando uploads...")
+    st.markdown("## 📊 Resultados da Análise")
+    
+    # Exibir erros de leitura se houver
+    if erros_e or erros_s:
+        with st.expander("⚠️ Arquivos ignorados (Erros de Leitura)"):
+            st.write(erros_e + erros_s)
+
+    tab1, tab2, tab3 = st.tabs(["Visão Geral", "Entradas", "Saídas"])
+    
+    with tab1:
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Notas", len(df_e) + len(df_s))
+        
+        # Lógica segura de contagem
+        err_e = len(df_e[~df_e['Status_Sefaz'].str.contains('Autoriz|OK|Não Verif', na=False, case=False)]) if not df_e.empty else 0
+        err_s = len(df_s[~df_s['Status_Sefaz'].str.contains('Autoriz|OK|Não Verif', na=False, case=False)]) if not df_s.empty else 0
+        c2.metric("Alertas Sefaz", err_e + err_s)
+        
+        div_ipi = len(df_s[df_s['Auditoria_IPI'].str.contains('Div', na=False)]) if not df_s.empty and 'Auditoria_IPI' in df_s.columns else 0
+        c3.metric("Divergências IPI", div_ipi)
+
+    with tab2:
+        if not df_e.empty: st.dataframe(df_e, use_container_width=True)
+    with tab3:
+        if not df_s.empty: st.dataframe(df_s, use_container_width=True)
+        
+    # ========================================================
+    # 🧠 INTELIGÊNCIA: SUGESTÃO DE ATUALIZAÇÃO DE BASES
+    # ========================================================
+    st.markdown("---")
+    st.subheader("🧠 Inteligência das Bases")
+    st.info("O Sentinela identificou itens nos XMLs que **não estão cadastrados** nas suas bases atuais. Baixe a planilha abaixo para atualizar seus arquivos mestres.")
+
+    # 1. Preparar dados consolidados (Entradas + Saídas)
+    
+    # Renomeia colunas para unificar
+    # Usa nomes seguros que existem nas funções de extração
+    df_e_mini = pd.DataFrame()
+    if not df_e.empty:
+        df_e_mini = df_e.rename(columns={'Desc Prod': 'Descricao', 'Aliq IPI': 'Aliq_IPI', 'CST PIS': 'CST_PIS', 'CST COFINS': 'CST_COFINS'})
+        df_e_mini = df_e_mini[['NCM', 'Descricao', 'Aliq_IPI', 'CST_PIS', 'CST_COFINS']]
+    
+    df_s_mini = pd.DataFrame()
+    if not df_s.empty:
+        df_s_mini = df_s.rename(columns={'Desc Prod': 'Descricao', 'Aliq IPI': 'Aliq_IPI', 'CST PIS': 'CST_PIS', 'CST COFINS': 'CST_COFINS'})
+        df_s_mini = df_s_mini[['NCM', 'Descricao', 'Aliq_IPI', 'CST_PIS', 'CST_COFINS']]
+    
+    df_full = pd.concat([df_e_mini, df_s_mini], ignore_index=True)
+
+    if not df_full.empty:
+        # A. NOVOS PARA TIPI
+        novos_tipi = df_full[~df_full['NCM'].isin(bases.get('TIPI', {}).keys())].copy()
+        
+        sugestao_tipi = pd.DataFrame()
+        if not novos_tipi.empty:
+            sugestao_tipi = novos_tipi.groupby('NCM').agg({
+                'Descricao': 'first',
+                'Aliq_IPI': lambda x: x.mode()[0] if not x.mode().empty else 0.0
+            }).reset_index()
+            sugestao_tipi.columns = ['NCM', 'Descrição Sugerida', 'Alíquota XML (Sugestão)']
+
+        # B. NOVOS PARA PIS/COFINS
+        novos_pc = df_full[~df_full['NCM'].isin(bases.get('PC', {}).keys())].copy()
+        
+        sugestao_pc = pd.DataFrame()
+        if not novos_pc.empty:
+            sugestao_pc = novos_pc.groupby('NCM').agg({
+                'Descricao': 'first',
+                'CST_PIS': lambda x: x.mode()[0] if not x.mode().empty else '',
+                'CST_COFINS': lambda x: x.mode()[0] if not x.mode().empty else ''
+            }).reset_index()
+            sugestao_pc.columns = ['NCM', 'Descrição Sugerida', 'CST PIS (XML)', 'CST COF (XML)']
+
+        # C. BOTÃO DE DOWNLOAD DA ATUALIZAÇÃO
+        if not sugestao_tipi.empty or not sugestao_pc.empty:
+            col_msg, col_bt = st.columns([2, 1])
+            with col_msg:
+                st.write(f"📦 **Novos NCMs detectados:** {len(sugestao_tipi)} para TIPI | {len(sugestao_pc)} para PIS/COFINS")
+            
+            with col_bt:
+                buffer_update = io.BytesIO()
+                with pd.ExcelWriter(buffer_update, engine='xlsxwriter') as writer:
+                    if not sugestao_tipi.empty: 
+                        sugestao_tipi.to_excel(writer, sheet_name='Atualizar_TIPI', index=False)
+                    if not sugestao_pc.empty: 
+                        sugestao_pc.to_excel(writer, sheet_name='Atualizar_PisCofins', index=False)
+                
+                st.download_button(
+                    label="🧠 Baixar Planilha de Atualização",
+                    data=buffer_update.getvalue(),
+                    file_name="Sugestao_Atualizacao_Bases.xlsx",
+                    mime="application/vnd.ms-excel",
+                    key="btn_update"
+                )
+        else:
+            st.success("✨ Suas bases estão 100% atualizadas com os XMLs analisados!")
+            
+    # ========================================================
+    # DOWNLOAD RELATÓRIO FINAL
+    # ========================================================
+    st.markdown("<br>", unsafe_allow_html=True)
+    col_dl, _ = st.columns([1,2])
+    with col_dl:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
+            if not df_e.empty: df_e.to_excel(writer, sheet_name='Entradas', index=False)
+            if not df_s.empty: df_s.to_excel(writer, sheet_name='Saidas', index=False)
+            
+        st.download_button(
+            label="💾 BAIXAR RELATÓRIO COMPLETO",
+            data=buffer.getvalue(),
+            file_name="Relatorio_Nascel_Auditoria.xlsx",
+            mime="application/vnd.ms-excel"
+        )
