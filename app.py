@@ -423,7 +423,6 @@ else:
                     file_name="Sugestao_Atualizacao_Bases.xlsx",
                     mime="application/vnd.ms-excel",
                     key="btn_update"
-                )
         else:
             st.success("✨ Suas bases estão 100% atualizadas com os XMLs analisados!")
         )
