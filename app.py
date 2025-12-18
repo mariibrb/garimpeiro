@@ -9,7 +9,7 @@ import os
 st.set_page_config(page_title="Sentinela Fiscal Pro", layout="wide")
 st.title("🛡️ Sentinela: Auditoria Fiscal (ICMS & IPI)")
 
-# --- 1. CARREGAR BASES MESTRE + TIPI (MODO LITERAL) ---
+# --- 1. CARREGAR BASES MESTRE + TIPI (COM DETETIVE DE ARQUIVOS) ---
 @st.cache_data
 def carregar_bases_mestre():
     # A. Bases Internas
@@ -23,46 +23,50 @@ def carregar_bases_mestre():
     else:
         return None, None, None, None
 
-    # B. TIPI Oficial (Leitura Direta e Literal)
-    caminho_tipi = "TIPI.xlsx"
+    # B. TIPI Oficial (Detetive de Arquivos)
     df_tipi = pd.DataFrame()
     
-    if os.path.exists(caminho_tipi):
+    # 1. Procura o arquivo independente do nome (TIPI.xlsx, tipi.xlsx, Tipi.xlsx)
+    nome_real_tipi = None
+    lista_arquivos = os.listdir('.') # Lista tudo na pasta
+    
+    for arquivo in lista_arquivos:
+        if "tipi.xlsx" in arquivo.lower(): # Procura por 'tipi' ignorando maiúscula
+            nome_real_tipi = arquivo
+            break
+            
+    if nome_real_tipi:
         try:
-            # Lê o Excel forçando texto. Header=0 assume que a linha 1 é título.
-            # Se não tiver título, use header=None. Vamos assumir que pode ter título.
-            df_raw = pd.read_excel(caminho_tipi, dtype=str)
+            # Lê o arquivo encontrado
+            df_raw = pd.read_excel(nome_real_tipi, dtype=str)
             
-            # Pega as duas primeiras colunas, não importa o nome delas
+            # Pega as duas primeiras colunas (NCM e Alíquota)
             df_tipi = df_raw.iloc[:, [0, 1]].copy()
-            df_tipi.columns = ['NCM', 'ALIQ'] # Renomeia na marra
+            df_tipi.columns = ['NCM', 'ALIQ']
             
-            # --- LIMPEZA BLINDADA ---
-            # 1. Remove pontos, traços e espaços
-            df_tipi['NCM'] = df_tipi['NCM'].str.replace(r'\D', '', regex=True)
+            # Limpeza Blindada
+            df_tipi['NCM'] = df_tipi['NCM'].str.replace(r'\D', '', regex=True) # Só números
+            df_tipi['NCM'] = df_tipi['NCM'].str.zfill(8) # Garante 8 dígitos (0101...)
             
-            # 2. CORREÇÃO VITAL: Adiciona zero à esquerda se o Excel comeu
-            # Ex: Transforma "1012100" (7 dig) em "01012100" (8 dig)
-            df_tipi['NCM'] = df_tipi['NCM'].str.zfill(8)
-            
-            # 3. Limpa Alíquota (NT -> 0, vírgula -> ponto)
             df_tipi['ALIQ'] = df_tipi['ALIQ'].str.upper().replace('NT', '0').str.strip().str.replace(',', '.')
             
-            # 4. Remove linhas vazias ou cabeçalhos repetidos que sobraram
-            # Garante que NCM é numérico e Alíquota é numérico
+            # Filtra apenas o que é NCM válido (8 dígitos)
             df_tipi = df_tipi[df_tipi['NCM'].str.match(r'^\d{8}$')]
             
+            # Debug visual (opcional, ajuda a confirmar)
+            st.toast(f"TIPI Carregada: {nome_real_tipi} ({len(df_tipi)} linhas)", icon="✅")
+            
         except Exception as e:
-            st.error(f"Erro ao ler TIPI.xlsx: {e}")
+            st.error(f"Erro ao ler o arquivo {nome_real_tipi}: {e}")
             df_tipi = pd.DataFrame()
     else:
-        # Tenta ler com minúsculo caso o nome no github esteja diferente
-        if os.path.exists("tipi.xlsx"):
-             st.warning("Aviso: O arquivo está como 'tipi.xlsx' mas o código busca 'TIPI.xlsx'. Renomeie no GitHub.")
+        # Se não achou arquivo nenhum
+        df_tipi = pd.DataFrame()
 
-    return df_gerencial, df_tribut, df_inter, df_tipi
+    return df_gerencial, df_tribut, df_inter, df_tipi, lista_arquivos, nome_real_tipi
 
-df_gerencial, df_tribut, df_inter, df_tipi = carregar_bases_mestre()
+# Executa carregamento
+df_gerencial, df_tribut, df_inter, df_tipi, lista_arquivos, nome_real_tipi = carregar_bases_mestre()
 
 # --- 2. EXTRAÇÃO XML ---
 def extrair_tags_completo(xml_content):
@@ -92,6 +96,7 @@ def extrair_tags_completo(xml_content):
             "NCM": prod.find('nfe:NCM', ns).text if prod is not None else "",
             "CFOP": prod.find('nfe:CFOP', ns).text if prod is not None else "",
             "vProd": float(prod.find('nfe:vProd', ns).text) if prod is not None else 0.0,
+            # ICMS
             "CST ICMS": imposto.find('.//nfe:CST', ns).text if imposto.find('.//nfe:CST', ns) is not None else "",
             "BC ICMS": float(imposto.find('.//nfe:vBC', ns).text) if imposto.find('.//nfe:vBC', ns) is not None else 0.0,
             "Alq ICMS": float(imposto.find('.//nfe:pICMS', ns).text) if imposto.find('.//nfe:pICMS', ns) is not None else 0.0,
@@ -111,6 +116,17 @@ def extrair_tags_completo(xml_content):
 # --- 3. INTERFACE ---
 with st.sidebar:
     st.header("📂 Upload Central")
+    
+    # --- ÁREA DE DEBUG (VER O QUE O SERVIDOR VÊ) ---
+    with st.expander("🛠️ Diagnóstico do Sistema"):
+        st.write("Arquivos na pasta do servidor:")
+        st.write(lista_arquivos)
+        if nome_real_tipi:
+            st.success(f"Arquivo TIPI usado: {nome_real_tipi}")
+        else:
+            st.error("Nenhum arquivo 'tipi.xlsx' encontrado!")
+    # -----------------------------------------------
+
     xml_saidas = st.file_uploader("1. Notas de SAÍDA", accept_multiple_files=True, type='xml')
     xml_entradas = st.file_uploader("2. Notas de ENTRADA", accept_multiple_files=True, type='xml')
     rel_status = st.file_uploader("3. Status Sefaz", type=['xlsx', 'csv'])
@@ -156,7 +172,7 @@ if (xml_saidas or xml_entradas) and rel_status:
         if not df_tipi.empty:
             map_tipi = dict(zip(df_tipi['NCM'], df_tipi['ALIQ']))
         else:
-            st.warning("⚠️ TIPI não carregada. Confirme se o arquivo TIPI.xlsx está no GitHub.")
+            st.warning(f"⚠️ TIPI não carregada. Arquivos encontrados: {lista_arquivos}")
 
         # === ICMS ===
         df_icms = df_s.copy()
