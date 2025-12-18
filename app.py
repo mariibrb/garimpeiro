@@ -94,7 +94,7 @@ if os.path.exists("sentinela_banner.png"):
 else:
     # Fallback se a imagem não estiver na pasta
     st.markdown("<h1 style='text-align: center; color: #FF6F00; font-size: 3em;'>SENTINELA</h1>", unsafe_allow_html=True)
-    st.markdown("<h3 style='text-align: center; color: #666;'>Sistema de Auditoria Fiscal Nascel</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; color: #666;'>Sistema de Auditoria Fiscal</h3>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True) # Espaço
 
