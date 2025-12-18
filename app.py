@@ -9,7 +9,7 @@ import os
 st.set_page_config(page_title="Sentinela Fiscal Pro", layout="wide")
 st.title("🛡️ Sentinela: Auditoria Fiscal (ICMS & IPI)")
 
-# --- 1. CARREGAR BASES MESTRE + TIPI (COM PROTEÇÃO DE ERRO) ---
+# --- 1. CARREGAR BASES MESTRE + TIPI (COM RASTREAMENTO INTELIGENTE) ---
 @st.cache_data
 def carregar_bases_mestre():
     # A. Planilha do Cliente (Regras Internas)
@@ -23,37 +23,48 @@ def carregar_bases_mestre():
     else:
         return None, None, None, None
 
-    # B. TIPI Oficial (Leitura Blindada contra erros de formatação)
+    # B. TIPI Oficial (Modo Rastreamento Automático)
     caminho_tipi = "TIPI.xlsx"
     df_tipi = pd.DataFrame()
     
     if os.path.exists(caminho_tipi):
         try:
-            # 1. Lê tudo como texto para não quebrar
+            # 1. Lê o arquivo bruto sem cabeçalho
             df_raw = pd.read_excel(caminho_tipi, header=None, dtype=str)
-            df_raw = df_raw.dropna(how='all') # Remove linhas vazias
-
-            # 2. Usa Regex para encontrar onde estão os NCMs (ex: 0101.21.00)
-            # A coluna 0 geralmente é o NCM
-            mask_ncm = df_raw.iloc[:, 0].astype(str).str.contains(r'^\d{4}\.\d{2}\.\d{2}', regex=True, na=False)
-            df_tipi = df_raw[mask_ncm].copy()
             
-            # 3. Seleção de Colunas
-            # Tentativa padrão: Coluna 0 (NCM) e Coluna 1 (Alíquota). 
-            # OBS: Se na sua tabela a alíquota for a coluna C, mude para [0, 2]
-            if df_tipi.shape[1] >= 2:
-                df_tipi = df_tipi.iloc[:, [0, 1]]
+            # 2. Rastreamento: Procura qual coluna tem cara de NCM
+            col_ncm_idx = -1
+            
+            # Percorre as primeiras 10 colunas para achar o NCM
+            for i in range(min(10, len(df_raw.columns))):
+                # Conta quantos valores batem com o padrão NCM (xxxx.xx.xx)
+                matches = df_raw.iloc[:, i].astype(str).str.count(r'^\d{4}\.\d{2}\.\d{2}').sum()
+                # Se tiver mais de 50 linhas com esse padrão, achamos a coluna certa!
+                if matches > 50:
+                    col_ncm_idx = i
+                    break
+            
+            if col_ncm_idx != -1:
+                # Se achou o NCM, filtra as linhas que são NCM
+                mask = df_raw.iloc[:, col_ncm_idx].astype(str).str.contains(r'^\d{4}\.\d{2}\.\d{2}', regex=True, na=False)
+                df_temp = df_raw[mask].copy()
+                
+                # Assume que a Alíquota é a próxima coluna não vazia à direita
+                # Geralmente é índice + 1 ou + 2
+                col_aliq_idx = col_ncm_idx + 1
+                
+                # Seleciona as duas colunas
+                df_tipi = df_temp.iloc[:, [col_ncm_idx, col_aliq_idx]]
                 df_tipi.columns = ['NCM', 'ALIQ']
                 
-                # 4. Limpeza Final
+                # Limpeza Final
                 df_tipi['NCM'] = df_tipi['NCM'].str.replace('.', '', regex=False).str.strip()
-                # Troca NT por 0, troca vírgula por ponto
                 df_tipi['ALIQ'] = df_tipi['ALIQ'].str.upper().replace('NT', '0').str.strip().str.replace(',', '.')
             else:
-                df_tipi = pd.DataFrame() # Estrutura inválida
+                print("Não foi possível localizar a coluna de NCM automaticamente.")
                 
         except Exception as e:
-            print(f"Erro silencioso ao ler TIPI: {e}")
+            print(f"Erro ao processar TIPI: {e}")
             df_tipi = pd.DataFrame()
 
     return df_gerencial, df_tribut, df_inter, df_tipi
@@ -114,15 +125,13 @@ with st.sidebar:
 
 # --- 4. PROCESSAMENTO ---
 if (xml_saidas or xml_entradas) and rel_status:
-    # Mapear Status
     try:
         df_st_rel = pd.read_excel(rel_status, dtype=str) if rel_status.name.endswith('.xlsx') else pd.read_csv(rel_status, dtype=str)
         status_dict = dict(zip(df_st_rel.iloc[:, 0].str.replace(r'\D', '', regex=True), df_st_rel.iloc[:, 5]))
     except:
-        st.error("Erro ao ler relatório de status. Verifique o formato.")
+        st.error("Erro ao ler relatório de status.")
         status_dict = {}
 
-    # Extrair XMLs
     list_s = []
     if xml_saidas:
         for f in xml_saidas: list_s.extend(extrair_tags_completo(f.read()))
@@ -134,10 +143,9 @@ if (xml_saidas or xml_entradas) and rel_status:
     df_e = pd.DataFrame(list_e)
 
     if not df_s.empty:
-        # Coluna AP (Status)
         df_s['AP'] = df_s['Chave de Acesso'].str.replace(r'\D', '', regex=True).map(status_dict).fillna("Pendente")
         
-        # --- PREPARA MAPAS (COM SEGURANÇA) ---
+        # Carregar Mapas
         map_tribut_cst = {}
         map_tribut_aliq = {}
         map_gerencial_cst = {}
@@ -147,20 +155,18 @@ if (xml_saidas or xml_entradas) and rel_status:
         if df_tribut is not None:
             map_tribut_cst = dict(zip(df_tribut.iloc[:, 0].astype(str), df_tribut.iloc[:, 2].astype(str)))
             map_tribut_aliq = dict(zip(df_tribut.iloc[:, 0].astype(str), df_tribut.iloc[:, 3].astype(str)))
-        
         if df_gerencial is not None:
             map_gerencial_cst = dict(zip(df_gerencial.iloc[:, 0].astype(str), df_gerencial.iloc[:, 1].astype(str)))
-        
         if not df_inter.empty:
             map_inter = dict(zip(df_inter.iloc[:, 0].astype(str), df_inter.iloc[:, 1].astype(str)))
-
-        # Verificação da TIPI antes de mapear
+        
+        # Mapeamento Seguro TIPI
         if not df_tipi.empty and 'NCM' in df_tipi.columns and 'ALIQ' in df_tipi.columns:
             map_tipi = dict(zip(df_tipi['NCM'], df_tipi['ALIQ']))
         else:
             st.warning("⚠️ Tabela TIPI não carregada ou formato inválido. A aba IPI pode vir vazia.")
 
-        # === ABA 3: ICMS ===
+        # === ICMS ===
         df_icms = df_s.copy()
         
         def f_analise_cst(row):
@@ -168,7 +174,6 @@ if (xml_saidas or xml_entradas) and rel_status:
             if "Cancelamento" in status: return "NF cancelada"
             cst_esp = map_tribut_cst.get(ncm)
             if not cst_esp: return "NCM não encontrado"
-            # Regra de ST na Entrada vs Saída
             if map_gerencial_cst.get(ncm) == "60" and cst != "60": return f"Divergente — CST informado: {cst} | Esperado: 60"
             return "Correto" if cst == cst_esp else f"Divergente — CST informado: {cst} | Esperado: {cst_esp}"
 
@@ -205,13 +210,12 @@ if (xml_saidas or xml_entradas) and rel_status:
                 except: return 0.0
             return 0.0
 
-        # Aplica fórmulas ICMS
         df_icms['Análise CST ICMS'] = df_icms.apply(f_analise_cst, axis=1)
         df_icms['CST x BC'] = df_icms.apply(f_cst_bc, axis=1)
         df_icms['Analise Aliq ICMS'] = df_icms.apply(f_aliq, axis=1)
         df_icms['Complemento ICMS Próprio'] = df_icms.apply(f_complemento, axis=1)
 
-        # === ABA 4: IPI (Exclusiva) ===
+        # === IPI ===
         df_ipi = df_s.copy()
 
         def f_analise_ipi(row):
@@ -220,21 +224,18 @@ if (xml_saidas or xml_entradas) and rel_status:
             
             if not map_tipi: return "Tabela TIPI indisponível"
 
-            # Busca na TIPI
             esp = map_tipi.get(ncm)
             if esp is None: return "NCM não encontrado na TIPI"
             
             try: esp_val = float(str(esp).replace(',', '.'))
             except: return "Erro leitura TIPI"
 
-            if abs(aliq_xml - esp_val) < 0.1:
-                return "Correto"
-            else:
-                return f"Destacado: {aliq_xml} | Esperado: {esp_val}"
+            if abs(aliq_xml - esp_val) < 0.1: return "Correto"
+            else: return f"Destacado: {aliq_xml} | Esperado: {esp_val}"
 
         df_ipi['Análise IPI'] = df_ipi.apply(f_analise_ipi, axis=1)
 
-    # --- EXPORTAÇÃO ---
+    # --- EXPORTAR ---
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
         if not df_e.empty: df_e.to_excel(writer, index=False, sheet_name='Entradas')
@@ -242,5 +243,5 @@ if (xml_saidas or xml_entradas) and rel_status:
         if not df_s.empty: df_icms.to_excel(writer, index=False, sheet_name='ICMS')
         if not df_s.empty: df_ipi.to_excel(writer, index=False, sheet_name='IPI')
 
-    st.success("✅ Auditoria Completa: Abas de Entradas, Saídas, ICMS e IPI geradas!")
+    st.success("✅ Auditoria Completa Finalizada!")
     st.download_button("📥 Baixar Sentinela Auditada", buffer.getvalue(), "Sentinela_Auditada_Final.xlsx")
