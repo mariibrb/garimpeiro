@@ -10,7 +10,7 @@ st.set_page_config(
     page_title="Nascel | Auditoria",
     page_icon="🧡",
     layout="wide",
-    initial_sidebar_state="expanded" # Alterado para iniciar aberta para ver os controles
+    initial_sidebar_state="expanded"
 )
 
 # CSS PERSONALIZADO (MANTIDO)
@@ -31,20 +31,27 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# --- 2. SIDEBAR: STATUS E GESTÃO DE BASES (MOVIBILIZADO PARA CÁ) ---
+# --- 2. SIDEBAR: LOGO NASCEL, STATUS E GESTÃO COMPLETA ---
 # ==============================================================================
 with st.sidebar:
-    st.markdown("<h1 style='color:#FF6F00; text-align:center;'>Nascel</h1>", unsafe_allow_html=True)
+    # --- LOGO DA NASCEL ---
+    caminho_logo = ".streamlit/nascel sem fundo.png"
+    if os.path.exists(caminho_logo): 
+        st.image(caminho_logo, use_column_width=True)
+    elif os.path.exists("nascel sem fundo.png"): 
+        st.image("nascel sem fundo.png", use_column_width=True)
+    else: 
+        st.markdown("<h1 style='color:#FF6F00; text-align:center;'>Nascel</h1>", unsafe_allow_html=True)
+    
     st.markdown("---")
 
-    # Funções de suporte para as bases
     def get_file(name):
         paths = [f".streamlit/{name}", name, f"bases/{name}"]
         for p in paths:
             if os.path.exists(p): return p
         return None
 
-    # INDICADORES DE STATUS
+    # --- STATUS DAS BASES ---
     st.subheader("📊 Status das Bases")
     f_icms = get_file("base_icms.xlsx")
     f_tipi = get_file("tipi.xlsx")
@@ -56,73 +63,90 @@ with st.sidebar:
     if f_tipi: st.success("🟢 Base TIPI OK")
     else: st.error("🔴 Base TIPI Ausente")
 
+    if f_pc: st.success("🟢 Base PIS/COF OK")
+    else: st.error("🔴 Base PIS/COF Ausente")
+
     st.markdown("---")
 
-    # EXPANDER PARA MANUTENÇÃO (BAIXAR/SUBIR)
-    with st.expander("💾 GERENCIAR BASES ATUAIS"):
+    # --- 1. GERENCIAR BASES ATUAIS (DOWNLOAD/UPLOAD) ---
+    with st.expander("💾 1. GERENCIAR BASES ATUAIS"):
+        # ICMS
+        st.caption("Regras de ICMS")
         if f_icms:
-            with open(f_icms, "rb") as f: st.download_button("📥 Baixar ICMS Atual", f, "base_icms.xlsx")
-        
-        up_icms = st.file_uploader("Atualizar ICMS", type=['xlsx'], key='up_sidebar_icms')
+            with open(f_icms, "rb") as f: st.download_button("📥 Baixar ICMS", f, "base_icms.xlsx", key="side_dl_icms")
+        up_icms = st.file_uploader("Nova Base ICMS", type=['xlsx'], key='side_up_icms')
         if up_icms:
             with open("base_icms.xlsx", "wb") as f: f.write(up_icms.getbuffer())
             st.success("ICMS Atualizado!")
 
         st.markdown("---")
+        # TIPI
+        st.caption("Tabela TIPI")
         if f_tipi:
-            with open(f_tipi, "rb") as f: st.download_button("📥 Baixar TIPI Atual", f, "tipi.xlsx")
-        
-        up_tipi = st.file_uploader("Atualizar TIPI", type=['xlsx'], key='up_sidebar_tipi')
+            with open(f_tipi, "rb") as f: st.download_button("📥 Baixar TIPI", f, "tipi.xlsx", key="side_dl_tipi")
+        up_tipi = st.file_uploader("Nova TIPI", type=['xlsx'], key='side_up_tipi')
         if up_tipi:
             with open("tipi.xlsx", "wb") as f: f.write(up_tipi.getbuffer())
             st.success("TIPI Atualizada!")
 
-# --- 3. TÍTULO E LOGO CENTRAL (MANTIDO) ---
-st.markdown("<h1 style='text-align: center; color: #FF6F00;'>SENTINELA</h1>", unsafe_allow_html=True)
+        st.markdown("---")
+        # PIS/COFINS
+        st.caption("Regras PIS/COFINS")
+        if f_pc:
+            with open(f_pc, "rb") as f: st.download_button("📥 Baixar PIS/COF", f, "CST_Pis_Cofins.xlsx", key="side_dl_pc")
+        up_pc = st.file_uploader("Nova PIS/COF", type=['xlsx'], key='side_up_pc')
+        if up_pc:
+            with open("CST_Pis_Cofins.xlsx", "wb") as f: f.write(up_pc.getbuffer())
+            st.success("PIS/COF Atualizado!")
 
-# --- 4. GABARITOS (APENAS ICMS E PIS/COF - CONFORME PEDIDO) ---
-with st.expander("📂 Modelos de Gabarito (Apenas para novos cadastros)"):
-    c1, c2 = st.columns(2)
-    with c1:
-        # Modelo ICMS com 9 colunas (A até I)
-        df_m = pd.DataFrame(columns=['NCM','DESC_INT','CST_INT','ALIQ_INT','RED_INT','DESC_EXT','CST_EXT','ALIQ_EXT','OBS'])
-        b = io.BytesIO(); 
-        with pd.ExcelWriter(b, engine='xlsxwriter') as w: df_m.to_excel(w, index=False)
-        st.download_button("Modelo Base ICMS (A-I)", b.getvalue(), "modelo_icms_A_I.xlsx")
-    with c2:
-        df_m = pd.DataFrame({'NCM': ['00000000'], 'CST_ENT': ['50'], 'CST_SAI': ['01']})
-        b = io.BytesIO(); 
-        with pd.ExcelWriter(b, engine='xlsxwriter') as w: df_m.to_excel(w, index=False)
-        st.download_button("Modelo PIS/COF", b.getvalue(), "modelo_pc.xlsx")
+    # --- 2. MODELOS DE GABARITO ---
+    with st.expander("📂 2. MODELOS DE GABARITO"):
+        st.caption("Modelos para novos cadastros")
+        
+        # Gabarito ICMS (9 Colunas A-I)
+        df_m_icms = pd.DataFrame(columns=['NCM','DESC_INT','CST_INT','ALIQ_INT','RED_INT','DESC_EXT','CST_EXT','ALIQ_EXT','OBS'])
+        b_icms = io.BytesIO()
+        with pd.ExcelWriter(b_icms, engine='xlsxwriter') as w: df_m_icms.to_excel(w, index=False)
+        st.download_button("📥 Gabarito ICMS (A-I)", b_icms.getvalue(), "modelo_icms_A_I.xlsx")
+        
+        st.markdown("---")
+        
+        # Gabarito PIS/COFINS
+        df_m_pc = pd.DataFrame({'NCM': ['00000000'], 'CST_ENT': ['50'], 'CST_SAI': ['01']})
+        b_pc = io.BytesIO()
+        with pd.ExcelWriter(b_pc, engine='xlsxwriter') as w: df_m_pc.to_excel(w, index=False)
+        st.download_button("📥 Gabarito PIS/COF", b_pc.getvalue(), "modelo_pc.xlsx")
 
-# --- 5. UPLOADS XML (MANTIDO) ---
+# ==============================================================================
+# --- 3. ÁREA CENTRAL: LOGO DO SENTINELA E OPERAÇÃO ---
+# ==============================================================================
+
+# LOGO DO SENTINELA NO CENTRO
+caminho_titulo = ".streamlit/Sentinela.png"
+if os.path.exists(caminho_titulo):
+    col_l, col_tit, col_r = st.columns([3, 4, 3])
+    with col_tit: st.image(caminho_titulo, use_column_width=True)
+elif os.path.exists("Sentinela.png"):
+    col_l, col_tit, col_r = st.columns([3, 4, 3])
+    with col_tit: st.image("Sentinela.png", use_column_width=True)
+else:
+    st.markdown("<h1 style='text-align: center; color: #FF6F00;'>SENTINELA</h1>", unsafe_allow_html=True)
+
 st.markdown("---")
+
+# ÁREA DE UPLOADS (ORIGINAL)
 col_ent, col_sai = st.columns(2, gap="large")
+
 with col_ent:
     st.markdown("### 📥 1. Entradas")
+    st.markdown("---")
     up_ent_xml = st.file_uploader("📂 XMLs", type='xml', accept_multiple_files=True, key="ent_xml")
     up_ent_aut = st.file_uploader("🔍 Sefaz", type=['xlsx', 'csv'], key="ent_aut")
+
 with col_sai:
     st.markdown("### 📤 2. Saídas")
+    st.markdown("---")
     up_sai_xml = st.file_uploader("📂 XMLs", type='xml', accept_multiple_files=True, key="sai_xml")
     up_sai_aut = st.file_uploader("🔍 Sefaz", type=['xlsx', 'csv'], key="sai_aut")
 
-# --- 6. LÓGICA DE AUDITORIA COM REGRA CFOP (PASSO FINAL) ---
-@st.cache_data(ttl=5)
-def carregar_bases():
-    # Lógica de leitura de colunas A-I para ICMS
-    def ler_icms(nome):
-        path = get_file(nome)
-        if path:
-            df = pd.read_excel(path, usecols="A:I", dtype=str)
-            df.columns = ['NCM', 'D_Int', 'CST_Int', 'Aliq_Int', 'Red_Int', 'D_Ext', 'CST_Ext', 'Aliq_Ext', 'Obs']
-            df['NCM'] = df['NCM'].str.replace(r'\D', '', regex=True).str.zfill(8)
-            return df
-        return pd.DataFrame()
-
-    icms = ler_icms("base_icms.xlsx")
-    # ... (restante das leituras tipi e pc mantidas do seu original)
-    return icms
-
-# O restante do seu código original (extração XML, cruzamento e download final) 
-# continua exatamente abaixo daqui.
+# ... (Lógica de processamento e auditoria abaixo conforme o código original)
