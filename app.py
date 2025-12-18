@@ -7,76 +7,84 @@ import os
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Sentinela Fiscal Pro", layout="wide")
-st.title("🛡️ Sentinela: Auditoria Fiscal (ICMS & IPI)")
+st.title("🛡️ Sentinela: Auditoria Fiscal (ICMS, IPI, PIS & COFINS)")
 
-# --- 1. CARREGAR BASES MESTRE + TIPI (CORRIGIDO E BLINDADO) ---
+# --- 1. CARREGAR BASES MESTRE (COM BUSCA INTELIGENTE EM SUBPASTAS) ---
 @st.cache_data
 def carregar_bases_mestre():
-    # A. Bases Internas
-    caminho_mestre = "Sentinela_MIRÃO_Outubro2025.xlsx"
-    if os.path.exists(caminho_mestre):
+    # --- FUNÇÃO DE BUSCA (SHERLOCK HOLMES) ---
+    def encontrar_arquivo(nome_base):
+        # Procura na raiz e na pasta .streamlit, ignorando maiúsculas/minúsculas
+        possibilidades = [
+            nome_base, nome_base.lower(), nome_base.upper(), 
+            f".streamlit/{nome_base}", f".streamlit/{nome_base.lower()}",
+            # Tratamento especial para nomes compostos
+            "Pis_Cofins.xlsx", "pis_cofins.xlsx", ".streamlit/Pis_Cofins.xlsx"
+        ]
+        
+        # Tenta achar o arquivo exato
+        for p in possibilidades:
+            if os.path.exists(p): return p
+        
+        # Se não achou, varre os arquivos para ver se tem algo parecido (ex: "TIPI_2025.xlsx")
+        for root, dirs, files in os.walk("."):
+            for file in files:
+                if nome_base.lower().split('.')[0] in file.lower():
+                    return os.path.join(root, file)
+        return None
+
+    # A. Bases Internas (Sentinela)
+    caminho_mestre = encontrar_arquivo("Sentinela_MIRÃO_Outubro2025.xlsx")
+    if caminho_mestre:
         xls = pd.ExcelFile(caminho_mestre)
         df_gerencial = pd.read_excel(xls, 'Entradas Gerencial', dtype=str)
         df_tribut = pd.read_excel(xls, 'Bases Tribut', dtype=str)
         try: df_inter = pd.read_excel(xls, 'Bases Tribut', usecols="AC:AD", dtype=str).dropna()
         except: df_inter = pd.DataFrame()
     else:
-        return None, None, None, None
+        return None, None, None, None, None
 
-    # B. TIPI (Procura em pastas ocultas e limpa erros de NaN)
+    # B. TIPI
     df_tipi = pd.DataFrame()
-    
-    # Locais possíveis (Raiz ou Pasta .streamlit)
-    locais_possiveis = [
-        "TIPI.xlsx", "tipi.xlsx", "Tipi.xlsx",
-        ".streamlit/TIPI.xlsx", ".streamlit/tipi.xlsx"
-    ]
-    
-    caminho_encontrado = None
-    
-    for caminho in locais_possiveis:
-        if os.path.exists(caminho):
-            caminho_encontrado = caminho
-            break
-    
-    if caminho_encontrado:
+    caminho_tipi = encontrar_arquivo("TIPI.xlsx")
+    if caminho_tipi:
         try:
-            # Lê forçando texto
-            df_raw = pd.read_excel(caminho_encontrado, dtype=str)
-            
-            # Pega as duas primeiras colunas
+            df_raw = pd.read_excel(caminho_tipi, dtype=str)
             df_tipi = df_raw.iloc[:, [0, 1]].copy()
             df_tipi.columns = ['NCM', 'ALIQ']
-            
-            # --- LIMPEZA BLINDADA (CORREÇÃO DO ERRO) ---
-            # 1. Remove linhas que estão totalmente vazias
             df_tipi = df_tipi.dropna(how='all')
-            
-            # 2. Garante que NCM é string, remove não números
-            df_tipi['NCM'] = df_tipi['NCM'].astype(str).str.replace(r'\D', '', regex=True)
-            
-            # 3. Zeros à esquerda
-            df_tipi['NCM'] = df_tipi['NCM'].str.zfill(8)
-            
-            # 4. Limpa Alíquota
-            df_tipi['ALIQ'] = df_tipi['ALIQ'].astype(str).str.upper().replace('NT', '0').str.strip().str.replace(',', '.')
-            
-            # 5. O FILTRO QUE DAVA ERRO (Agora com na=False)
-            # O 'na=False' impede o erro "Cannot mask with non-boolean array"
+            # Limpeza
+            df_tipi['NCM'] = df_tipi['NCM'].str.replace(r'\D', '', regex=True).str.zfill(8)
+            df_tipi['ALIQ'] = df_tipi['ALIQ'].str.upper().replace('NT', '0').str.strip().str.replace(',', '.')
             df_tipi = df_tipi[df_tipi['NCM'].str.match(r'^\d{8}$', na=False)]
+        except Exception as e:
+            print(f"Erro TIPI: {e}")
+
+    # C. PIS & COFINS (Baseada na sua imagem: NCM | Entrada | Saída)
+    df_pc_base = pd.DataFrame()
+    caminho_pc = encontrar_arquivo("Pis_Cofins.xlsx")
+    
+    if caminho_pc:
+        try:
+            # Lê esperando 3 colunas: NCM, CST Entrada, CST Saída
+            df_pc_raw = pd.read_excel(caminho_pc, dtype=str)
             
-            print(f"Sucesso: TIPI carregada de {caminho_encontrado}")
+            # Pega as 3 primeiras colunas
+            df_pc_base = df_pc_raw.iloc[:, [0, 1, 2]].copy()
+            df_pc_base.columns = ['NCM', 'CST_ENT', 'CST_SAI']
+            
+            # Limpeza NCM (Garante 8 dígitos)
+            df_pc_base['NCM'] = df_pc_base['NCM'].str.replace(r'\D', '', regex=True).str.zfill(8)
+            
+            # Limpeza CST (Garante 2 dígitos, ex: '6' vira '06')
+            df_pc_base['CST_SAI'] = df_pc_base['CST_SAI'].str.replace(r'\D', '', regex=True).str.zfill(2)
             
         except Exception as e:
-            st.error(f"Erro ao ler o arquivo {caminho_encontrado}: {e}")
-            df_tipi = pd.DataFrame()
-    else:
-        st.warning(f"⚠️ Não encontrei 'tipi.xlsx'.")
+            st.error(f"Erro ao ler Pis_Cofins.xlsx: {e}")
 
-    return df_gerencial, df_tribut, df_inter, df_tipi, caminho_encontrado
+    return df_gerencial, df_tribut, df_inter, df_tipi, df_pc_base
 
-# Executa carregamento
-df_gerencial, df_tribut, df_inter, df_tipi, caminho_encontrado = carregar_bases_mestre()
+df_gerencial, df_tribut, df_inter, df_tipi, df_pc_base = carregar_bases_mestre()
 
 # --- 2. EXTRAÇÃO XML ---
 def extrair_tags_completo(xml_content):
@@ -95,8 +103,17 @@ def extrair_tags_completo(xml_content):
         prod = det.find('nfe:prod', ns)
         imposto = det.find('nfe:imposto', ns)
         
+        # Função segura para pegar campos de PIS/COFINS
+        def get_pis_cofins(tag, field):
+            node = imposto.find(f'.//nfe:{tag}', ns)
+            if node is not None:
+                # Procura nas sub-tags (PISAliq, PISQtde, etc)
+                for child in node:
+                    res = child.find(f'nfe:{field}', ns)
+                    if res is not None: return res.text
+            return "" # Retorna vazio se não achar
+
         registro = {
-            "Natureza Operação": ide.find('nfe:natOp', ns).text if ide is not None else "",
             "Número NF": ide.find('nfe:nNF', ns).text if ide is not None else "",
             "UF Emit": emit.find('nfe:enderEmit/nfe:UF', ns).text if emit is not None else "",
             "UF Dest": dest.find('nfe:enderDest/nfe:UF', ns).text if dest is not None else "",
@@ -111,13 +128,12 @@ def extrair_tags_completo(xml_content):
             "BC ICMS": float(imposto.find('.//nfe:vBC', ns).text) if imposto.find('.//nfe:vBC', ns) is not None else 0.0,
             "Alq ICMS": float(imposto.find('.//nfe:pICMS', ns).text) if imposto.find('.//nfe:pICMS', ns) is not None else 0.0,
             "ICMS": float(imposto.find('.//nfe:vICMS', ns).text) if imposto.find('.//nfe:vICMS', ns) is not None else 0.0,
-            "pRedBC ICMS": float(imposto.find('.//nfe:pRedBC', ns).text) if imposto.find('.//nfe:pRedBC', ns) is not None else 0.0,
-            "BC ICMS-ST": float(imposto.find('.//nfe:vBCST', ns).text) if imposto.find('.//nfe:vBCST', ns) is not None else 0.0,
-            "ICMS-ST": float(imposto.find('.//nfe:vICMSST', ns).text) if imposto.find('.//nfe:vICMSST', ns) is not None else 0.0,
             # IPI
             "CST IPI": imposto.find('.//nfe:IPI//nfe:CST', ns).text if imposto.find('.//nfe:IPI//nfe:CST', ns) is not None else "",
             "Aliq IPI": float(imposto.find('.//nfe:IPI//nfe:pIPI', ns).text) if imposto.find('.//nfe:IPI//nfe:pIPI', ns) is not None else 0.0,
-            "vIPI": float(imposto.find('.//nfe:IPI//nfe:vIPI', ns).text) if imposto.find('.//nfe:IPI//nfe:vIPI', ns) is not None else 0.0,
+            # PIS e COFINS (Apenas CST para auditoria)
+            "CST PIS": get_pis_cofins('PIS', 'CST'),
+            "CST COFINS": get_pis_cofins('COFINS', 'CST'),
             "Chave de Acesso": chave
         }
         itens.append(registro)
@@ -127,10 +143,12 @@ def extrair_tags_completo(xml_content):
 with st.sidebar:
     st.header("📂 Upload Central")
     
-    if caminho_encontrado:
-        st.success(f"TIPI carregada de: {caminho_encontrado}")
-    else:
-        st.error("TIPI não encontrada.")
+    # Status das Bases
+    if not df_pc_base.empty: st.toast("Base PIS/COFINS Pronta!", icon="✅")
+    else: st.warning("⚠️ Base Pis_Cofins.xlsx não encontrada.")
+    
+    if not df_tipi.empty: st.toast("TIPI Pronta!", icon="✅")
+    else: st.warning("⚠️ TIPI não encontrada.")
 
     xml_saidas = st.file_uploader("1. Notas de SAÍDA", accept_multiple_files=True, type='xml')
     xml_entradas = st.file_uploader("2. Notas de ENTRADA", accept_multiple_files=True, type='xml')
@@ -142,7 +160,6 @@ if (xml_saidas or xml_entradas) and rel_status:
         df_st_rel = pd.read_excel(rel_status, dtype=str) if rel_status.name.endswith('.xlsx') else pd.read_csv(rel_status, dtype=str)
         status_dict = dict(zip(df_st_rel.iloc[:, 0].str.replace(r'\D', '', regex=True), df_st_rel.iloc[:, 5]))
     except:
-        st.error("Erro ao ler relatório de status.")
         status_dict = {}
 
     list_s = []
@@ -158,12 +175,13 @@ if (xml_saidas or xml_entradas) and rel_status:
     if not df_s.empty:
         df_s['AP'] = df_s['Chave de Acesso'].str.replace(r'\D', '', regex=True).map(status_dict).fillna("Pendente")
         
-        # Mapas
+        # --- PREPARAÇÃO DOS MAPAS ---
         map_tribut_cst = {}
         map_tribut_aliq = {}
         map_gerencial_cst = {}
         map_inter = {}
         map_tipi = {}
+        map_pis_cofins_saida = {} # Mapa Novo
 
         if df_tribut is not None:
             map_tribut_cst = dict(zip(df_tribut.iloc[:, 0].astype(str), df_tribut.iloc[:, 2].astype(str)))
@@ -172,81 +190,88 @@ if (xml_saidas or xml_entradas) and rel_status:
             map_gerencial_cst = dict(zip(df_gerencial.iloc[:, 0].astype(str), df_gerencial.iloc[:, 1].astype(str)))
         if not df_inter.empty:
             map_inter = dict(zip(df_inter.iloc[:, 0].astype(str), df_inter.iloc[:, 1].astype(str)))
-        
-        # Mapeamento TIPI
         if not df_tipi.empty:
             map_tipi = dict(zip(df_tipi['NCM'], df_tipi['ALIQ']))
-        else:
-            st.warning("⚠️ TIPI não carregada corretamente.")
+            
+        # Mapa PIS/COFINS (NCM -> CST Saída)
+        if not df_pc_base.empty:
+            # Cria dicionário NCM : CST_SAIDA
+            map_pis_cofins_saida = dict(zip(df_pc_base['NCM'], df_pc_base['CST_SAI']))
 
-        # === ICMS ===
-        df_icms = df_s.copy()
+        # === TABELAS DE AUDITORIA ===
         
+        # 1. ICMS
+        df_icms = df_s.copy()
         def f_analise_cst(row):
             status, cst, ncm = str(row['AP']), str(row['CST ICMS']).strip(), str(row['NCM']).strip()
             if "Cancelamento" in status: return "NF cancelada"
             cst_esp = map_tribut_cst.get(ncm)
             if not cst_esp: return "NCM não encontrado"
-            if map_gerencial_cst.get(ncm) == "60" and cst != "60": return f"Divergente — CST informado: {cst} | Esperado: 60"
-            return "Correto" if cst == cst_esp else f"Divergente — CST informado: {cst} | Esperado: {cst_esp}"
-
-        def f_cst_bc(row):
-            if "Cancelamento" in str(row['AP']): return "NF Cancelada"
-            cst, v_p, bc = str(row['CST ICMS']), row['vProd'], row['BC ICMS']
-            pred = row['pRedBC ICMS']
-            msgs = []
-            if cst == "00" and abs(bc - v_p) > 0.02: msgs.append("Base diferente do produto")
-            if cst == "20" and abs(bc - (v_p * (1 - pred/100))) > 0.02: msgs.append("Base incorreta após redução")
-            if cst in ["90", "99"] and row['ICMS'] == 0: msgs.append("Sem destaque ICMS")
-            return "; ".join(msgs) if msgs else "Correto"
-
+            if map_gerencial_cst.get(ncm) == "60" and cst != "60": return f"Divergente — CST: {cst} | Esp: 60"
+            return "Correto" if cst == cst_esp else f"Divergente — CST: {cst} | Esp: {cst_esp}"
+        
         def f_aliq(row):
-            if "Cancelamento" in str(row['AP']): return "NF Cancelada"
-            ncm, uf_e, uf_d, aliq_xml = str(row['NCM']), row['UF Emit'], row['UF Dest'], row['Alq ICMS']
-            if uf_e == uf_d:
-                esp = map_tribut_aliq.get(ncm)
-                if not esp: return "NCM não encontrado (Interno)"
-            else:
-                esp = map_inter.get(uf_d)
-                if not esp: return "UF Destino não encontrada"
-            try: esp_val = float(str(esp).replace(',', '.'))
-            except: return "Erro valor esperado"
-            return "Correto" if abs(aliq_xml - esp_val) < 0.1 else f"Destacado: {aliq_xml} | Esperado: {esp_val}"
-
-        def f_complemento(row):
-            analise = str(row['Analise Aliq ICMS'])
-            if "Destacado" in analise:
-                try:
-                    dest = float(re.search(r'Destacado: ([\d.]+)', analise).group(1))
-                    esp = float(re.search(r'Esperado: ([\d.]+)', analise).group(1))
-                    if dest < esp: return (esp - dest) * (row['BC ICMS'] / 100)
-                except: return 0.0
-            return 0.0
+             if "Cancelamento" in str(row['AP']): return "NF Cancelada"
+             ncm, uf_e, uf_d, aliq_xml = str(row['NCM']), row['UF Emit'], row['UF Dest'], row['Alq ICMS']
+             if uf_e == uf_d: esp = map_tribut_aliq.get(ncm)
+             else: esp = map_inter.get(uf_d)
+             try: esp_val = float(str(esp).replace(',', '.'))
+             except: return "Erro valor esperado"
+             return "Correto" if abs(aliq_xml - esp_val) < 0.1 else f"Destacado: {aliq_xml} | Esp: {esp_val}"
 
         df_icms['Análise CST ICMS'] = df_icms.apply(f_analise_cst, axis=1)
-        df_icms['CST x BC'] = df_icms.apply(f_cst_bc, axis=1)
         df_icms['Analise Aliq ICMS'] = df_icms.apply(f_aliq, axis=1)
-        df_icms['Complemento ICMS Próprio'] = df_icms.apply(f_complemento, axis=1)
 
-        # === IPI ===
+        # 2. IPI
         df_ipi = df_s.copy()
-
         def f_analise_ipi(row):
             if "Cancelamento" in str(row['AP']): return "NF Cancelada"
             ncm, aliq_xml = str(row['NCM']).strip(), row['Aliq IPI']
-            
             if not map_tipi: return "TIPI não disponível"
-
             esp = map_tipi.get(ncm)
             if esp is None: return "NCM não encontrado na TIPI"
-            
             try: esp_val = float(str(esp).replace(',', '.'))
             except: return "Erro leitura TIPI"
-
             if abs(aliq_xml - esp_val) < 0.1: return "Correto"
-            else: return f"Destacado: {aliq_xml} | Esperado: {esp_val}"
-
+            else: return f"Destacado: {aliq_xml} | Esp: {esp_val}"
+        
         df_ipi['Análise IPI'] = df_ipi.apply(f_analise_ipi, axis=1)
+
+        # 3. PIS E COFINS (NOVA LÓGICA PELO EXCEL)
+        df_pc = df_s.copy()
+
+        def f_analise_pis_cofins(row):
+            if "Cancelamento" in str(row['AP']): return "NF Cancelada"
+            ncm = str(row['NCM']).strip()
+            
+            # Pega CSTs do XML
+            cst_pis_xml = str(row['CST PIS']).strip()
+            cst_cof_xml = str(row['CST COFINS']).strip()
+
+            if not map_pis_cofins_saida: return "Base Excel não carregada"
+
+            # Busca o CST Esperado na coluna SAÍDA do Excel
+            cst_saida_esp = map_pis_cofins_saida.get(ncm)
+
+            if cst_saida_esp is None: return "NCM não encontrado na base PC"
+
+            # Auditoria
+            erros = []
+            
+            # Compara PIS (Nota de Saída vs Coluna Saída)
+            if cst_pis_xml != cst_saida_esp:
+                erros.append(f"PIS: {cst_pis_xml} (Esp: {cst_saida_esp})")
+                
+            # Compara COFINS (Nota de Saída vs Coluna Saída)
+            if cst_cof_xml != cst_saida_esp:
+                erros.append(f"COF: {cst_cof_xml} (Esp: {cst_saida_esp})")
+
+            if not erros:
+                return "Correto"
+            else:
+                return " | ".join(erros)
+
+        df_pc['Análise PIS e COFINS'] = df_pc.apply(f_analise_pis_cofins, axis=1)
 
     # --- EXPORTAR ---
     buffer = io.BytesIO()
@@ -255,6 +280,7 @@ if (xml_saidas or xml_entradas) and rel_status:
         if not df_s.empty: df_s.to_excel(writer, index=False, sheet_name='Saídas')
         if not df_s.empty: df_icms.to_excel(writer, index=False, sheet_name='ICMS')
         if not df_s.empty: df_ipi.to_excel(writer, index=False, sheet_name='IPI')
+        if not df_s.empty: df_pc.to_excel(writer, index=False, sheet_name='Pis_Cofins')
 
-    st.success("✅ Auditoria Completa Finalizada!")
+    st.success("✅ Auditoria Completa: Entradas, Saídas, ICMS, IPI e Pis_Cofins geradas!")
     st.download_button("📥 Baixar Sentinela Auditada", buffer.getvalue(), "Sentinela_Auditada_Final.xlsx")
