@@ -107,7 +107,7 @@ def gerar_excel_final(df_ent, df_sai):
 
     if df_sai is None or df_sai.empty: df_sai = pd.DataFrame([{"AVISO": "Sem dados"}])
 
-    # --- ABA ICMS (RESTAURADA INTEGRALMENTE CONFORME SEU CÓDIGO) ---
+    # --- ABA ICMS (MANTER IGUAL) ---
     df_icms_audit = df_sai.copy()
     tem_entradas = df_ent is not None and not df_ent.empty
     ncms_ent_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist() if tem_entradas else []
@@ -144,27 +144,43 @@ def gerar_excel_final(df_ent, df_sai):
 
     df_icms_audit[['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento']] = df_icms_audit.apply(auditoria_final_icms, axis=1)
 
-    # --- ABA PIS_COFINS (PRESERVADA) ---
+    # --- ABA PIS_COFINS (LAPIDADA - REMOVIDO REDUNDÂNCIA) ---
     df_pc = df_sai.copy()
     def audit_pc(row):
         ncm = str(row['NCM']).zfill(8)
         info = base_pc[base_pc['NCM_KEY'] == ncm] if not base_pc.empty else pd.DataFrame()
-        if info.empty: return pd.Series(["NCM não mapeado", f"PIS: {row['CST-PIS']} / COF: {row['CST-COF']}", "-", "Cadastrar NCM"])
+        if info.empty: 
+            return pd.Series(["NCM não mapeado", f"P/C: {row['CST-PIS']}/{row['CST-COF']}", "-", "Cadastrar NCM"])
+        
         try:
             cst_p_esp = str(info.iloc[0]['CST_PIS']).zfill(2)
             cst_c_esp = str(info.iloc[0]['CST_COFINS']).zfill(2)
-        except: cst_p_esp, cst_c_esp = "01", "01"
+        except: 
+            cst_p_esp, cst_c_esp = "01", "01"
+            
         diag_list, acao_list = [], []
+        # Diagnóstico agora foca apenas no desvio de VALOR ou ALÍQUOTA (se necessário no futuro)
+        # O CST já é mostrado na coluna "CST Esperado"
         if str(row['CST-PIS']) != cst_p_esp:
-            diag_list.append(f"PIS: XML {row['CST-PIS']} vs Base {cst_p_esp}")
-            acao_list.append(f"Cc-e (CST PIS para {cst_p_esp})")
+            diag_list.append(f"PIS: Divergente")
+            acao_list.append(f"Cc-e (CST PIS {cst_p_esp})")
         if str(row['CST-COF']) != cst_c_esp:
-            diag_list.append(f"COF: XML {row['CST-COF']} vs Base {cst_c_esp}")
-            acao_list.append(f"Cc-e (CST COF para {cst_c_esp})")
-        return pd.Series(["; ".join(diag_list) if diag_list else "✅ CSTs Corretos", f"PIS: {row['CST-PIS']} / COF: {row['CST-COF']}", f"PIS: {cst_p_esp} / COF: {cst_c_esp}", " + ".join(acao_list) if acao_list else "✅ Correto"])
+            diag_list.append(f"COFINS: Divergente")
+            acao_list.append(f"Cc-e (CST COF {cst_c_esp})")
+            
+        res_diag = "; ".join(diag_list) if diag_list else "✅ Correto"
+        res_acao = " + ".join(acao_list) if acao_list else "✅ Correto"
+        
+        return pd.Series([
+            res_diag, 
+            f"P/C: {row['CST-PIS']}/{row['CST-COF']}", 
+            f"P/C: {cst_p_esp}/{cst_c_esp}", 
+            res_acao
+        ])
+    
     df_pc[['Diagnóstico', 'CST XML (P/C)', 'CST Esperado (P/C)', 'Ação']] = df_pc.apply(audit_pc, axis=1)
 
-    # --- ABA IPI (LAPIDADA - VALORES + CST) ---
+    # --- ABA IPI (MANTER IGUAL) ---
     df_ipi = df_sai.copy()
     def audit_ipi(row):
         ncm = str(row['NCM']).zfill(8)
@@ -177,10 +193,10 @@ def gerar_excel_final(df_ent, df_sai):
         v_esp = row['BC-IPI'] * (aliq_i_esp / 100)
         diag_ipi, acao_ipi = [], []
         if str(row['CST-IPI']) != cst_i_esp:
-            diag_ipi.append(f"CST: XML {row['CST-IPI']} vs Base {cst_i_esp}")
+            diag_ipi.append(f"CST XML {row['CST-IPI']} vs Base {cst_i_esp}")
             acao_ipi.append(f"Cc-e (CST IPI para {cst_i_esp})")
         if abs(row['VAL-IPI'] - v_esp) > 0.01:
-            diag_ipi.append(f"Valor: XML {format_brl(row['VAL-IPI'])} vs Esp. {format_brl(v_esp)}")
+            diag_ipi.append(f"Valor XML {format_brl(row['VAL-IPI'])} vs Esp. {format_brl(v_esp)}")
             acao_ipi.append("Emitir NF Complementar" if row['VAL-IPI'] < v_esp else "Estorno de IPI")
         return pd.Series(["; ".join(diag_ipi) if diag_ipi else "✅ Correto", row['CST-IPI'], cst_i_esp, format_brl(row['VAL-IPI']), format_brl(v_esp), " + ".join(acao_ipi) if acao_ipi else "✅ Correto"])
     df_ipi[['Diagnóstico', 'CST XML', 'CST Base', 'IPI XML', 'IPI Esperado', 'Ação']] = df_ipi.apply(audit_ipi, axis=1)
