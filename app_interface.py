@@ -99,7 +99,7 @@ if st.button("🚀 EXECUTAR AUDITORIA COMPLETA", type="primary", use_container_w
             
             st.success("Análise concluída!")
             st.download_button(
-                label="💾 BAIXAR RELATÓRIO COM ANÁLISE PIS/COFINS/IPI",
+                label="💾 BAIXAR RELATÓRIO",
                 data=excel_binario,
                 file_name="Auditoria_Sentinela_Completa.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
