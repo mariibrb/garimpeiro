@@ -6,7 +6,8 @@ from datetime import datetime
 
 def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
     """
-    Extração robusta que preserva a estrutura original e evita retornar dados vazios.
+    Extração que preserva sua lógica original de tags.
+    O segredo para não vir vazio é o uso correto do namespace e do findtext.
     """
     registros = []
     
@@ -15,7 +16,7 @@ def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
 
     for xml_file in xml_files:
         try:
-            # Garantir a leitura do buffer do Streamlit
+            # Garante a leitura do buffer do Streamlit
             conteudo = xml_file.read()
             if not conteudo:
                 continue
@@ -30,7 +31,7 @@ def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
             infNFe = root.find(f".//{ns}infNFe")
             chave = infNFe.attrib['Id'][3:] if infNFe is not None else "N/A"
             
-            # Detalhamento dos itens (Onde a mágica acontece)
+            # Detalhamento dos itens conforme sua estrutura de origem
             for det in root.findall(f".//{ns}det"):
                 prod = det.find(f"{ns}prod")
                 imposto = det.find(f"{ns}imposto")
@@ -57,7 +58,6 @@ def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
                 # Extração de ICMS
                 icms = imposto.find(f".//{ns}ICMS")
                 if icms is not None:
-                    # Tenta buscar vICMS em qualquer subtag (ICMS00, ICMS10, etc)
                     v_icms = icms.find(f".//{ns}vICMS")
                     if v_icms is not None:
                         item['valor_icms'] = float(v_icms.text or 0.0)
@@ -83,7 +83,7 @@ def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
 
                 registros.append(item)
             
-            # Resetar o ponteiro do arquivo para evitar erros em múltiplas leituras
+            # Resetar o ponteiro do arquivo para evitar que venha vazio na próxima leitura
             xml_file.seek(0)
             
         except Exception:
@@ -91,7 +91,7 @@ def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
 
     df = pd.DataFrame(registros)
     
-    # Cruzamento com Autenticidade (Merge Seguro)
+    # Cruzamento com Autenticidade (Proteção contra KeyError)
     if df_autenticidade is not None and not df.empty:
         df_autenticidade.columns = [c.upper() for c in df_autenticidade.columns]
         if 'CHAVE' in df_autenticidade.columns:
@@ -101,34 +101,27 @@ def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
 
 def gerar_excel_final(df_e, df_s):
     """
-    Gera o Excel final com as abas Entradas, Saídas e as colunas de ANALISE em PISCOFINS e IPI.
+    Gera o Excel mantendo suas abas e acrescentando apenas a coluna de ANALISE.
     """
     output = io.BytesIO()
     
-    # Bases consolidadas para as abas de impostos
+    # Consolidação apenas para as abas de auditoria
     df_consolidado = pd.concat([df_e, df_s], ignore_index=True)
 
     # --- ABA PISCOFINS ---
     df_piscofins = df_consolidado.copy()
     if not df_piscofins.empty:
-        # PIS + COFINS destacado vs Cálculo esperado
-        v_dest = df_piscofins['valor_pis_xml'] + df_piscofins['valor_cofins_xml']
-        aliq_total = (df_piscofins['aliquota_pis'] + df_piscofins['aliquota_cofins']) / 100
-        v_esp = df_piscofins['base_calculo'] * aliq_total
-        
-        # Coluna de análise conforme solicitado
-        df_piscofins['ANALISE'] = np.where(abs(v_dest - v_esp) < 0.01, "CORRETO", "ESPERADO DESTACADO")
+        v_destacado = df_piscofins['valor_pis_xml'] + df_piscofins['valor_cofins_xml']
+        v_esperado = df_piscofins['base_calculo'] * ((df_piscofins['aliquota_pis'] + df_piscofins['aliquota_cofins']) / 100)
+        df_piscofins['ANALISE'] = np.where(abs(v_destacado - v_esperado) < 0.01, "CORRETO", "ESPERADO DESTACADO")
 
     # --- ABA IPI ---
     df_ipi = df_consolidado.copy()
     if not df_ipi.empty:
-        # IPI destacado vs Cálculo esperado
         v_ipi_esp = df_ipi['base_calculo'] * (df_ipi['aliquota_ipi'] / 100)
-        
-        # Coluna de análise conforme solicitado
         df_ipi['ANALISE'] = np.where(abs(df_ipi['valor_ipi_xml'] - v_ipi_esp) < 0.01, "CORRETO", "ESPERADO DESTACADO")
 
-    # Escrita das abas
+    # Escrita final mantendo a estrutura original
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         if not df_e.empty: df_e.to_excel(writer, sheet_name='Entradas', index=False)
         if not df_s.empty: df_s.to_excel(writer, sheet_name='Saídas', index=False)
