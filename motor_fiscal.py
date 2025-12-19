@@ -70,11 +70,8 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                             if cst is not None: linha["CST-ICMS"] = cst.text
                             if nodo.find('vBC') is not None: linha["BC-ICMS"] = float(nodo.find('vBC').text)
                             if nodo.find('vICMS') is not None: linha["VLR-ICMS"] = float(nodo.find('vICMS').text)
-                    
-                    vipi, vpis, vcof = imp.find('.//vIPI'), imp.find('.//vPIS'), imp.find('.//vCOFINS')
-                    if vipi is not None: linha["VLR_IPI"] = float(vipi.text)
-                    if vpis is not None: linha["VLR_PIS"] = float(vpis.text)
-                    if vcof is not None: linha["VLR_COF"] = float(vcof.text)
+                            if nodo.find('vBCST') is not None: linha["BC-ICMS-ST"] = float(nodo.find('vBCST').text)
+                            if nodo.find('vICMSST') is not None: linha["ICMS-ST"] = float(nodo.find('vICMSST').text)
 
                 linha["VC"] = linha["VPROD"] + linha["ICMS-ST"] + linha["VLR_IPI"] + linha["DESP"] - linha["DESC"]
                 dados_lista.append(linha)
@@ -85,15 +82,10 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
     
     df_res = pd.DataFrame(dados_lista)
     
-    # --- PROCV: CHAVE (COL A = 0) e STATUS (COL F = 5) ---
     if not df_res.empty and df_autenticidade is not None:
-        try:
-            df_res['CHAVE_ACESSO'] = df_res['CHAVE_ACESSO'].astype(str).str.strip()
-            # Pega Coluna A (0) e Coluna F (5) da planilha de autenticidade
-            mapeamento = dict(zip(df_autenticidade.iloc[:, 0].astype(str).str.strip(), df_autenticidade.iloc[:, 5]))
-            df_res['STATUS'] = df_res['CHAVE_ACESSO'].map(mapeamento).fillna("Chave não encontrada na base")
-        except Exception as e:
-            st.error(f"Erro no cruzamento: Verifique se a planilha tem pelo menos 6 colunas (A até F).")
+        df_res['CHAVE_ACESSO'] = df_res['CHAVE_ACESSO'].astype(str).str.strip()
+        mapeamento = dict(zip(df_autenticidade.iloc[:, 0].astype(str).str.strip(), df_autenticidade.iloc[:, 5]))
+        df_res['STATUS'] = df_res['CHAVE_ACESSO'].map(mapeamento).fillna("Chave não encontrada na base")
 
     if not df_res.empty:
         df_res.drop_duplicates(subset=['CHAVE_ACESSO', 'AC'], keep='first', inplace=True)
@@ -103,12 +95,49 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
     return df_res
 
 def gerar_excel_final(df_ent, df_sai):
+    ncms_com_st = []
+    if not df_ent.empty:
+        ncms_com_st = df_ent[df_ent['ICMS-ST'] > 0]['NCM'].unique().tolist()
+
+    df_icms_audit = df_sai.copy() if not df_sai.empty else pd.DataFrame()
+
+    if not df_icms_audit.empty:
+        df_icms_audit['Aliq_Efetiva'] = (df_icms_audit['VLR-ICMS'] / df_icms_audit['BC-ICMS']).fillna(0)
+        
+        def auditoria_linha(row):
+            mensagens = []
+            acao = "Manter conforme XML"
+            esperado = row['VLR-ICMS']
+            
+            if row['NCM'] in ncms_com_st and row['VLR-ICMS'] > 0:
+                mensagens.append("BITRIBUTAÇÃO: NCM teve ST na entrada")
+                esperado = 0
+                acao = "Alterar CST para 060 e zerar ICMS"
+            
+            if row['CST-ICMS'] in ['40', '41', '50'] and row['VLR-ICMS'] > 0:
+                mensagens.append("ICMS destacado em operação isenta")
+                esperado = 0
+                acao = "Estornar destaque de ICMS"
+
+            base_calculada = row['VPROD'] + row['FRETE'] + row['SEG'] + row['DESP'] - row['DESC']
+            if row['BC-ICMS'] > 0 and abs(row['BC-ICMS'] - base_calculada) > 1:
+                mensagens.append("Base de Cálculo não confere com itens acessórios")
+                acao = "Revisar composição da Base de Cálculo"
+
+            diag = ", ".join(mensagens) if mensagens else "✅ Conformidade Fiscal: Nenhuma divergência encontrada"
+            return pd.Series([diag, esperado, acao])
+
+        df_icms_audit[['Diagnóstico', 'Valor_ICMS_Esperado', 'Ação_Corretiva']] = df_icms_audit.apply(auditoria_linha, axis=1)
+
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
         if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
         if not df_sai.empty:
-            for aba in ['SAIDAS', 'ICMS', 'IPI', 'PIS_COFINS', 'DIFAL']:
-                df_sai.to_excel(wr, sheet_name=aba, index=False)
+            df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
+            df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False) 
+            df_sai.to_excel(wr, sheet_name='IPI', index=False)
+            df_sai.to_excel(wr, sheet_name='PIS_COFINS', index=False)
+            df_sai.to_excel(wr, sheet_name='DIFAL', index=False)
         else:
             for aba in ['SAIDAS', 'ICMS', 'IPI', 'PIS_COFINS', 'DIFAL']:
                 pd.DataFrame().to_excel(wr, sheet_name=aba, index=False)
