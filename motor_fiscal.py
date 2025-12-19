@@ -156,24 +156,27 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         for col in ['ST', 'DIFAL', 'FCP', 'FCP-ST']: df_dest[col] = df_dest[col].apply(format_brl)
     else: df_dest = pd.DataFrame()
 
-    # --- LEITURA EXCLUSIVA DOS GERENCIAIS (CSV) ---
-    def read_gerencial(f, cols):
+    # --- BLOCO GERENCIAIS (FIX LEITURA) ---
+    def load_csv(f, cols):
         if not f: return pd.DataFrame()
         try:
             f.seek(0)
+            # Detecta separador e força NF como Texto
             df = pd.read_csv(f, sep=None, engine='python', header=None, dtype={0: str})
+            # Remove cabeçalho se a primeira célula não for só números
             if not str(df.iloc[0, 0]).isdigit(): df = df.iloc[1:]
             df.columns = cols
             return df
         except: return pd.DataFrame()
 
-    cols_sai = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
-    cols_ent = ['NUM_NF','DATA_EMISSAO','CNPJ','UF','VLR_NF','AC','CFOP','COD_PROD','DESCR','NCM','UNID','VUNIT','QTDE','VPROD','DESC','FRETE','SEG','DESP','VC','CST-ICMS','Coluna2','BC-ICMS','VLR-ICMS','BC-ICMS-ST','ICMS-ST','VLR_IPI','CST_PIS','BC_PIS','VLR_PIS','CST_COF','BC_COF','VLR_COF']
-    df_ge = read_gerencial(file_ger_ent, cols_ent); df_gs = read_gerencial(file_ger_sai, cols_sai)
+    c_sai = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
+    c_ent = ['NUM_NF','DATA_EMISSAO','CNPJ','UF','VLR_NF','AC','CFOP','COD_PROD','DESCR','NCM','UNID','VUNIT','QTDE','VPROD','DESC','FRETE','SEG','DESP','VC','CST-ICMS','Coluna2','BC-ICMS','VLR-ICMS','BC-ICMS-ST','ICMS-ST','VLR_IPI','CST_PIS','BC_PIS','VLR_PIS','CST_COF','BC_COF','VLR_COF']
+    
+    df_ge = load_csv(file_ger_ent, c_ent); df_gs = load_csv(file_ger_sai, c_sai)
 
+    # --- GRAVAÇÃO FINAL ---
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
-        # Grava TODAS as abas conforme solicitado
         if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
         if not df_sai.empty: df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
         if not df_icms_audit.empty: df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
@@ -181,14 +184,13 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         if not df_ipi.empty: df_ipi.to_excel(wr, sheet_name='IPI', index=False)
         if not df_difal.empty: df_difal.to_excel(wr, sheet_name='DIFAL', index=False)
         if not df_dest.empty: df_dest.to_excel(wr, sheet_name='ICMS_Destino', index=False)
+        # As gerenciais aparecem se o arquivo existir
         if not df_ge.empty: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
         if not df_gs.empty: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
 
-        # Ajuste de formato para Coluna A (Texto)
-        workbook = wr.book
-        fmt_text = workbook.add_format({'num_format': '@'})
+        # Forçar formato Texto na coluna A
+        wb = wr.book; f_t = wb.add_format({'num_format': '@'})
         for s in ['Gerenc. Entradas', 'Gerenc. Saídas']:
-            if s in wr.sheets:
-                wr.sheets[s].set_column('A:A', 20, fmt_text)
-
+            if s in wr.sheets: wr.sheets[s].set_column('A:A', 20, f_t)
+            
     return mem.getvalue()
