@@ -72,13 +72,15 @@ with col_ent:
     st.markdown("### 📥 1. Entradas")
     xml_ent = st.file_uploader("📂 XMLs de Entrada", type='xml', accept_multiple_files=True, key="ue")
     aut_ent = st.file_uploader("🔍 Autenticidade Entrada", type=['xlsx'], key="ae")
-    ger_ent = st.file_uploader("📊 Gerenc. Entradas", type=['xlsx'], key="ge")
+    # Alterado para aceitar CSV
+    ger_ent = st.file_uploader("📊 Gerenc. Entradas (CSV)", type=['csv'], key="ge")
 
 with col_sai:
     st.markdown("### 📤 2. Saídas")
     xml_sai = st.file_uploader("📂 XMLs de Saída", type='xml', accept_multiple_files=True, key="us")
     aut_sai = st.file_uploader("🔍 Autenticidade Saída", type=['xlsx'], key="as")
-    ger_sai = st.file_uploader("📊 Gerenc. Saídas", type=['xlsx'], key="gs")
+    # Alterado para aceitar CSV
+    ger_sai = st.file_uploader("📊 Gerenc. Saídas (CSV)", type=['csv'], key="gs")
 
 # --- EXECUÇÃO ---
 st.markdown("<br>", unsafe_allow_html=True)
@@ -95,7 +97,7 @@ if st.button("🚀 EXECUTAR AUDITORIA", type="primary", use_container_width=True
             df_e = extrair_dados_xml(xml_ent, "Entrada", df_autenticidade=df_autent_data)
             df_s = extrair_dados_xml(xml_sai, "Saída", df_autenticidade=df_autent_data)
             
-            # Geração com a nova aba ICMS_Destino
+            # Geração do relatório final
             excel_binario = gerar_excel_final(df_e, df_s, file_ger_ent=ger_ent, file_ger_sai=ger_sai)
             
             st.success("Análise concluída! 🧡")
