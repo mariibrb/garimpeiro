@@ -53,6 +53,7 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                             if nodo.find('vBC') is not None: linha["BC-ICMS"] = float(nodo.find('vBC').text)
                             if nodo.find('vICMS') is not None: linha["VLR-ICMS"] = float(nodo.find('vICMS').text)
                             if nodo.find('pICMS') is not None: linha["ALQ-ICMS"] = float(nodo.find('pICMS').text)
+                            if nodo.find('vICMSST') is not None: linha["ICMS-ST"] = float(nodo.find('vICMSST').text)
                     
                     # Extração PIS/COFINS
                     pis = imp.find('.//PIS')
@@ -90,7 +91,6 @@ def gerar_excel_final(df_ent, df_sai):
     def limpar_txt(v): return str(v).replace('.0', '').strip()
     def format_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     
-    # Carregamento Bases
     try:
         base_icms = pd.read_excel(".streamlit/Base_ICMS.xlsx")
         base_icms['NCM_KEY'] = base_icms.iloc[:, 0].apply(limpar_txt).str.replace(r'\D', '', regex=True).str.zfill(8)
@@ -120,7 +120,7 @@ def gerar_excel_final(df_ent, df_sai):
         return pd.Series([st_e, "; ".join(diag) if diag else "✅ Correto", format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS']*aliq_e/100), " + ".join(acao) if acao else "✅ Correto", format_brl(max(0, (aliq_e - row['ALQ-ICMS']) * row['BC-ICMS'] / 100))])
     df_icms_audit[['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento']] = df_icms_audit.apply(audit_icms, axis=1)
 
-    # --- ABA PIS_COFINS (PRESERVADA) ---
+    # --- ABA PIS/COFINS (PRESERVADA) ---
     df_pc = df_sai.copy()
     def audit_pc(row):
         ncm = str(row['NCM']).zfill(8); info = base_pc[base_pc['NCM_KEY'] == ncm] if not base_pc.empty else pd.DataFrame()
@@ -146,21 +146,32 @@ def gerar_excel_final(df_ent, df_sai):
         return pd.Series(["; ".join(diag) if diag else "✅ Correto", row['CST-IPI'], ci_e, format_brl(row['VAL-IPI']), format_brl(v_e), " + ".join(acao) if acao else "✅ Correto", format_brl(max(0, v_e - row['VAL-IPI']))])
     df_ipi[['Diagnóstico', 'CST XML', 'CST Base', 'IPI XML', 'IPI Esperado', 'Ação', 'Complemento']] = df_ipi.apply(audit_ipi, axis=1)
 
-    # --- ABA DIFAL (LAPIDADA) ---
+    # --- ABA DIFAL (AJUSTADA PARA CFOP 6.404) ---
     df_difal = df_sai.copy()
     def audit_difal(row):
         is_inter = row['UF_EMIT'] != row['UF_DEST']
         cfop = str(row['CFOP'])
-        cfops_difal = ['6107', '6108', '6404', '6933']
+        # CFOPs que exigem DIFAL obrigatoriamente (Não Contribuinte)
+        cfops_difal_obrigatorio = ['6107', '6108', '6933']
+        # CFOPs de ST que podem ser DIFAL se for Consumidor Final
+        cfops_st_inter = ['6404', '6401', '6403']
+        
         diag, acao = [], []
         if is_inter:
-            if cfop in cfops_difal:
+            if cfop in cfops_difal_obrigatorio:
                 if row['VAL-DIFAL'] == 0:
                     diag.append(f"CFOP {cfop}: DIFAL Obrigatório")
                     acao.append("Emitir Complementar de DIFAL")
                 else: diag.append("✅ DIFAL OK")
-            else: diag.append(f"Inter: CFOP {cfop}")
-        else: diag.append(f"✅ Interna ({cfop})")
+            elif cfop in cfops_st_inter:
+                if row['VAL-DIFAL'] == 0:
+                    diag.append(f"CFOP {cfop} (ST): Conferir se é Consumidor Final")
+                    acao.append("Se Consumidor Final, destacar DIFAL. Se Revenda, destacar ST.")
+                else: diag.append("✅ DIFAL Destacado")
+            else:
+                diag.append(f"Operação Inter (CFOP {cfop})")
+        else:
+            diag.append(f"✅ Operação Interna ({cfop})")
         return pd.Series(["; ".join(diag), format_brl(row['VAL-DIFAL']), " + ".join(acao) if acao else "✅ OK"])
     df_difal[['Diagnóstico', 'DIFAL XML', 'Ação']] = df_difal.apply(audit_difal, axis=1)
 
