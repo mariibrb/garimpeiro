@@ -1,124 +1,193 @@
 import pandas as pd
-import xml.etree.ElementTree as ET
-import re
-import io
-import streamlit as st
+import numpy as np
+from datetime import datetime
 
-def extrair_dados_xml(files, fluxo, df_autenticidade=None):
-    dados_lista = []
-    if not files: return pd.DataFrame()
-
-    for f in files:
-        try:
-            f.seek(0)
-            conteudo_bruto = f.read()
-            texto_xml = conteudo_bruto.decode('utf-8', errors='replace')
-            texto_xml = re.sub(r'<\?xml[^?]*\?>', '', texto_xml)
-            texto_xml = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', texto_xml)
-            root = ET.fromstring(texto_xml)
-            
-            def buscar(caminho, raiz=root):
-                alvo = raiz.find(f'.//{caminho}')
-                return alvo.text if alvo is not None and alvo.text is not None else ""
-
-            inf_nfe = root.find('.//infNFe')
-            chave_acesso = inf_nfe.attrib.get('Id', '')[3:] if inf_nfe is not None else ""
-            
-            for det in root.findall('.//det'):
-                prod = det.find('prod')
-                imp = det.find('imposto')
-                ncm_limpo = re.sub(r'\D', '', buscar('NCM', prod)).zfill(8)
-                
-                linha = {
-                    "CHAVE_ACESSO": chave_acesso, "NUM_NF": buscar('nNF'),
-                    "DATA_EMISSAO": pd.to_datetime(buscar('dhEmi')).replace(tzinfo=None) if buscar('dhEmi') else None,
-                    "UF_EMIT": buscar('UF', root.find('.//emit')), "UF_DEST": buscar('UF', root.find('.//dest')),
-                    "AC": int(det.attrib.get('nItem', '0')), "CFOP": buscar('CFOP', prod), "NCM": ncm_limpo,
-                    "COD_PROD": buscar('cProd', prod), "DESCR": buscar('xProd', prod),
-                    "VPROD": float(buscar('vProd', prod)) if buscar('vProd', prod) else 0.0,
-                    "CST-ICMS": "", "BC-ICMS": 0.0, "VLR-ICMS": 0.0, "ALQ-ICMS": 0.0, "ICMS-ST": 0.0
-                }
-
-                if imp is not None:
-                    icms_nodo = imp.find('.//ICMS')
-                    if icms_nodo is not None:
-                        for nodo in icms_nodo:
-                            cst = nodo.find('CST') if nodo.find('CST') is not None else nodo.find('CSOSN')
-                            if cst is not None: linha["CST-ICMS"] = cst.text.zfill(2)
-                            if nodo.find('vBC') is not None: linha["BC-ICMS"] = float(nodo.find('vBC').text)
-                            if nodo.find('vICMS') is not None: linha["VLR-ICMS"] = float(nodo.find('vICMS').text)
-                            if nodo.find('pICMS') is not None: linha["ALQ-ICMS"] = float(nodo.find('pICMS').text)
-                            if nodo.find('vICMSST') is not None: linha["ICMS-ST"] = float(nodo.find('vICMSST').text)
-                dados_lista.append(linha)
-        except: continue
-    return pd.DataFrame(dados_lista)
-
-def gerar_excel_final(df_ent, df_sai):
-    try:
-        base_t = pd.read_excel(".streamlit/Base_ICMS.xlsx")
-        def limpar_texto(val): return str(val).replace('.0', '').strip()
-        base_t['NCM_KEY'] = base_t.iloc[:, 0].apply(limpar_texto).str.replace(r'\D', '', regex=True).str.zfill(8)
-        base_t['CST_KEY'] = base_t.iloc[:, 2].apply(limpar_texto).str.zfill(2)
-    except: 
-        base_t = pd.DataFrame(columns=['NCM_KEY', 'CST_KEY'])
-
-    if df_sai is None or df_sai.empty: 
-        df_sai = pd.DataFrame([{"AVISO": "Nenhum dado de Saída processado"}])
-
-    df_icms_audit = df_sai.copy()
-    tem_entradas = df_ent is not None and not df_ent.empty
-    ncms_ent_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist() if tem_entradas else []
-
-    def format_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-    def auditoria_final(row):
-        if "AVISO" in row: return pd.Series(["-"] * 6)
-        ncm_atual = str(row['NCM']).strip().zfill(8)
-        info_ncm = base_t[base_t['NCM_KEY'] == ncm_atual]
+class AnalisadorFiscalConsolidado:
+    def __init__(self, caminho_planilha=None):
+        """
+        Inicializa o motor de análise. Aceita um caminho de arquivo ou 
+        pode ser alimentado por DataFrames (para testes/CI-CD).
+        """
+        self.data_processamento = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         
-        st_entrada = ("✅ ST Localizado" if ncm_atual in ncms_ent_st else "❌ Sem ST na Entrada") if tem_entradas else "⚠️ Entrada não enviada"
-
-        if info_ncm.empty:
-            return pd.Series([st_entrada, f"NCM {ncm_atual} Ausente na Base", format_brl(row['VLR-ICMS']), "R$ 0,00", "Cadastrar NCM na Base", "R$ 0,00"])
-
-        cst_esp = str(info_ncm.iloc[0]['CST_KEY'])
-        aliq_esp = float(info_ncm.iloc[0, 3]) if row['UF_EMIT'] == row['UF_DEST'] else (float(info_ncm.iloc[0, 29]) if len(info_ncm.columns) > 29 else 12.0)
-        cst_xml = str(row['CST-ICMS']).strip().zfill(2)
-
-        diag_list = []
-        acoes_list = []
-
-        if cst_xml == "60":
-            if row['VLR-ICMS'] > 0: 
-                diag_list.append(f"CST 60 com destaque: {format_brl(row['VLR-ICMS'])} | Esperado R$ 0,00")
-                acoes_list.append("Estorno de ICMS destacado indevidamente")
-            aliq_esp = 0.0
+        if caminho_planilha:
+            # Carregamento real das abas da planilha
+            self.df_icms = pd.read_excel(caminho_planilha, sheet_name='ICMS')
+            self.df_pis = pd.read_excel(caminho_planilha, sheet_name='PIS')
+            self.df_cofins = pd.read_excel(caminho_planilha, sheet_name='COFINS')
+            self.df_ipi = pd.read_excel(caminho_planilha, sheet_name='IPI')
+            self.df_final = self.df_icms.copy()
         else:
-            if aliq_esp > 0 and row['VLR-ICMS'] == 0: 
-                diag_list.append(f"ICMS: Destacado R$ 0,00 | Esperado {aliq_esp}%")
-                acoes_list.append("Emitir NF Complementar de Imposto")
-            if cst_xml != cst_esp: 
-                diag_list.append(f"CST: Destacado {cst_xml} | Esperado {cst_esp}")
-                acoes_list.append(f"Cc-e (Corrigir CST para {cst_esp})")
-            if abs(row['ALQ-ICMS'] - aliq_esp) > 0.01 and aliq_esp > 0: 
-                diag_list.append(f"Aliq: Destacada {row['ALQ-ICMS']}% | Esperada {aliq_esp}%")
-                acoes_list.append("Ajustar parâmetro de Alíquota no ERP")
+            # Inicialização vazia para instanciamento manual (Mock)
+            self.df_icms = pd.DataFrame()
+            self.df_pis = pd.DataFrame()
+            self.df_cofins = pd.DataFrame()
+            self.df_ipi = pd.DataFrame()
+            self.df_final = pd.DataFrame()
 
-        comp_num = (aliq_esp - row['ALQ-ICMS']) * row['BC-ICMS'] / 100 if (row['ALQ-ICMS'] < aliq_esp and cst_xml != "60") else 0.0
+    def analisar_aba_pis(self):
+        """Analisa a consistência do PIS: Calculado vs Declarado"""
+        if not self.df_pis.empty:
+            self.df_pis['valor_pis_calculado'] = self.df_pis['base_calculo'] * (self.df_pis['aliquota_pis'] / 100)
+            self.df_pis['status_pis'] = np.where(
+                abs(self.df_pis['valor_pis_calculado'] - self.df_pis['valor_pis_declarado']) < 0.01, 
+                'OK', 'Divergente'
+            )
+        return self
+
+    def analisar_aba_cofins(self):
+        """Analisa a consistência do COFINS: Calculado vs Declarado"""
+        if not self.df_cofins.empty:
+            self.df_cofins['valor_cofins_calculado'] = self.df_cofins['base_calculo'] * (self.df_cofins['aliquota_cofins'] / 100)
+            self.df_cofins['status_cofins'] = np.where(
+                abs(self.df_cofins['valor_cofins_calculado'] - self.df_cofins['valor_cofins_declarado']) < 0.01, 
+                'OK', 'Divergente'
+            )
+        return self
+
+    def analisar_aba_ipi(self):
+        """Analisa a incidência de IPI na aba específica"""
+        if not self.df_ipi.empty:
+            self.df_ipi['valor_ipi_calculado'] = self.df_ipi['base_calculo'] * (self.df_ipi['aliquota_ipi'] / 100)
+            # Regra de negócio: IPI acima de 20% exige flag de revisão manual
+            self.df_ipi['status_ipi'] = np.where(
+                self.df_ipi['aliquota_ipi'] > 20, 'Alíquota Alta - Revisar', 'OK'
+            )
+        return self
+
+    def integrar_e_consolidar(self):
+        """
+        Realiza o merge de todas as abas analisadas na base principal (ICMS).
+        """
+        # Integração PIS
+        if not self.df_pis.empty:
+            self.df_final = self.df_final.merge(
+                self.df_pis[['id_item', 'valor_pis_calculado', 'status_pis']], on='id_item', how='left'
+            )
         
-        res = "; ".join(diag_list) if diag_list else "✅ Correto"
-        acao = " + ".join(list(dict.fromkeys(acoes_list))) if acoes_list else "✅ Correto"
+        # Integração COFINS
+        if not self.df_cofins.empty:
+            self.df_final = self.df_final.merge(
+                self.df_cofins[['id_item', 'valor_cofins_calculado', 'status_cofins']], on='id_item', how='left'
+            )
+            
+        # Integração IPI
+        if not self.df_ipi.empty:
+            self.df_final = self.df_final.merge(
+                self.df_ipi[['id_item', 'valor_ipi_calculado', 'status_ipi']], on='id_item', how='left'
+            )
 
-        return pd.Series([st_entrada, res, format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS'] * aliq_esp / 100 if aliq_esp > 0 else 0), acao, format_brl(comp_num)])
+        # Cálculo da Carga Tributária Total Consolidada
+        self.df_final['total_tributos_federais'] = (
+            self.df_final.get('valor_pis_calculado', 0).fillna(0) + 
+            self.df_final.get('valor_cofins_calculado', 0).fillna(0) + 
+            self.df_final.get('valor_ipi_calculado', 0).fillna(0)
+        )
+        
+        self.df_final['carga_total_geral'] = (
+            self.df_final['total_tributos_federais'] + self.df_final.get('valor_icms', 0)
+        )
+        
+        return self
 
-    # Colunas finais conforme solicitado: sem a coluna Cc-e
-    col_audit = ['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento']
-    df_icms_audit[col_audit] = df_icms_audit.apply(auditoria_final, axis=1)
+    def aplicar_aprovacao_nivel_1(self):
+        """
+        Aprovação 1: Validação de integridade entre todas as abas.
+        Status 'Aprovado 1' somente se PIS, COFINS e IPI estiverem 'OK'.
+        """
+        if self.df_final.empty:
+            return self
 
-    mem = io.BytesIO()
-    with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
-        if tem_entradas: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
-        df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
-        df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
-        for aba in ['IPI', 'PIS_COFINS', 'DIFAL']: df_sai.to_excel(wr, sheet_name=aba, index=False)
-    return mem.getvalue()
+        condicoes = [
+            (self.df_final.get('status_pis') == 'OK') & 
+            (self.df_final.get('status_cofins') == 'OK') & 
+            (self.df_final.get('status_ipi') == 'OK'),
+            (self.df_final['valor_item'] <= 0)
+        ]
+        escolhas = ['Aprovado 1', 'Erro: Valor Negativo']
+        
+        self.df_final['status_aprovacao'] = np.select(condicoes, escolhas, default='Revisão Fiscal Necessária')
+        self.df_final['data_analise'] = self.data_processamento
+        
+        return self
+
+    def gerar_output_github(self):
+        """Exibe o resultado formatado para documentação de repositório"""
+        if self.df_final.empty:
+            print("Nenhum dado processado para gerar output.")
+            return self
+
+        print(f"\n# Auditoria Fiscal Consolidada - {self.data_processamento}")
+        
+        cols = [
+            'produto', 'valor_item', 'valor_icms', 'valor_pis_calculado', 
+            'valor_cofins_calculado', 'valor_ipi_calculado', 'carga_total_geral', 'status_aprovacao'
+        ]
+        
+        # Filtra apenas as colunas que realmente existem no DataFrame
+        cols_existentes = [c for c in cols if c in self.df_final.columns]
+        
+        print("\n### 1. Tabela de Integração (ICMS + PIS + COFINS + IPI)")
+        print(self.df_final[cols_existentes].to_markdown(index=False, floatfmt=".2f"))
+        
+        # Resumo Estatístico
+        total_geral = self.df_final['carga_total_geral'].sum()
+        print(f"\n### 2. Resumo de Impacto")
+        print(f"- **Total Impostos Analisados:** R$ {total_geral:,.2f}")
+        
+        if 'status_aprovacao' in self.df_final.columns:
+            resumo_status = self.df_final['status_aprovacao'].value_counts().to_dict()
+            print(f"- **Status Geral:** {resumo_status}")
+        
+        return self.df_final
+
+# --- EXECUÇÃO COMPLETA DO PIPELINE ---
+
+if __name__ == "__main__":
+    try:
+        # Mock de dados simulando as 4 abas da planilha mestre
+        data_icms = {
+            'id_item': [1, 2, 3],
+            'produto': ['Servidor Proliant', 'Licença Cloud', 'Switch 24p'],
+            'valor_item': [25000.0, 5000.0, 12000.0],
+            'valor_icms': [4500.0, 900.0, 2160.0]
+        }
+        
+        data_pis = {
+            'id_item': [1, 2, 3],
+            'base_calculo': [25000.0, 5000.0, 12000.0],
+            'aliquota_pis': [1.65, 1.65, 1.65],
+            'valor_pis_declarado': [412.50, 82.50, 198.00]
+        }
+        
+        data_cofins = {
+            'id_item': [1, 2, 3],
+            'base_calculo': [25000.0, 5000.0, 12000.0],
+            'aliquota_cofins': [7.6, 7.6, 7.6],
+            'valor_cofins_declarado': [1900.00, 380.00, 912.00]
+        }
+        
+        data_ipi = {
+            'id_item': [1, 2, 3],
+            'base_calculo': [25000.0, 5000.0, 12000.0],
+            'aliquota_ipi': [15.0, 0.0, 10.0]
+        }
+
+        # Inicialização com os dados das abas
+        analisador = AnalisadorFiscalConsolidado()
+        analisador.df_icms = pd.DataFrame(data_icms)
+        analisador.df_pis = pd.DataFrame(data_pis)
+        analisador.df_cofins = pd.DataFrame(data_cofins)
+        analisador.df_ipi = pd.DataFrame(data_ipi)
+        analisador.df_final = analisador.df_icms.copy()
+
+        # Fluxo de processamento unificado
+        (analisador.analisar_aba_pis()
+                   .analisar_aba_cofins()
+                   .analisar_aba_ipi()
+                   .integrar_e_consolidar()
+                   .aplicar_aprovacao_nivel_1()
+                   .gerar_output_github())
+
+    except Exception as e:
+        print(f"ERRO CRÍTICO NO PROCESSAMENTO: {str(e)}")
