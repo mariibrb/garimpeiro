@@ -102,46 +102,56 @@ def gerar_excel_final(df_ent, df_sai):
     df_icms_audit = df_sai.copy() if not df_sai.empty else pd.DataFrame()
 
     if not df_icms_audit.empty:
-        # Formatação de Moeda
         def format_brl(val): return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-        def auditoria_detalhada(row):
-            diagnostico = "✅ Nota emitida corretamente"
-            correcao = "Nenhuma ação necessária"
-            v_cobrado = row['VLR-ICMS']
+        def auditoria_inteligente(row):
+            diag = "✅ Tudo Certo"
+            acao = "Nota emitida corretamente. Nenhuma ação necessária."
+            cce = "Não se aplica"
+            complemento = 0.0
             
-            # 1. Alíquota Esperada (Estimativa baseada no preenchido)
+            # Cálculo de Base e Alíquota
             aliq_esp = (row['VLR-ICMS'] / row['BC-ICMS'] * 100) if row['BC-ICMS'] > 0 else 0.0
-            
-            # 2. Análise de Bitributação (NCM que já pagou ST na entrada)
-            if row['NCM'] in ncms_com_st and row['VLR-ICMS'] > 0:
-                diagnostico = f"❌ ERRO: Este produto (NCM {row['NCM']}) já teve o imposto pago na compra (Substituição Tributária)."
-                correcao = "Para corrigir: Você deve zerar o ICMS desta saída e usar o código CST 060, pois o imposto já foi pago anteriormente."
-                aliq_esp = 0.0
-
-            # 3. Análise de Isenção
-            elif row['CST-ICMS'] in ['40', '41', '50'] and row['VLR-ICMS'] > 0:
-                diagnostico = "❌ ERRO: A nota está marcada como Isenta ou Não Tributada, mas existe valor de imposto cobrado."
-                correcao = "Para corrigir: Se a operação é isenta, o valor do ICMS deve ser R$ 0,00. Verifique o cadastro do produto."
-                aliq_esp = 0.0
-
-            # 4. Análise de Itens Acessórios (Frete/Seguro)
             base_esperada = row['VPROD'] + row['FRETE'] + row['SEG'] + row['DESP'] - row['DESC']
-            if row['BC-ICMS'] > 0 and abs(row['BC-ICMS'] - base_esperada) > 0.50:
-                diagnostico = "⚠️ ATENÇÃO: A base de cálculo do imposto não inclui o Frete ou outras despesas da nota."
-                correcao = "Para corrigir: O ICMS deve incidir sobre o (Produto + Frete + Seguro + Despesas - Desconto). Revise o cálculo do seu sistema."
-
-            dif = v_cobrado - (row['BC-ICMS'] * (aliq_esp/100))
             
+            # Análise 1: Bitributação (NCM com ST na Entrada)
+            if row['NCM'] in ncms_com_st and row['VLR-ICMS'] > 0:
+                diag = "❌ ERRO: Imposto cobrado em duplicidade"
+                acao = f"Como o NCM {row['NCM']} já pagou ST na entrada, você deve zerar o ICMS desta nota e mudar o CST para 060."
+                cce = "Não permitido para valores. Requer Nota Fiscal de Estorno/Ajuste."
+                aliq_esp = 0.0
+
+            # Análise 2: Isenção com Destaque
+            elif row['CST-ICMS'] in ['40', '41', '50'] and row['VLR-ICMS'] > 0:
+                diag = "❌ ERRO: Nota Isenta com imposto destacado"
+                acao = "A nota está marcada como isenta, mas você cobrou imposto. É necessário estornar esse valor."
+                cce = "Não permitido para valores. Corrigir cadastro de tributação."
+                aliq_esp = 0.0
+
+            # Análise 3: Esquecimento de Frete/Despesas (Complemento)
+            elif row['BC-ICMS'] > 0 and (base_esperada - row['BC-ICMS']) > 0.50:
+                vlr_faltante = base_esperada - row['BC-ICMS']
+                complemento = vlr_faltante * (aliq_esp / 100)
+                diag = "⚠️ ATENÇÃO: Imposto calculado a menor"
+                acao = f"O Frete/Despesas de {format_brl(row['FRETE'] + row['DESP'])} não foram somados no cálculo. Isso gerou um imposto menor do que o devido."
+                cce = "Cc-e permitida para corrigir descrição. Para o valor do imposto, emitir NF-e Complementar."
+
+            # Análise 4: Erro de Alíquota (Geral)
+            elif row['BC-ICMS'] > 0 and aliq_esp not in [4.0, 7.0, 12.0, 18.0]:
+                diag = "⚠️ ALERTA: Alíquota fora do padrão"
+                acao = f"A alíquota de {aliq_esp:.2f}% parece estranha para esta UF. Verifique se a tributação do estado de destino está correta."
+                cce = "Cc-e permitida para dados cadastrais. Se o valor mudar, requer NF-e Complementar."
+
             return pd.Series([
                 f"{aliq_esp:.2f}%", 
-                format_brl(v_cobrado), 
-                format_brl(row['BC-ICMS'] * (aliq_esp/100)),
-                diagnostico, 
-                correcao
+                format_brl(row['VLR-ICMS']), 
+                diag, 
+                acao,
+                cce,
+                format_brl(complemento)
             ])
 
-        df_icms_audit[['Alíquota Esperada', 'Valor Cobrado (XML)', 'Valor que Deveria Ser', 'O que está errado?', 'Como corrigir?']] = df_icms_audit.apply(auditoria_detalhada, axis=1)
+        df_icms_audit[['Alíquota Esperada', 'Valor de ICMS no XML', 'Diagnóstico Detalhado', 'Como Corrigir?', 'Cc-e', 'Complemento de ICMS']] = df_icms_audit.apply(auditoria_inteligente, axis=1)
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
