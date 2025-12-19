@@ -7,7 +7,7 @@ import streamlit as st
 
 def extrair_dados_xml(files, fluxo, df_autenticidade=None):
     dados_lista = []
-    if not files: return pd.DataFrame()
+    if not files: return pd.DataFrame() # Retorna DF vazio em vez de None
     for f in files:
         try:
             f.seek(0)
@@ -77,7 +77,7 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
 def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     def limpar_txt(v): return str(v).replace('.0', '').strip()
     
-    # Bases de Dados
+    # Bases
     try:
         base_icms = pd.read_excel(".streamlit/Base_ICMS.xlsx")
         base_icms['NCM_KEY'] = base_icms.iloc[:, 0].apply(limpar_txt).str.replace(r'\D', '', regex=True).str.zfill(8)
@@ -89,31 +89,34 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         base_pc.columns = [c.upper() for c in base_pc.columns]
     except: base_pc = pd.DataFrame()
 
-    if df_sai is None or df_sai.empty: df_sai = pd.DataFrame([{"AVISO": "Sem dados"}])
+    # Validação crucial para evitar NoneType
+    if df_sai is None: df_sai = pd.DataFrame()
+    if df_ent is None: df_ent = pd.DataFrame()
 
-    # Auditorias Fiscais (Preservadas)
-    df_icms = df_sai.copy(); tem_e = df_ent is not None and not df_ent.empty
+    # Auditoria ICMS (Intocada)
+    df_icms = df_sai.copy() if not df_sai.empty else pd.DataFrame()
+    tem_e = not df_ent.empty
     ncm_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist() if tem_e else []
     
-    def audit_icms(row):
-        ncm = str(row['NCM']).zfill(8); info = base_icms[base_icms['NCM_KEY'] == ncm] if not base_icms.empty else pd.DataFrame()
-        st_e = "✅ ST Localizado" if ncm in ncm_st else "❌ Sem ST na Entrada" if tem_e else "⚠️ Sem Entrada"
-        if info.empty: return pd.Series([st_e, "NCM Ausente", row['VLR-ICMS'], 0.0, "Cadastrar NCM", 0.0])
-        cst_e, aliq_e = str(info.iloc[0]['CST_KEY']), float(info.iloc[0, 3]) if row['UF_EMIT'] == row['UF_DEST'] else 12.0
-        diag, acao = [], []
-        if str(row['CST-ICMS']).zfill(2) != cst_e.zfill(2): diag.append("CST: Divergente"); acao.append(f"Cc-e (CST {cst_e})")
-        if abs(row['ALQ-ICMS'] - aliq_e) > 0.01: diag.append("Aliq: Divergente"); acao.append("Ajustar Alíquota")
-        return pd.Series([st_e, "; ".join(diag) if diag else "✅ Correto", row['VLR-ICMS'], (row['BC-ICMS']*aliq_e/100), " + ".join(acao) if acao else "✅ Correto", max(0, (aliq_e-row['ALQ-ICMS'])*row['BC-ICMS']/100)])
-    
-    df_icms[['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento']] = df_icms.apply(audit_icms, axis=1)
+    if not df_icms.empty:
+        def audit_icms(row):
+            ncm = str(row['NCM']).zfill(8); info = base_icms[base_icms['NCM_KEY'] == ncm] if not base_icms.empty else pd.DataFrame()
+            st_e = "✅ ST Localizado" if ncm in ncm_st else "❌ Sem ST na Entrada" if tem_e else "⚠️ Sem Entrada"
+            if info.empty: return pd.Series([st_e, "NCM Ausente", row['VLR-ICMS'], 0.0, "Cadastrar NCM", 0.0])
+            cst_e, aliq_e = str(info.iloc[0]['CST_KEY']), float(info.iloc[0, 3]) if row['UF_EMIT'] == row['UF_DEST'] else 12.0
+            diag, acao = [], []
+            if str(row['CST-ICMS']).zfill(2) != cst_e.zfill(2): diag.append("CST: Divergente"); acao.append(f"Cc-e (CST {cst_e})")
+            if abs(row['ALQ-ICMS'] - aliq_e) > 0.01: diag.append("Aliq: Divergente"); acao.append("Ajustar Alíquota")
+            return pd.Series([st_e, "; ".join(diag) if diag else "✅ Correto", row['VLR-ICMS'], (row['BC-ICMS']*aliq_e/100), " + ".join(acao) if acao else "✅ Correto", max(0, (aliq_e-row['ALQ-ICMS'])*row['BC-ICMS']/100)])
+        
+        df_icms[['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento']] = df_icms.apply(audit_icms, axis=1)
 
     # ABA ICMS_DESTINO
-    df_dest = df_sai.groupby('UF_DEST').agg({'ICMS-ST': 'sum', 'VAL-DIFAL': 'sum', 'VAL-FCP': 'sum', 'VAL-FCPST': 'sum'}).reset_index()
-    df_dest.columns = ['ESTADO', 'ST', 'DIFAL', 'FCP', 'FCP-ST']
+    df_dest = df_sai.groupby('UF_DEST').agg({'ICMS-ST': 'sum', 'VAL-DIFAL': 'sum', 'VAL-FCP': 'sum', 'VAL-FCPST': 'sum'}).reset_index() if not df_sai.empty else pd.DataFrame()
 
-    # ABAS GERENCIAMENTO (CSV)
+    # ABAS GERENCIAMENTO (CSV) com blindagem
     def read_manager(f, cols):
-        if not f: return pd.DataFrame([{"AVISO": "Não enviado"}])
+        if not f: return pd.DataFrame()
         try:
             f.seek(0); raw = f.read()
             for enc in ['utf-8-sig', 'latin1', 'iso-8859-1']:
@@ -123,46 +126,21 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
                     if not df.iloc[0, 0].isdigit(): df = df.iloc[1:]
                     df.columns = cols; return df
                 except: continue
-        except: return pd.DataFrame([{"ERRO": "Falha na leitura"}])
+        except: return pd.DataFrame()
+        return pd.DataFrame()
 
     cols_sai = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
     cols_ent = ['NUM_NF','DATA_EMISSAO','CNPJ','UF','VLR_NF','AC','CFOP','COD_PROD','DESCR','NCM','UNID','VUNIT','QTDE','VPROD','DESC','FRETE','SEG','DESP','VC','CST-ICMS','Coluna2','BC-ICMS','VLR-ICMS','BC-ICMS-ST','ICMS-ST','VLR_IPI','CST_PIS','BC_PIS','VLR_PIS','CST_COF','BC_COF','VLR_COF']
     df_ge = read_manager(file_ger_ent, cols_ent); df_gs = read_manager(file_ger_sai, cols_sai)
 
-    # GERAÇÃO DO EXCEL FORMATADO
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
-        # Exporta abas
-        if tem_e: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
-        df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
-        df_icms.to_excel(wr, sheet_name='ICMS', index=False)
-        df_dest.to_excel(wr, sheet_name='ICMS_Destino', index=False)
-        df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
-        df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
-
-        # Formatação Visual
-        workbook = wr.book
-        fmt_money = workbook.add_format({'num_format': 'R$ #,##0.00', 'align': 'center'})
-        fmt_text = workbook.add_format({'align': 'left'})
-        fmt_header = workbook.add_format({'bold': True, 'bg_color': '#FF6F00', 'font_color': 'white', 'border': 1, 'align': 'center'})
-
-        for sheet_name in wr.sheets:
-            ws = wr.sheets[sheet_name]
-            df_temp = None
-            if sheet_name == 'ICMS': df_temp = df_icms
-            elif sheet_name == 'ICMS_Destino': df_temp = df_dest
-            else: continue # Aplica formatação específica apenas nas abas de auditoria
-
-            # Ajusta cabeçalho e largura
-            for col_num, value in enumerate(df_temp.columns.values):
-                ws.write(0, col_num, value, fmt_header)
-                ws.set_column(col_num, col_num, 18)
-
-            # Aplica formato de dinheiro em colunas numéricas
-            for row_num in range(1, len(df_temp) + 1):
-                for col_num, col_name in enumerate(df_temp.columns):
-                    val = df_temp.iloc[row_num-1, col_num]
-                    if isinstance(val, (float, int)) and col_num > 1:
-                        ws.write(row_num, col_num, val, fmt_money)
-
+        # Só grava se não estiver vazio, evitando o erro 'to_excel'
+        if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
+        if not df_sai.empty: df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
+        if not df_icms.empty: df_icms.to_excel(wr, sheet_name='ICMS', index=False)
+        if not df_dest.empty: df_dest.to_excel(wr, sheet_name='ICMS_Destino', index=False)
+        if not df_ge.empty: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
+        if not df_gs.empty: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
+        
     return mem.getvalue()
