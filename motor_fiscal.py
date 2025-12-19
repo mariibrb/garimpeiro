@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
     """
     Sua lógica de extração aprovada. 
-    Lê os arquivos e retorna o DataFrame com as tags de impostos.
+    Lê os arquivos e retorna o DataFrame com todas as tags (ICMS, DIFAL, PIS, COF, IPI).
     """
     registros = []
     if not xml_files:
@@ -14,7 +14,7 @@ def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
 
     for xml_file in xml_files:
         try:
-            xml_file.seek(0) # Garante leitura do início
+            xml_file.seek(0)
             conteudo = xml_file.read()
             root = ET.fromstring(conteudo)
             ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
@@ -28,16 +28,27 @@ def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
                 prod = det.find("nfe:prod", ns)
                 imposto = det.find("nfe:imposto", ns)
                 
+                # Extração de Tags
                 item = {
                     'CHAVE': chave,
                     'TIPO': tipo,
                     'produto': prod.findtext("nfe:xProd", namespaces=ns),
                     'valor_item': float(prod.findtext("nfe:vProd", namespaces=ns) or 0),
                     'base_calculo': float(imposto.find(".//nfe:vBC", ns).text if imposto.find(".//nfe:vBC", ns) is not None else 0),
+                    
+                    # ICMS e DIFAL
+                    'valor_icms': float(imposto.find(".//nfe:vICMS", ns).text if imposto.find(".//nfe:vICMS", ns) is not None else 0),
+                    'valor_difal': float(imposto.find(".//nfe:vICMSUFDest", ns).text if imposto.find(".//nfe:vICMSUFDest", ns) is not None else 0),
+                    
+                    # PIS
                     'aliquota_pis': float(imposto.find(".//nfe:pPIS", ns).text if imposto.find(".//nfe:pPIS", ns) is not None else 0),
                     'valor_pis_xml': float(imposto.find(".//nfe:vPIS", ns).text if imposto.find(".//nfe:vPIS", ns) is not None else 0),
+                    
+                    # COFINS
                     'aliquota_cofins': float(imposto.find(".//nfe:pCOFINS", ns).text if imposto.find(".//nfe:pCOFINS", ns) is not None else 0),
                     'valor_cofins_xml': float(imposto.find(".//nfe:vCOFINS", ns).text if imposto.find(".//nfe:vCOFINS", ns) is not None else 0),
+                    
+                    # IPI
                     'aliquota_ipi': float(imposto.find(".//nfe:pIPI", ns).text if imposto.find(".//nfe:pIPI", ns) is not None else 0),
                     'valor_ipi_xml': float(imposto.find(".//nfe:vIPI", ns).text if imposto.find(".//nfe:vIPI", ns) is not None else 0),
                 }
@@ -55,28 +66,35 @@ def extrair_dados_xml(xml_files, tipo, df_autenticidade=None):
 
 def gerar_excel_final(df_e, df_s):
     """
-    Gera o Excel mantendo a estrutura original e injetando 
-    apenas as colunas de análise em IPI e PISCOFINS.
+    Gera o Excel com TODAS as abas: Entradas, Saídas, ICMS, DIFAL, PISCOFINS e IPI.
     """
     output = io.BytesIO()
     df_consolidado = pd.concat([df_e, df_s], ignore_index=True)
 
-    # --- ABA PISCOFINS ---
+    # --- ABA ICMS ---
+    df_icms = df_consolidado.copy()
+
+    # --- ABA DIFAL ---
+    df_difal = df_consolidado.copy()
+
+    # --- ABA PISCOFINS (Com Análise) ---
     df_piscofins = df_consolidado.copy()
     if not df_piscofins.empty:
         calc_esperado = df_piscofins['base_calculo'] * ((df_piscofins['aliquota_pis'] + df_piscofins['aliquota_cofins']) / 100)
         calc_xml = df_piscofins['valor_pis_xml'] + df_piscofins['valor_cofins_xml']
         df_piscofins['ANALISE'] = np.where(abs(calc_esperado - calc_xml) < 0.01, "CORRETO", "ESPERADO DESTACADO")
 
-    # --- ABA IPI ---
+    # --- ABA IPI (Com coluna de Análise Vazia) ---
     df_ipi = df_consolidado.copy()
     if not df_ipi.empty:
-        # Criando a coluna ANALISE vazia, conforme solicitado, sem nenhuma análise sendo feita
         df_ipi['ANALISE'] = ""
 
+    # GRAVAÇÃO DE TODAS AS ABAS
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df_e.to_excel(writer, sheet_name='Entradas', index=False)
         df_s.to_excel(writer, sheet_name='Saídas', index=False)
+        df_icms.to_excel(writer, sheet_name='ICMS', index=False)
+        df_difal.to_excel(writer, sheet_name='DIFAL', index=False)
         df_piscofins.to_excel(writer, sheet_name='PISCOFINS', index=False)
         df_ipi.to_excel(writer, sheet_name='IPI', index=False)
         
