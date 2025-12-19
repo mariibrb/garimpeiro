@@ -85,7 +85,7 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
     if not df_res.empty and df_autenticidade is not None:
         df_res['CHAVE_ACESSO'] = df_res['CHAVE_ACESSO'].astype(str).str.strip()
         mapeamento = dict(zip(df_autenticidade.iloc[:, 0].astype(str).str.strip(), df_autenticidade.iloc[:, 5]))
-        df_res['STATUS'] = df_res['CHAVE_ACESSO'].map(mapeamento).fillna("Chave não encontrada na base")
+        df_res['STATUS'] = df_res['CHAVE_ACESSO'].map(mapeamento).fillna("Chave não encontrada")
 
     if not df_res.empty:
         df_res.drop_duplicates(subset=['CHAVE_ACESSO', 'AC'], keep='first', inplace=True)
@@ -102,32 +102,46 @@ def gerar_excel_final(df_ent, df_sai):
     df_icms_audit = df_sai.copy() if not df_sai.empty else pd.DataFrame()
 
     if not df_icms_audit.empty:
-        df_icms_audit['Aliq_Efetiva'] = (df_icms_audit['VLR-ICMS'] / df_icms_audit['BC-ICMS']).fillna(0)
-        
-        def auditoria_linha(row):
-            mensagens = []
-            acao = "Manter conforme XML"
-            esperado = row['VLR-ICMS']
+        # Formatação de Moeda
+        def format_brl(val): return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+        def auditoria_detalhada(row):
+            diagnostico = "✅ Nota emitida corretamente"
+            correcao = "Nenhuma ação necessária"
+            v_cobrado = row['VLR-ICMS']
             
+            # 1. Alíquota Esperada (Estimativa baseada no preenchido)
+            aliq_esp = (row['VLR-ICMS'] / row['BC-ICMS'] * 100) if row['BC-ICMS'] > 0 else 0.0
+            
+            # 2. Análise de Bitributação (NCM que já pagou ST na entrada)
             if row['NCM'] in ncms_com_st and row['VLR-ICMS'] > 0:
-                mensagens.append("BITRIBUTAÇÃO: NCM teve ST na entrada")
-                esperado = 0
-                acao = "Alterar CST para 060 e zerar ICMS"
+                diagnostico = f"❌ ERRO: Este produto (NCM {row['NCM']}) já teve o imposto pago na compra (Substituição Tributária)."
+                correcao = "Para corrigir: Você deve zerar o ICMS desta saída e usar o código CST 060, pois o imposto já foi pago anteriormente."
+                aliq_esp = 0.0
+
+            # 3. Análise de Isenção
+            elif row['CST-ICMS'] in ['40', '41', '50'] and row['VLR-ICMS'] > 0:
+                diagnostico = "❌ ERRO: A nota está marcada como Isenta ou Não Tributada, mas existe valor de imposto cobrado."
+                correcao = "Para corrigir: Se a operação é isenta, o valor do ICMS deve ser R$ 0,00. Verifique o cadastro do produto."
+                aliq_esp = 0.0
+
+            # 4. Análise de Itens Acessórios (Frete/Seguro)
+            base_esperada = row['VPROD'] + row['FRETE'] + row['SEG'] + row['DESP'] - row['DESC']
+            if row['BC-ICMS'] > 0 and abs(row['BC-ICMS'] - base_esperada) > 0.50:
+                diagnostico = "⚠️ ATENÇÃO: A base de cálculo do imposto não inclui o Frete ou outras despesas da nota."
+                correcao = "Para corrigir: O ICMS deve incidir sobre o (Produto + Frete + Seguro + Despesas - Desconto). Revise o cálculo do seu sistema."
+
+            dif = v_cobrado - (row['BC-ICMS'] * (aliq_esp/100))
             
-            if row['CST-ICMS'] in ['40', '41', '50'] and row['VLR-ICMS'] > 0:
-                mensagens.append("ICMS destacado em operação isenta")
-                esperado = 0
-                acao = "Estornar destaque de ICMS"
+            return pd.Series([
+                f"{aliq_esp:.2f}%", 
+                format_brl(v_cobrado), 
+                format_brl(row['BC-ICMS'] * (aliq_esp/100)),
+                diagnostico, 
+                correcao
+            ])
 
-            base_calculada = row['VPROD'] + row['FRETE'] + row['SEG'] + row['DESP'] - row['DESC']
-            if row['BC-ICMS'] > 0 and abs(row['BC-ICMS'] - base_calculada) > 1:
-                mensagens.append("Base de Cálculo não confere com itens acessórios")
-                acao = "Revisar composição da Base de Cálculo"
-
-            diag = ", ".join(mensagens) if mensagens else "✅ Conformidade Fiscal: Nenhuma divergência encontrada"
-            return pd.Series([diag, esperado, acao])
-
-        df_icms_audit[['Diagnóstico', 'Valor_ICMS_Esperado', 'Ação_Corretiva']] = df_icms_audit.apply(auditoria_linha, axis=1)
+        df_icms_audit[['Alíquota Esperada', 'Valor Cobrado (XML)', 'Valor que Deveria Ser', 'O que está errado?', 'Como corrigir?']] = df_icms_audit.apply(auditoria_detalhada, axis=1)
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
@@ -138,7 +152,4 @@ def gerar_excel_final(df_ent, df_sai):
             df_sai.to_excel(wr, sheet_name='IPI', index=False)
             df_sai.to_excel(wr, sheet_name='PIS_COFINS', index=False)
             df_sai.to_excel(wr, sheet_name='DIFAL', index=False)
-        else:
-            for aba in ['SAIDAS', 'ICMS', 'IPI', 'PIS_COFINS', 'DIFAL']:
-                pd.DataFrame().to_excel(wr, sheet_name=aba, index=False)
     return mem.getvalue()
