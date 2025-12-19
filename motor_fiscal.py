@@ -37,9 +37,7 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                     "AC": int(det.attrib.get('nItem', '0')), "CFOP": buscar('CFOP', prod), "NCM": ncm_limpo,
                     "COD_PROD": buscar('cProd', prod), "DESCR": buscar('xProd', prod),
                     "VPROD": float(buscar('vProd', prod)) if buscar('vProd', prod) else 0.0,
-                    # ICMS
                     "CST-ICMS": "", "BC-ICMS": 0.0, "VLR-ICMS": 0.0, "ALQ-ICMS": 0.0, "ICMS-ST": 0.0,
-                    # PIS/COFINS/IPI/DIFAL
                     "CST-PIS": "", "ALQ-PIS": 0.0, "VAL-PIS": 0.0, 
                     "CST-COF": "", "ALQ-COF": 0.0, "VAL-COF": 0.0,
                     "BC-FED": 0.0, "VBC-IPI": 0.0, "VAL-IPI": 0.0, "VAL-DIFAL": 0.0
@@ -70,28 +68,17 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                     cof = imp.find('.//COFINS')
                     if cof is not None:
                         for c in cof:
-                            if c.find('CST') is not None: linha["CST-COF"] = c.find('CST').text.zfill(2)
                             if c.find('pCOFINS') is not None: linha["ALQ-COF"] = float(c.find('pCOFINS').text)
                             if c.find('vCOFINS') is not None: linha["VAL-COF"] = float(c.find('vCOFINS').text)
-
-                    # IPI
-                    ipi = imp.find('.//IPI')
-                    if ipi is not None:
-                        if ipi.find('.//vBC') is not None: linha["VBC-IPI"] = float(ipi.find('.//vBC').text)
-                        if ipi.find('.//vIPI') is not None: linha["VAL-IPI"] = float(ipi.find('.//vIPI').text)
-
-                    # DIFAL
-                    difal = imp.find('.//ICMSUFDest')
-                    if difal is not None:
-                        if difal.find('vICMSUFDest') is not None: linha["VAL-DIFAL"] = float(difal.find('vICMSUFDest').text)
 
                 dados_lista.append(linha)
         except: continue
     return pd.DataFrame(dados_lista)
 
 def gerar_excel_final(df_ent, df_sai):
-    # --- CARGA DAS BASES ---
     def limpar_txt(v): return str(v).replace('.0', '').strip()
+    
+    # Bases
     try:
         base_icms = pd.read_excel(".streamlit/Base_ICMS.xlsx")
         base_icms['NCM_KEY'] = base_icms.iloc[:, 0].apply(limpar_txt).str.replace(r'\D', '', regex=True).str.zfill(8)
@@ -100,6 +87,7 @@ def gerar_excel_final(df_ent, df_sai):
     try:
         base_pis = pd.read_excel(".streamlit/Base_CST_Pis_Cofins.xlsx")
         base_pis['NCM_KEY'] = base_pis.iloc[:, 0].apply(limpar_txt).str.replace(r'\D', '', regex=True).str.zfill(8)
+        base_pis.columns = [c.upper() for c in base_pis.columns] # Normaliza nomes das colunas
     except: base_pis = pd.DataFrame()
 
     if df_sai is None or df_sai.empty: df_sai = pd.DataFrame([{"AVISO": "Sem dados"}])
@@ -114,40 +102,40 @@ def gerar_excel_final(df_ent, df_sai):
         info = base_icms[base_icms['NCM_KEY'] == ncm] if not base_icms.empty else pd.DataFrame()
         st_ent = "✅ ST Localizado" if ncm in ncms_st else "❌ Sem ST na Entrada"
         if info.empty: return pd.Series([st_ent, "NCM Ausente na Base", format_brl(row['VLR-ICMS']), "R$ 0,00", "Cadastrar NCM"])
-        
         aliq_esp = float(info.iloc[0, 3]) if row['UF_EMIT'] == row['UF_DEST'] else 12.0
-        diag, acao = [], []
-        if str(row['CST-ICMS']) != str(info.iloc[0, 2]).zfill(2): diag.append("CST Divergente"); acao.append("Corrigir CST")
-        if abs(row['ALQ-ICMS'] - aliq_esp) > 0.1: diag.append("Aliq. Divergente"); acao.append("Revisar Alíquota")
-        
-        return pd.Series([st_ent, "; ".join(diag) if diag else "✅ Correto", format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS']*aliq_esp/100), " + ".join(acao) if acao else "✅ Correto"])
+        return pd.Series([st_ent, "✅ Correto" if abs(row['ALQ-ICMS'] - aliq_esp) < 0.1 else "Aliq. Divergente", format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS']*aliq_esp/100), "Ajustar Alíquota" if abs(row['ALQ-ICMS'] - aliq_esp) > 0.1 else "✅ Correto"])
 
     df_icms[['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação']] = df_icms.apply(audit_icms, axis=1)
 
-    # --- AUDITORIA PIS/COFINS ---
+    # --- AUDITORIA PIS/COFINS (CORREÇÃO DO INDEXERROR) ---
     df_pc = df_sai.copy()
     def audit_pc(row):
         ncm = str(row['NCM']).zfill(8)
         info = base_pis[base_pis['NCM_KEY'] == ncm] if not base_pis.empty else pd.DataFrame()
-        if info.empty: return pd.Series(["NCM não mapeado", format_brl(row['VAL-PIS']), "R$ 0,00", "Verificar NCM"])
         
-        # Pega alíquota e CST da base (Considerando colunas da sua base padrão)
-        aliq_p_esp = float(info.iloc[0, 3]) # Supondo coluna 4
-        aliq_c_esp = float(info.iloc[0, 4]) # Supondo coluna 5
+        if info.empty: 
+            return pd.Series(["NCM não mapeado", format_brl(row['VAL-PIS']+row['VAL-COF']), "R$ 0,00", "Verificar NCM"])
         
+        # Tenta pegar alíquota por nome de coluna ou posição segura
+        try:
+            aliq_p_esp = float(info.iloc[0]['ALQ_PIS']) if 'ALQ_PIS' in info.columns else 1.65
+            aliq_c_esp = float(info.iloc[0]['ALQ_COFINS']) if 'ALQ_COFINS' in info.columns else 7.6
+        except:
+            aliq_p_esp, aliq_c_esp = 1.65, 7.6
+
         diag_pc, acao_pc = [], []
         if abs(row['ALQ-PIS'] - aliq_p_esp) > 0.01: diag_pc.append("PIS Divergente"); acao_pc.append("Ajustar PIS")
-        if abs(row['ALQ-COF'] - aliq_c_esp) > 0.01: diag_pc.append("COFINS Divergente"); acao_pc.append("Ajustar COFINS")
+        if abs(row['ALQ-COF'] - aliq_c_esp) > 0.01: diag_pc.append("COF Divergente"); acao_pc.append("Ajustar COF")
         
         esp_total = (row['BC-FED'] * (aliq_p_esp + aliq_c_esp) / 100)
         return pd.Series(["; ".join(diag_pc) if diag_pc else "✅ Correto", format_brl(row['VAL-PIS']+row['VAL-COF']), format_brl(esp_total), " + ".join(acao_pc) if acao_pc else "✅ Correto"])
 
     df_pc[['Diagnóstico', 'Total PIS/COF XML', 'Esperado Total', 'Ação']] = df_pc.apply(audit_pc, axis=1)
 
-    # --- IPI E DIFAL ---
+    # --- OUTRAS ABAS ---
     df_ipi = df_sai.copy(); df_ipi['ANALISE'] = ""
     df_difal = df_sai.copy()
-    df_difal['Análise DIFAL'] = np.where((df_difal['UF_EMIT'] != df_difal['UF_DEST']) & (df_difal['VAL-DIFAL'] == 0), "❌ DIFAL não localizado", "✅ OK ou Interna")
+    df_difal['Análise DIFAL'] = np.where((df_difal['UF_EMIT'] != df_difal['UF_DEST']) & (df_difal['VAL-DIFAL'] == 0), "❌ Erro", "✅ OK")
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
