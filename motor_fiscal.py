@@ -37,11 +37,13 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                 prod = det.find('prod')
                 imp = det.find('imposto')
                 
+                ncm_limpo = re.sub(r'\D', '', buscar('NCM', prod))
+                
                 linha = {
                     "CHAVE_ACESSO": chave_acesso, "NUM_NF": num_nf,
                     "DATA_EMISSAO": pd.to_datetime(data_emi).replace(tzinfo=None) if data_emi else None,
                     "UF_EMIT": emit_uf, "UF_DEST": dest_uf, "AC": int(det.attrib.get('nItem', '0')),
-                    "CFOP": buscar('CFOP', prod), "NCM": buscar('NCM', prod),
+                    "CFOP": buscar('CFOP', prod), "NCM": ncm_limpo,
                     "COD_PROD": buscar('cProd', prod), "DESCR": buscar('xProd', prod),
                     "VPROD": float(buscar('vProd', prod)) if buscar('vProd', prod) else 0.0,
                     "FRETE": float(buscar('vFrete', prod)) if buscar('vFrete', prod) else 0.0,
@@ -61,7 +63,6 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                             if nodo.find('vBC') is not None: linha["BC-ICMS"] = float(nodo.find('vBC').text)
                             if nodo.find('vICMS') is not None: linha["VLR-ICMS"] = float(nodo.find('vICMS').text)
                             if nodo.find('pICMS') is not None: linha["ALQ-ICMS"] = float(nodo.find('pICMS').text)
-                            if nodo.find('pRedBC') is not None: linha["pRedBC"] = float(nodo.find('pRedBC').text)
 
                 linha["VC"] = linha["VPROD"] + linha["ICMS-ST"] + linha["DESP"] - linha["DESC"]
                 dados_lista.append(linha)
@@ -78,8 +79,9 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
 def gerar_excel_final(df_ent, df_sai):
     try:
         base_t = pd.read_excel(".streamlit/Base_ICMS.xlsx")
-        base_t['NCM_KEY'] = base_t.iloc[:, 0].astype(str).str.strip()
-    except: base_t = pd.DataFrame(columns=['NCM_KEY'])
+        base_t['NCM_KEY'] = base_t.iloc[:, 0].astype(str).str.replace(r'\D', '', regex=True).str.strip()
+    except: 
+        base_t = pd.DataFrame(columns=['NCM_KEY'])
 
     df_icms_audit = df_sai.copy() if not df_sai.empty else pd.DataFrame()
 
@@ -88,54 +90,52 @@ def gerar_excel_final(df_ent, df_sai):
         if not df_ent.empty:
             ncms_ent_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist()
 
-        def auditoria_completa(row):
+        def format_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+        def auditoria_unificada(row):
             if "Cancelada" in str(row['STATUS']):
-                return pd.Series(["NF Cancelada", "R$ 0,00", "R$ 0,00", "NF Cancelada", "R$ 0,00", "Não se aplica"])
+                return pd.Series(["NF Cancelada", "R$ 0,00", "R$ 0,00", "N/A", "R$ 0,00", "N/A"])
 
-            info_ncm = base_t[base_t['NCM_KEY'] == str(row['NCM']).strip()]
-            cst_esp = str(info_ncm.iloc[0, 2]).zfill(2) if not info_ncm.empty else "NCM não encontrado"
+            ncm_atual = str(row['NCM']).strip()
+            info_ncm = base_t[base_t['NCM_KEY'] == ncm_atual]
             
+            if info_ncm.empty:
+                return pd.Series([f"NCM {ncm_atual} Ausente na Base", format_brl(row['VLR-ICMS']), "R$ 0,00", "Cadastrar NCM", "R$ 0,00", "Não"])
+
+            cst_esp = str(info_ncm.iloc[0, 2]).zfill(2)
             is_interna = row['UF_EMIT'] == row['UF_DEST']
-            aliq_esp = float(info_ncm.iloc[0, 3]) if not info_ncm.empty and is_interna else (float(info_ncm.iloc[0, 29]) if not info_ncm.empty and len(info_ncm.columns) > 29 else 12.0)
+            aliq_esp = float(info_ncm.iloc[0, 3]) if is_interna else (float(info_ncm.iloc[0, 29]) if len(info_ncm.columns) > 29 else 12.0)
 
-            mensagens = []
-            cst_atual = str(row['CST-ICMS']).strip()
+            diag_list = []
+            cst_xml = str(row['CST-ICMS']).strip()
 
-            if cst_atual == "60":
-                if row['VLR-ICMS'] > 0:
-                    mensagens.append("CST 060 com destaque indevido")
-                if row['NCM'] not in ncms_ent_st:
-                    mensagens.append(f"Inconsistência: NCM {row['NCM']} sem histórico de ST na Entrada")
+            if cst_xml == "60":
+                if row['VLR-ICMS'] > 0: diag_list.append(f"CST 60: Destacado {format_brl(row['VLR-ICMS'])} | Esperado R$ 0,00")
+                if ncm_atual not in ncms_ent_st: diag_list.append("Analisar: Sem entrada ST")
                 aliq_esp = 0.0
             else:
-                if aliq_esp > 0 and row['VLR-ICMS'] == 0:
-                    mensagens.append("Imposto não destacado")
-                if cst_atual != cst_esp and cst_esp != "NCM não encontrado":
-                    mensagens.append(f"CST Errado (XML:{cst_atual}|Base:{cst_esp})")
-                if row['ALQ-ICMS'] != aliq_esp and aliq_esp > 0:
-                    mensagens.append(f"Aliq. Errada ({row['ALQ-ICMS']}% vs {aliq_esp}%)")
+                if aliq_esp > 0 and row['VLR-ICMS'] == 0: diag_list.append(f"ICMS: Destacado R$ 0,00 | Esperado {aliq_esp}%")
+                if cst_xml != cst_esp: diag_list.append(f"CST: Destacado {cst_xml} | Esperado {cst_esp}")
+                if row['ALQ-ICMS'] != aliq_esp and aliq_esp > 0: diag_list.append(f"Aliq: Destacada {row['ALQ-ICMS']}% | Esperada {aliq_esp}%")
 
-            complemento = (aliq_esp - row['ALQ-ICMS']) * row['BC-ICMS'] / 100 if (row['ALQ-ICMS'] < aliq_esp and cst_atual != "60") else 0.0
-            diag = "; ".join(mensagens) if mensagens else "✅ Correto"
+            complemento_num = (aliq_esp - row['ALQ-ICMS']) * row['BC-ICMS'] / 100 if (row['ALQ-ICMS'] < aliq_esp and cst_xml != "60") else 0.0
+            res = "; ".join(diag_list) if diag_list else "✅ Correto"
             
-            # --- MENSAGENS DE AÇÃO MAIS LÓGICAS ---
-            if "sem histórico" in diag:
-                acao = "Vincular XML de Entrada com ST ou alterar CST de Saída"
-            elif "destaque indevido" in diag:
-                acao = "Zerar ICMS no XML e usar CST 060"
-            elif "não destacado" in diag:
-                acao = "Emitir NF Complementar de ICMS"
-            elif diag == "✅ Correto":
-                acao = "Manter conforme XML"
+            # --- DEFINIÇÃO LÓGICA DE AÇÃO (Sem redundância) ---
+            if res == "✅ Correto":
+                acao = "Correto"
+            elif "Analisar" in res:
+                acao = "Validar Entrada"
+            elif "CST" in res and complemento_num == 0:
+                acao = "Cc-e"
             else:
-                acao = "Ajustar parâmetro tributário no ERP"
+                acao = "Complemento/Estorno"
 
-            cce = "Cc-e disponível" if "CST" in diag and "060" not in diag else "Não permitido"
+            cce = "Sim" if acao == "Cc-e" else "Não"
 
-            def f_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-            return pd.Series([diag, f_brl(row['VLR-ICMS']), f_brl(row['BC-ICMS'] * aliq_esp / 100 if aliq_esp>0 else 0), acao, f_brl(complemento), cce])
+            return pd.Series([res, format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS'] * aliq_esp / 100 if aliq_esp > 0 else 0), acao, format_brl(complemento_num), cce])
 
-        df_icms_audit[['Diagnóstico Detalhado', 'ICMS XML', 'ICMS Esperado', 'Ação Sugerida', 'Complemento', 'Cc-e']] = df_icms_audit.apply(auditoria_completa, axis=1)
+        df_icms_audit[['Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento', 'Cc-e']] = df_icms_audit.apply(auditoria_unificada, axis=1)
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
