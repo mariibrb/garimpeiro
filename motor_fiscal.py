@@ -86,15 +86,17 @@ def gerar_excel_final(df_ent, df_sai):
     df_icms_audit = df_sai.copy() if not df_sai.empty else pd.DataFrame()
 
     if not df_icms_audit.empty:
+        # Verifica se há entradas carregadas
+        tem_entradas = not df_ent.empty
         ncms_ent_st = []
-        if not df_ent.empty:
+        if tem_entradas:
             ncms_ent_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist()
 
         def format_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-        def auditoria_unificada(row):
+        def auditoria_flexivel(row):
             if "Cancelada" in str(row['STATUS']):
-                return pd.Series(["NF Cancelada", "R$ 0,00", "R$ 0,00", "N/A", "R$ 0,00", "N/A"])
+                return pd.Series(["NF Cancelada", "R$ 0,00", "R$ 0,00", "✅ Correto", "R$ 0,00", "N/A"])
 
             ncm_atual = str(row['NCM']).strip()
             info_ncm = base_t[base_t['NCM_KEY'] == ncm_atual]
@@ -111,31 +113,37 @@ def gerar_excel_final(df_ent, df_sai):
 
             if cst_xml == "60":
                 if row['VLR-ICMS'] > 0: diag_list.append(f"CST 60: Destacado {format_brl(row['VLR-ICMS'])} | Esperado R$ 0,00")
-                if ncm_atual not in ncms_ent_st: diag_list.append("Analisar: Sem entrada ST")
+                
+                # Lógica de alerta sem obrigatoriedade de entrada
+                if not tem_entradas:
+                    diag_list.append("Analisar: CST 60 (Entradas não carregadas para validar ST)")
+                elif ncm_atual not in ncms_ent_st:
+                    diag_list.append(f"Analisar: NCM {ncm_atual} sem histórico ST entrada")
+                
                 aliq_esp = 0.0
             else:
-                if aliq_esp > 0 and row['VLR-ICMS'] == 0: diag_list.append(f"ICMS: Destacado R$ 0,00 | Esperado {aliq_esp}%")
-                if cst_xml != cst_esp: diag_list.append(f"CST: Destacado {cst_xml} | Esperado {cst_esp}")
-                if row['ALQ-ICMS'] != aliq_esp and aliq_esp > 0: diag_list.append(f"Aliq: Destacada {row['ALQ-ICMS']}% | Esperada {aliq_esp}%")
+                if aliq_esp > 0 and row['VLR-ICMS'] == 0: 
+                    diag_list.append(f"ICMS: Destacado R$ 0,00 | Esperado {aliq_esp}%")
+                if cst_xml != cst_esp: 
+                    diag_list.append(f"CST: Destacado {cst_xml} | Esperado {cst_esp}")
+                if row['ALQ-ICMS'] != aliq_esp and aliq_esp > 0: 
+                    diag_list.append(f"Aliq: Destacada {row['ALQ-ICMS']}% | Esperada {aliq_esp}%")
 
             complemento_num = (aliq_esp - row['ALQ-ICMS']) * row['BC-ICMS'] / 100 if (row['ALQ-ICMS'] < aliq_esp and cst_xml != "60") else 0.0
             res = "; ".join(diag_list) if diag_list else "✅ Correto"
             
-            # --- DEFINIÇÃO LÓGICA DE AÇÃO (Sem redundância) ---
-            if res == "✅ Correto":
-                acao = "Correto"
-            elif "Analisar" in res:
-                acao = "Validar Entrada"
-            elif "CST" in res and complemento_num == 0:
-                acao = "Cc-e"
-            else:
-                acao = "Complemento/Estorno"
+            # Definição de Ação
+            if res == "✅ Correto": acao = "✅ Correto"
+            elif "não carregadas" in res: acao = "Carregar Entradas para validar"
+            elif "Analisar" in res: acao = "Validar Entrada"
+            elif "CST" in res and complemento_num == 0: acao = "Cc-e"
+            else: acao = "Complemento/Estorno"
 
             cce = "Sim" if acao == "Cc-e" else "Não"
 
             return pd.Series([res, format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS'] * aliq_esp / 100 if aliq_esp > 0 else 0), acao, format_brl(complemento_num), cce])
 
-        df_icms_audit[['Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento', 'Cc-e']] = df_icms_audit.apply(auditoria_unificada, axis=1)
+        df_icms_audit[['Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento', 'Cc-e']] = df_icms_audit.apply(auditoria_flexivel, axis=1)
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
