@@ -92,7 +92,7 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if df_sai is None: df_sai = pd.DataFrame()
     if df_ent is None: df_ent = pd.DataFrame()
 
-    # --- ABA ICMS ---
+    # --- AUDITORIAS ORIGINAIS ---
     df_icms_audit = df_sai.copy(); tem_e = not df_ent.empty
     ncm_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist() if tem_e else []
     def audit_icms(row):
@@ -107,9 +107,8 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if not df_icms_audit.empty:
         df_icms_audit[['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento']] = df_icms_audit.apply(audit_icms, axis=1)
 
-    # --- ABA PIS/COFINS (Auditoria XML Original) ---
     df_pc_audit = df_sai.copy()
-    def audit_pc(row):
+    def audit_pc_xml(row):
         ncm = str(row['NCM']).zfill(8); info = base_pc[base_pc['NCM_KEY'] == ncm] if not base_pc.empty else pd.DataFrame()
         if info.empty: return pd.Series(["NCM não mapeado", f"P/C: {row['CST-PIS']}/{row['CST-COF']}", "-", "Cadastrar NCM"])
         try: cp_e, cc_e = str(info.iloc[0]['CST_PIS']).zfill(2), str(info.iloc[0]['CST_COFINS']).zfill(2)
@@ -119,9 +118,8 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         if str(row['CST-COF']) != cc_e: diag.append("COF: Divergente"); acao.append(f"Cc-e (CST COF {cc_e})")
         return pd.Series(["; ".join(diag) if diag else "✅ Correto", f"P/C: {row['CST-PIS']}/{row['CST-COF']}", f"P/C: {cp_e}/{cc_e}", " + ".join(acao) if acao else "✅ Correto"])
     if not df_pc_audit.empty:
-        df_pc_audit[['Diagnóstico', 'CST XML (P/C)', 'CST Esperado (P/C)', 'Ação']] = df_pc_audit.apply(audit_pc, axis=1)
+        df_pc_audit[['Diagnóstico', 'CST XML (P/C)', 'CST Esperado (P/C)', 'Ação']] = df_pc_audit.apply(audit_pc_xml, axis=1)
 
-    # --- ABA IPI (Auditoria XML Original) ---
     df_ipi_audit = df_sai.copy()
     def audit_ipi(row):
         ncm = str(row['NCM']).zfill(8); info = base_pc[base_pc['NCM_KEY'] == ncm] if not base_pc.empty else pd.DataFrame()
@@ -135,7 +133,6 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if not df_ipi_audit.empty:
         df_ipi_audit[['Diagnóstico', 'CST XML', 'CST Base', 'IPI XML', 'IPI Esperado', 'Ação', 'Complemento']] = df_ipi_audit.apply(audit_ipi, axis=1)
 
-    # --- ABA DIFAL ---
     df_difal_audit = df_sai.copy()
     def audit_difal(row):
         is_i = row['UF_EMIT'] != row['UF_DEST']; cfop = str(row['CFOP']); diag, acao = [], []
@@ -149,7 +146,6 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if not df_difal_audit.empty:
         df_difal_audit[['Diagnóstico', 'DIFAL XML', 'Ação']] = df_difal_audit.apply(audit_difal, axis=1)
 
-    # --- ABA ICMS_DESTINO ---
     if not df_sai.empty:
         df_dest = df_sai.groupby('UF_DEST').agg({'ICMS-ST': 'sum', 'VAL-DIFAL': 'sum', 'VAL-FCP': 'sum', 'VAL-FCPST': 'sum'}).reset_index()
         df_dest.columns = ['ESTADO', 'ST', 'DIFAL', 'FCP', 'FCP-ST']
@@ -160,57 +156,52 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     def load_flexible_csv(f, target_cols):
         if not f: return pd.DataFrame()
         try:
-            f.seek(0)
-            raw = f.read().decode('utf-8-sig', errors='replace')
-            sep = ';' if raw.count(';') > raw.count(',') else ','
+            f.seek(0); raw = f.read().decode('utf-8-sig', errors='replace'); sep = ';' if raw.count(';') > raw.count(',') else ','
             df = pd.read_csv(io.StringIO(raw), sep=sep, header=None, engine='python', dtype={0: str})
             if df.shape[0] > 0 and not str(df.iloc[0, 0]).strip().isdigit(): df = df.iloc[1:]
-            num_cols_df = df.shape[1]
-            num_cols_target = len(target_cols)
+            num_cols_df = df.shape[1]; num_cols_target = len(target_cols)
             if num_cols_df > num_cols_target: df = df.iloc[:, :num_cols_target]
             elif num_cols_df < num_cols_target:
                 for i in range(num_cols_target - num_cols_df): df[f'Vazia_{i}'] = ""
-            df.columns = target_cols
-            return df
+            df.columns = target_cols; return df
         except: return pd.DataFrame()
 
     c_sai = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
     c_ent = ['NUM_NF','DATA_EMISSAO','CNPJ','UF','VLR_NF','AC','CFOP','COD_PROD','DESCR','NCM','UNID','VUNIT','QTDE','VPROD','DESC','FRETE','SEG','DESP','VC','CST-ICMS','Coluna2','BC-ICMS','VLR-ICMS','BC-ICMS-ST','ICMS-ST','VLR_IPI','CST_PIS','BC_PIS','VLR_PIS','CST_COF','BC_COF','VLR_COF']
-    df_ge = load_flexible_csv(file_ger_ent, c_ent)
-    df_gs = load_flexible_csv(file_ger_sai, c_sai)
+    df_ge = load_flexible_csv(file_ger_ent, c_ent); df_gs = load_flexible_csv(file_ger_sai, c_sai)
 
-    # --- ÚNICA ALTERAÇÃO: ABA PIS e COFINS (Fórmulas do Escritório) ---
-    def process_apuracao(ge, gs):
+    # --- ÚNICA ALTERAÇÃO: ABA PIS E COFINS DETALHADA ---
+    def gerar_aba_pis_cofins_detalhada(ge, gs):
         if ge.empty and gs.empty: return pd.DataFrame()
-        # Conversores numéricos para garantir os cálculos das fórmulas
+        # Conversores numéricos
         for c in ['VC', 'Coluna3', 'ICMS', 'BC_PIS', 'PIS', 'BC_COF', 'COF']:
             if c in gs.columns: gs[c] = pd.to_numeric(gs[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
         for c in ['VLR_NF', 'VLR_IPI', 'VLR-ICMS', 'BC_PIS', 'VLR_PIS', 'BC_COF', 'VLR_COF']:
             if c in ge.columns: ge[c] = pd.to_numeric(ge[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
+
+        # Montagem Detalhada (SAÍDAS CST 01)
+        saidas = gs[gs['CST_PIS'].astype(str).str.zfill(2) == '01'].copy()
+        saidas['TIPO'] = 'DÉBITO'
+        saidas['BASE_CALCULO'] = saidas['VC'] - saidas['Coluna3'] - saidas['ICMS']
+        saidas['ALIQ_PIS'] = 0.0165; saidas['PIS_VALOR'] = saidas['BASE_CALCULO'] * 0.0165
+        saidas['ALIQ_COF'] = 0.076; saidas['COF_VALOR'] = saidas['BASE_CALCULO'] * 0.076
         
-        # DÉBITOS (Fórmula: Valor Contábil - IPI - ICMS para CST 01)
-        deb = gs[gs['CST_PIS'].astype(str).str.zfill(2) == '01'].groupby(['AC', 'CFOP']).agg({
-            'VC': 'sum', 'Coluna3': 'sum', 'ICMS': 'sum'
-        }).reset_index()
-        deb.columns = ['AC', 'CFOP', 'VLR CONTABIL', 'IPI', 'ICMS']
-        deb['BASE CALCULO'] = deb['VLR CONTABIL'] - deb['IPI'] - deb['ICMS']
-        deb['PIS (1.65%)'] = deb['BASE CALCULO'] * 0.0165
-        deb['COFINS (7.6%)'] = deb['BASE CALCULO'] * 0.076
-        deb.insert(0, 'TIPO', 'DÉBITOS (CST 01)')
+        df_s = saidas[['TIPO', 'AC', 'NF', 'DATA_EMISSAO', 'CFOP', 'COD_ITEM', 'VC', 'Coluna3', 'ICMS', 'BASE_CALCULO', 'ALIQ_PIS', 'PIS_VALOR', 'ALIQ_COF', 'COF_VALOR']]
+        df_s.columns = ['TIPO', 'AC', 'NF', 'DATA', 'CFOP', 'COD_ITEM', 'VLR CONTABIL', 'IPI', 'ICMS', 'BASE CALCULO', 'ALIQ PIS', 'PIS', 'ALIQ COF', 'COFINS']
 
-        # CRÉDITOS (Fórmula: Valor Contábil - IPI para Entradas)
-        cred = ge.groupby(['AC', 'CFOP']).agg({
-            'VLR_NF': 'sum', 'VLR_IPI': 'sum', 'VLR-ICMS': 'sum'
-        }).reset_index()
-        cred.columns = ['AC', 'CFOP', 'VLR CONTABIL', 'IPI', 'ICMS']
-        cred['BASE CALCULO'] = cred['VLR CONTABIL'] - cred['IPI']
-        cred['PIS (1.65%)'] = cred['BASE CALCULO'] * 0.0165
-        cred['COFINS (7.6%)'] = cred['BASE CALCULO'] * 0.076
-        cred.insert(0, 'TIPO', 'CRÉDITOS')
+        # Montagem Detalhada (ENTRADAS)
+        entradas = ge.copy()
+        entradas['TIPO'] = 'CRÉDITO'
+        entradas['BASE_CALCULO'] = entradas['VLR_NF'] - entradas['VLR_IPI']
+        entradas['ALIQ_PIS'] = 0.0165; entradas['PIS_VALOR'] = entradas['BASE_CALCULO'] * 0.0165
+        entradas['ALIQ_COF'] = 0.076; entradas['COF_VALOR'] = entradas['BASE_CALCULO'] * 0.076
+        
+        df_e = entradas[['TIPO', 'AC', 'NUM_NF', 'DATA_EMISSAO', 'CFOP', 'COD_PROD', 'VLR_NF', 'VLR_IPI', 'VLR-ICMS', 'BASE_CALCULO', 'ALIQ_PIS', 'PIS_VALOR', 'ALIQ_COF', 'COF_VALOR']]
+        df_e.columns = ['TIPO', 'AC', 'NF', 'DATA', 'CFOP', 'COD_ITEM', 'VLR CONTABIL', 'IPI', 'ICMS', 'BASE CALCULO', 'ALIQ PIS', 'PIS', 'ALIQ COF', 'COFINS']
 
-        return pd.concat([deb, cred], ignore_index=True)
+        return pd.concat([df_s, df_e], ignore_index=True)
 
-    df_apuracao_final = process_apuracao(df_ge, df_gs)
+    df_pis_cofins_detalhada = gerar_aba_pis_cofins_detalhada(df_ge, df_gs)
 
     # --- GRAVAÇÃO FINAL ---
     mem = io.BytesIO()
@@ -218,19 +209,19 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
         if not df_sai.empty: df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
         if not df_icms_audit.empty: df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
-        if not df_pc_audit.empty: df_pc_audit.to_excel(wr, sheet_name='PIS_COFINS', index=False)
+        if not df_pc_audit.empty: df_pc_audit.to_excel(wr, sheet_name='PIS_COFINS_AUDIT', index=False)
         if not df_ipi_audit.empty: df_ipi_audit.to_excel(wr, sheet_name='IPI', index=False)
         if not df_difal_audit.empty: df_difal_audit.to_excel(wr, sheet_name='DIFAL', index=False)
         if not df_dest.empty: df_dest.to_excel(wr, sheet_name='ICMS_Destino', index=False)
         
-        # ABA SOLICITADA COM AS FÓRMULAS
-        if not df_apuracao_final.empty: df_apuracao_final.to_excel(wr, sheet_name='PIS e COFINS', index=False)
+        # ABA IGUAL À IMAGEM
+        if not df_pis_cofins_detalhada.empty: df_pis_cofins_detalhada.to_excel(wr, sheet_name='PIS e COFINS', index=False)
         
         if not df_ge.empty: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
         if not df_gs.empty: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
 
         wb = wr.book; f_t = wb.add_format({'num_format': '@'})
-        for s in ['Gerenc. Entradas', 'Gerenc. Saídas']:
-            if s in wr.sheets: wr.sheets[s].set_column('A:A', 20, f_t)
+        for s in ['Gerenc. Entradas', 'Gerenc. Saídas', 'PIS e COFINS']:
+            if s in wr.sheets: wr.sheets[s].set_column('C:C', 20, f_t) # NF como Texto
 
     return mem.getvalue()
