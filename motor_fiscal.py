@@ -5,12 +5,8 @@ import io
 import streamlit as st
 
 def extrair_dados_xml(files, fluxo, df_autenticidade=None):
-    """
-    Lê os XMLs e cruza com a base de autenticidade se ela for fornecida.
-    """
     dados_lista = []
-    if not files: 
-        return pd.DataFrame()
+    if not files: return pd.DataFrame()
 
     container_status = st.empty()
     progresso = st.progress(0)
@@ -21,10 +17,8 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
             f.seek(0)
             conteudo_bruto = f.read()
             texto_xml = conteudo_bruto.decode('utf-8', errors='replace')
-            
             texto_xml = re.sub(r'<\?xml[^?]*\?>', '', texto_xml)
             texto_xml = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', texto_xml)
-            
             root = ET.fromstring(texto_xml)
             
             def buscar(caminho, raiz=root):
@@ -33,7 +27,6 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
 
             inf_nfe = root.find('.//infNFe')
             chave_acesso = inf_nfe.attrib.get('Id', '')[3:] if inf_nfe is not None else ""
-
             num_nf = buscar('nNF')
             data_emi = buscar('dhEmi')
             total_nf = root.find('.//total/ICMSTot')
@@ -44,24 +37,17 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
             cnpj = buscar('CNPJ', parceiro) if parceiro is not None else ""
             uf = buscar('UF', parceiro) if parceiro is not None else ""
 
-            itens = root.findall('.//det')
-            for det in itens:
+            for det in root.findall('.//det'):
                 prod = det.find('prod')
                 imp = det.find('imposto')
                 n_item = det.attrib.get('nItem', '0')
                 
                 linha = {
-                    "CHAVE_ACESSO": chave_acesso,
-                    "NUM_NF": num_nf,
+                    "CHAVE_ACESSO": chave_acesso, "NUM_NF": num_nf,
                     "DATA_EMISSAO": pd.to_datetime(data_emi).replace(tzinfo=None) if data_emi else None,
-                    "CNPJ": cnpj, "UF": uf, 
-                    "VLR_NF": float(vlr_nf) if vlr_nf else 0.0, 
-                    "AC": int(n_item),
-                    "CFOP": buscar('CFOP', prod),
-                    "COD_PROD": buscar('cProd', prod),
-                    "DESCR": buscar('xProd', prod),
-                    "NCM": buscar('NCM', prod),
-                    "UNID": buscar('uCom', prod),
+                    "CNPJ": cnpj, "UF": uf, "VLR_NF": float(vlr_nf) if vlr_nf else 0.0, 
+                    "AC": int(n_item), "CFOP": buscar('CFOP', prod), "COD_PROD": buscar('cProd', prod),
+                    "DESCR": buscar('xProd', prod), "NCM": buscar('NCM', prod), "UNID": buscar('uCom', prod),
                     "VUNIT": float(buscar('vUnCom', prod)) if buscar('vUnCom', prod) else 0.0,
                     "QTDE": float(buscar('qCom', prod)) if buscar('qCom', prod) else 0.0,
                     "VPROD": float(buscar('vProd', prod)) if buscar('vProd', prod) else 0.0,
@@ -73,11 +59,9 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                     "BC-ICMS-ST": 0.0, "ICMS-ST": 0.0, "VLR_IPI": 0.0, 
                     "CST_PIS": "", "BC_PIS": 0.0, "VLR_PIS": 0.0, 
                     "CST_COF": "", "BC_COF": 0.0, "VLR_COF": 0.0,
-                    "FCP": 0.0, "ICMS UF Dest": 0.0,
-                    "STATUS": "Não Encontrado na Base" # Valor padrão
+                    "FCP": 0.0, "ICMS UF Dest": 0.0, "STATUS": "Não Encontrado"
                 }
 
-                # Lógica de Tributos (mantida igual)
                 if imp is not None:
                     icms_data = imp.find('.//ICMS')
                     if icms_data is not None:
@@ -86,14 +70,10 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                             if cst is not None: linha["CST-ICMS"] = cst.text
                             if nodo.find('vBC') is not None: linha["BC-ICMS"] = float(nodo.find('vBC').text)
                             if nodo.find('vICMS') is not None: linha["VLR-ICMS"] = float(nodo.find('vICMS').text)
-                            if nodo.find('vBCST') is not None: linha["BC-ICMS-ST"] = float(nodo.find('vBCST').text)
-                            if nodo.find('vICMSST') is not None: linha["ICMS-ST"] = float(nodo.find('vICMSST').text)
                     
-                    vipi = imp.find('.//vIPI')
+                    vipi, vpis, vcof = imp.find('.//vIPI'), imp.find('.//vPIS'), imp.find('.//vCOFINS')
                     if vipi is not None: linha["VLR_IPI"] = float(vipi.text)
-                    vpis = imp.find('.//vPIS')
                     if vpis is not None: linha["VLR_PIS"] = float(vpis.text)
-                    vcof = imp.find('.//vCOFINS')
                     if vcof is not None: linha["VLR_COF"] = float(vcof.text)
 
                 linha["VC"] = linha["VPROD"] + linha["ICMS-ST"] + linha["VLR_IPI"] + linha["DESP"] - linha["DESC"]
@@ -101,41 +81,35 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
             
             container_status.text(f"📊 Processando {i+1} de {total_arquivos}...")
             progresso.progress((i + 1) / total_arquivos)
-        except:
-            continue
+        except: continue
     
-    df_resultado = pd.DataFrame(dados_lista)
+    df_res = pd.DataFrame(dados_lista)
     
-    # --- LÓGICA DE CRUZAMENTO (O SEU PROCV) ---
-    if not df_resultado.empty and df_autenticidade is not None:
-        # Padroniza as chaves para texto para evitar erro de cruzamento
-        df_resultado['CHAVE_ACESSO'] = df_resultado['CHAVE_ACESSO'].astype(str)
-        df_autenticidade.iloc[:, 0] = df_autenticidade.iloc[:, 0].astype(str) # Primeira coluna (Chave)
-        
-        # Cria um dicionário: Chave -> Status
-        mapeamento = dict(zip(df_autenticidade.iloc[:, 0], df_autenticidade.iloc[:, 1]))
-        
-        # Preenche a coluna STATUS baseada na chave
-        df_resultado['STATUS'] = df_resultado['CHAVE_ACESSO'].map(mapeamento).fillna("Chave não encontrada")
+    # --- PROCV: CHAVE (COL A = 0) e STATUS (COL F = 5) ---
+    if not df_res.empty and df_autenticidade is not None:
+        try:
+            df_res['CHAVE_ACESSO'] = df_res['CHAVE_ACESSO'].astype(str).str.strip()
+            # Pega Coluna A (0) e Coluna F (5) da planilha de autenticidade
+            mapeamento = dict(zip(df_autenticidade.iloc[:, 0].astype(str).str.strip(), df_autenticidade.iloc[:, 5]))
+            df_res['STATUS'] = df_res['CHAVE_ACESSO'].map(mapeamento).fillna("Chave não encontrada na base")
+        except Exception as e:
+            st.error(f"Erro no cruzamento: Verifique se a planilha tem pelo menos 6 colunas (A até F).")
 
-    if not df_resultado.empty:
-        df_resultado.drop_duplicates(subset=['CHAVE_ACESSO', 'AC'], keep='first', inplace=True)
+    if not df_res.empty:
+        df_res.drop_duplicates(subset=['CHAVE_ACESSO', 'AC'], keep='first', inplace=True)
 
     container_status.empty()
     progresso.empty()
-    return df_resultado
+    return df_res
 
 def gerar_excel_final(df_ent, df_sai):
-    memoria = io.BytesIO()
-    with pd.ExcelWriter(memoria, engine='xlsxwriter') as escritor:
-        if not df_ent.empty: df_ent.to_excel(escritor, sheet_name='ENTRADAS', index=False)
-        if not df_sai.empty: 
-            df_sai.to_excel(escritor, sheet_name='SAIDAS', index=False)
-            df_sai.to_excel(escritor, sheet_name='ICMS', index=False)
-            df_sai.to_excel(escritor, sheet_name='IPI', index=False)
-            df_sai.to_excel(escritor, sheet_name='PIS_COFINS', index=False)
-            df_sai.to_excel(escritor, sheet_name='DIFAL', index=False)
+    mem = io.BytesIO()
+    with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
+        if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
+        if not df_sai.empty:
+            for aba in ['SAIDAS', 'ICMS', 'IPI', 'PIS_COFINS', 'DIFAL']:
+                df_sai.to_excel(wr, sheet_name=aba, index=False)
         else:
             for aba in ['SAIDAS', 'ICMS', 'IPI', 'PIS_COFINS', 'DIFAL']:
-                pd.DataFrame().to_excel(escritor, sheet_name=aba, index=False)
-    return memoria.getvalue()
+                pd.DataFrame().to_excel(wr, sheet_name=aba, index=False)
+    return mem.getvalue()
