@@ -6,7 +6,9 @@ import streamlit as st
 
 def extrair_dados_xml(files, fluxo, df_autenticidade=None):
     dados_lista = []
-    if not files: return pd.DataFrame()
+    # Mudança lógica: Se não houver arquivos, retorna um DataFrame vazio mas permite que o fluxo continue
+    if not files: 
+        return pd.DataFrame()
 
     container_status = st.empty()
     progresso = st.progress(0)
@@ -83,73 +85,76 @@ def gerar_excel_final(df_ent, df_sai):
     except: 
         base_t = pd.DataFrame(columns=['NCM_KEY'])
 
-    df_icms_audit = df_sai.copy() if not df_sai.empty else pd.DataFrame()
+    # Se não houver saídas, não há o que auditar
+    if df_sai.empty: 
+        return None
 
-    if not df_icms_audit.empty:
-        # Verifica se há entradas carregadas
-        tem_entradas = not df_ent.empty
-        ncms_ent_st = []
-        if tem_entradas:
-            ncms_ent_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist()
+    df_icms_audit = df_sai.copy()
 
-        def format_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    # Identifica se o usuário optou por não carregar entradas
+    tem_entradas = df_ent is not None and not df_ent.empty
+    ncms_ent_st = []
+    if tem_entradas:
+        ncms_ent_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist()
 
-        def auditoria_flexivel(row):
-            if "Cancelada" in str(row['STATUS']):
-                return pd.Series(["NF Cancelada", "R$ 0,00", "R$ 0,00", "✅ Correto", "R$ 0,00", "N/A"])
+    def format_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-            ncm_atual = str(row['NCM']).strip()
-            info_ncm = base_t[base_t['NCM_KEY'] == ncm_atual]
+    def auditoria_final(row):
+        if "Cancelada" in str(row['STATUS']):
+            return pd.Series(["NF Cancelada", "R$ 0,00", "R$ 0,00", "✅ Correto", "R$ 0,00", "N/A"])
+
+        ncm_atual = str(row['NCM']).strip()
+        info_ncm = base_t[base_t['NCM_KEY'] == ncm_atual]
+        
+        if info_ncm.empty:
+            return pd.Series([f"NCM {ncm_atual} Ausente na Base", format_brl(row['VLR-ICMS']), "R$ 0,00", "Cadastrar NCM", "R$ 0,00", "Não"])
+
+        cst_esp = str(info_ncm.iloc[0, 2]).zfill(2)
+        is_interna = row['UF_EMIT'] == row['UF_DEST']
+        aliq_esp = float(info_ncm.iloc[0, 3]) if is_interna else (float(info_ncm.iloc[0, 29]) if len(info_ncm.columns) > 29 else 12.0)
+
+        diag_list = []
+        cst_xml = str(row['CST-ICMS']).strip()
+
+        if cst_xml == "60":
+            if row['VLR-ICMS'] > 0: 
+                diag_list.append(f"CST 60 com destaque: {format_brl(row['VLR-ICMS'])} | Esperado R$ 0,00")
             
-            if info_ncm.empty:
-                return pd.Series([f"NCM {ncm_atual} Ausente na Base", format_brl(row['VLR-ICMS']), "R$ 0,00", "Cadastrar NCM", "R$ 0,00", "Não"])
-
-            cst_esp = str(info_ncm.iloc[0, 2]).zfill(2)
-            is_interna = row['UF_EMIT'] == row['UF_DEST']
-            aliq_esp = float(info_ncm.iloc[0, 3]) if is_interna else (float(info_ncm.iloc[0, 29]) if len(info_ncm.columns) > 29 else 12.0)
-
-            diag_list = []
-            cst_xml = str(row['CST-ICMS']).strip()
-
-            if cst_xml == "60":
-                if row['VLR-ICMS'] > 0: diag_list.append(f"CST 60: Destacado {format_brl(row['VLR-ICMS'])} | Esperado R$ 0,00")
-                
-                # Lógica de alerta sem obrigatoriedade de entrada
-                if not tem_entradas:
-                    diag_list.append("Analisar: CST 60 (Entradas não carregadas para validar ST)")
-                elif ncm_atual not in ncms_ent_st:
-                    diag_list.append(f"Analisar: NCM {ncm_atual} sem histórico ST entrada")
-                
-                aliq_esp = 0.0
-            else:
-                if aliq_esp > 0 and row['VLR-ICMS'] == 0: 
-                    diag_list.append(f"ICMS: Destacado R$ 0,00 | Esperado {aliq_esp}%")
-                if cst_xml != cst_esp: 
-                    diag_list.append(f"CST: Destacado {cst_xml} | Esperado {cst_esp}")
-                if row['ALQ-ICMS'] != aliq_esp and aliq_esp > 0: 
-                    diag_list.append(f"Aliq: Destacada {row['ALQ-ICMS']}% | Esperada {aliq_esp}%")
-
-            complemento_num = (aliq_esp - row['ALQ-ICMS']) * row['BC-ICMS'] / 100 if (row['ALQ-ICMS'] < aliq_esp and cst_xml != "60") else 0.0
-            res = "; ".join(diag_list) if diag_list else "✅ Correto"
+            # Alerta condicional: Só busca no estoque se as entradas foram enviadas
+            if not tem_entradas:
+                diag_list.append("Analisar: CST 60 (Entradas não enviadas para validação)")
+            elif ncm_atual not in ncms_ent_st:
+                diag_list.append(f"Analisar: NCM {ncm_atual} sem estoque ST (Entradas)")
             
-            # Definição de Ação
-            if res == "✅ Correto": acao = "✅ Correto"
-            elif "não carregadas" in res: acao = "Carregar Entradas para validar"
-            elif "Analisar" in res: acao = "Validar Entrada"
-            elif "CST" in res and complemento_num == 0: acao = "Cc-e"
-            else: acao = "Complemento/Estorno"
+            aliq_esp = 0.0
+        else:
+            if aliq_esp > 0 and row['VLR-ICMS'] == 0: 
+                diag_list.append(f"ICMS: Destacado R$ 0,00 | Esperado {aliq_esp}%")
+            if cst_xml != cst_esp: 
+                diag_list.append(f"CST: Destacado {cst_xml} | Esperado {cst_esp}")
+            if row['ALQ-ICMS'] != aliq_esp and aliq_esp > 0: 
+                diag_list.append(f"Aliq: Destacada {row['ALQ-ICMS']}% | Esperada {aliq_esp}%")
 
-            cce = "Sim" if acao == "Cc-e" else "Não"
+        complemento_num = (aliq_esp - row['ALQ-ICMS']) * row['BC-ICMS'] / 100 if (row['ALQ-ICMS'] < aliq_esp and cst_xml != "60") else 0.0
+        res = "; ".join(diag_list) if diag_list else "✅ Correto"
+        
+        # Ações Logicas Curtas
+        if res == "✅ Correto": acao = "✅ Correto"
+        elif "não enviadas" in res: acao = "Subir Entradas (Opcional)"
+        elif "Analisar" in res: acao = "Validar Entrada"
+        elif "CST" in res and complemento_num == 0: acao = "Cc-e"
+        else: acao = "Complemento/Estorno"
 
-            return pd.Series([res, format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS'] * aliq_esp / 100 if aliq_esp > 0 else 0), acao, format_brl(complemento_num), cce])
+        cce = "Sim" if acao == "Cc-e" else "Não"
 
-        df_icms_audit[['Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento', 'Cc-e']] = df_icms_audit.apply(auditoria_flexivel, axis=1)
+        return pd.Series([res, format_brl(row['VLR-ICMS']), format_brl(row['BC-ICMS'] * aliq_esp / 100 if aliq_esp > 0 else 0), acao, format_brl(complemento_num), cce])
+
+    df_icms_audit[['Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento', 'Cc-e']] = df_icms_audit.apply(auditoria_final, axis=1)
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
-        if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
-        if not df_sai.empty:
-            df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
-            df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
-            for aba in ['IPI', 'PIS_COFINS', 'DIFAL']: df_sai.to_excel(wr, sheet_name=aba, index=False)
+        df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False) if tem_entradas else None
+        df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
+        df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
+        for aba in ['IPI', 'PIS_COFINS', 'DIFAL']: df_sai.to_excel(wr, sheet_name=aba, index=False)
     return mem.getvalue()
