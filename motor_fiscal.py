@@ -110,37 +110,37 @@ def gerar_excel_final(df_ent, df_sai):
             cce = "Não se aplica"
             complemento = 0.0
             
-            # Cálculo de Base e Alíquota
             aliq_esp = (row['VLR-ICMS'] / row['BC-ICMS'] * 100) if row['BC-ICMS'] > 0 else 0.0
             base_esperada = row['VPROD'] + row['FRETE'] + row['SEG'] + row['DESP'] - row['DESC']
+            possui_acessorios = (row['FRETE'] + row['SEG'] + row['DESP']) > 0
             
-            # Análise 1: Bitributação (NCM com ST na Entrada)
+            # 1. Bitributação
             if row['NCM'] in ncms_com_st and row['VLR-ICMS'] > 0:
                 diag = "❌ ERRO: Imposto cobrado em duplicidade"
                 acao = f"Como o NCM {row['NCM']} já pagou ST na entrada, você deve zerar o ICMS desta nota e mudar o CST para 060."
                 cce = "Não permitido para valores. Requer Nota Fiscal de Estorno/Ajuste."
                 aliq_esp = 0.0
 
-            # Análise 2: Isenção com Destaque
+            # 2. Isenção com Destaque
             elif row['CST-ICMS'] in ['40', '41', '50'] and row['VLR-ICMS'] > 0:
                 diag = "❌ ERRO: Nota Isenta com imposto destacado"
                 acao = "A nota está marcada como isenta, mas você cobrou imposto. É necessário estornar esse valor."
                 cce = "Não permitido para valores. Corrigir cadastro de tributação."
                 aliq_esp = 0.0
 
-            # Análise 3: Esquecimento de Frete/Despesas (Complemento)
-            elif row['BC-ICMS'] > 0 and (base_esperada - row['BC-ICMS']) > 0.50:
+            # 3. Esquecimento de Frete/Despesas (SOMENTE SE FRETE > 0)
+            elif possui_acessorios and row['BC-ICMS'] > 0 and (base_esperada - row['BC-ICMS']) > 0.10:
                 vlr_faltante = base_esperada - row['BC-ICMS']
                 complemento = vlr_faltante * (aliq_esp / 100)
                 diag = "⚠️ ATENÇÃO: Imposto calculado a menor"
-                acao = f"O Frete/Despesas de {format_brl(row['FRETE'] + row['DESP'])} não foram somados no cálculo. Isso gerou um imposto menor do que o devido."
-                cce = "Cc-e permitida para corrigir descrição. Para o valor do imposto, emitir NF-e Complementar."
+                acao = f"O valor de Frete/Despesas (R$ {row['FRETE'] + row['DESP'] + row['SEG']:,.2f}) não foi somado na base de cálculo."
+                cce = "Para corrigir o valor do imposto, é necessário emitir uma NF-e Complementar."
 
-            # Análise 4: Erro de Alíquota (Geral)
-            elif row['BC-ICMS'] > 0 and aliq_esp not in [4.0, 7.0, 12.0, 18.0]:
+            # 4. Alíquota Fora do Padrão
+            elif row['BC-ICMS'] > 0 and round(aliq_esp, 0) not in [0, 4, 7, 12, 17, 18, 19, 20]:
                 diag = "⚠️ ALERTA: Alíquota fora do padrão"
-                acao = f"A alíquota de {aliq_esp:.2f}% parece estranha para esta UF. Verifique se a tributação do estado de destino está correta."
-                cce = "Cc-e permitida para dados cadastrais. Se o valor mudar, requer NF-e Complementar."
+                acao = f"A alíquota de {aliq_esp:.2f}% não é comum. Verifique se a tributação para a UF {row['UF']} está correta."
+                cce = "Cc-e permitida apenas se não houver alteração no valor do imposto."
 
             return pd.Series([
                 f"{aliq_esp:.2f}%", 
