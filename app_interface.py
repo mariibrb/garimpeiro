@@ -80,7 +80,7 @@ with col_sai:
 
 # --- EXECUÇÃO ---
 st.markdown("<br>", unsafe_allow_html=True)
-if st.button("🚀 EXECUTAR AUDITORIA COMPLETA", type="primary", use_container_width=True):
+if st.button("🚀 EXECUTAR AUDITORIA", type="primary", use_container_width=True):
     if not xml_ent and not xml_sai:
         st.error("Por favor, carregue os arquivos XML.")
     else:
