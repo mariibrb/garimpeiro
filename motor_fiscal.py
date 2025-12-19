@@ -4,9 +4,9 @@ import re
 import io
 import streamlit as st
 
-def extrair_dados_xml(files, fluxo):
+def extrair_dados_xml(files, fluxo, df_autenticidade=None):
     """
-    Leitura de XMLs com bloqueio de duplicados e apenas a coluna STATUS ao final.
+    Lê os XMLs e cruza com a base de autenticidade se ela for fornecida.
     """
     dados_lista = []
     if not files: 
@@ -22,7 +22,6 @@ def extrair_dados_xml(files, fluxo):
             conteudo_bruto = f.read()
             texto_xml = conteudo_bruto.decode('utf-8', errors='replace')
             
-            # Limpeza do XML
             texto_xml = re.sub(r'<\?xml[^?]*\?>', '', texto_xml)
             texto_xml = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', texto_xml)
             
@@ -51,7 +50,6 @@ def extrair_dados_xml(files, fluxo):
                 imp = det.find('imposto')
                 n_item = det.attrib.get('nItem', '0')
                 
-                # STATUS é a única coluna de controle mantida
                 linha = {
                     "CHAVE_ACESSO": chave_acesso,
                     "NUM_NF": num_nf,
@@ -76,9 +74,10 @@ def extrair_dados_xml(files, fluxo):
                     "CST_PIS": "", "BC_PIS": 0.0, "VLR_PIS": 0.0, 
                     "CST_COF": "", "BC_COF": 0.0, "VLR_COF": 0.0,
                     "FCP": 0.0, "ICMS UF Dest": 0.0,
-                    "STATUS": "" 
+                    "STATUS": "Não Encontrado na Base" # Valor padrão
                 }
 
+                # Lógica de Tributos (mantida igual)
                 if imp is not None:
                     icms_data = imp.find('.//ICMS')
                     if icms_data is not None:
@@ -107,6 +106,18 @@ def extrair_dados_xml(files, fluxo):
     
     df_resultado = pd.DataFrame(dados_lista)
     
+    # --- LÓGICA DE CRUZAMENTO (O SEU PROCV) ---
+    if not df_resultado.empty and df_autenticidade is not None:
+        # Padroniza as chaves para texto para evitar erro de cruzamento
+        df_resultado['CHAVE_ACESSO'] = df_resultado['CHAVE_ACESSO'].astype(str)
+        df_autenticidade.iloc[:, 0] = df_autenticidade.iloc[:, 0].astype(str) # Primeira coluna (Chave)
+        
+        # Cria um dicionário: Chave -> Status
+        mapeamento = dict(zip(df_autenticidade.iloc[:, 0], df_autenticidade.iloc[:, 1]))
+        
+        # Preenche a coluna STATUS baseada na chave
+        df_resultado['STATUS'] = df_resultado['CHAVE_ACESSO'].map(mapeamento).fillna("Chave não encontrada")
+
     if not df_resultado.empty:
         df_resultado.drop_duplicates(subset=['CHAVE_ACESSO', 'AC'], keep='first', inplace=True)
 
@@ -117,11 +128,8 @@ def extrair_dados_xml(files, fluxo):
 def gerar_excel_final(df_ent, df_sai):
     memoria = io.BytesIO()
     with pd.ExcelWriter(memoria, engine='xlsxwriter') as escritor:
-        if not df_ent.empty: 
-            df_ent.to_excel(escritor, sheet_name='ENTRADAS', index=False)
-        
+        if not df_ent.empty: df_ent.to_excel(escritor, sheet_name='ENTRADAS', index=False)
         if not df_sai.empty: 
-            # Saídas e todas as abas técnicas replicadas apenas com a coluna STATUS ao final
             df_sai.to_excel(escritor, sheet_name='SAIDAS', index=False)
             df_sai.to_excel(escritor, sheet_name='ICMS', index=False)
             df_sai.to_excel(escritor, sheet_name='IPI', index=False)
@@ -130,5 +138,4 @@ def gerar_excel_final(df_ent, df_sai):
         else:
             for aba in ['SAIDAS', 'ICMS', 'IPI', 'PIS_COFINS', 'DIFAL']:
                 pd.DataFrame().to_excel(escritor, sheet_name=aba, index=False)
-
     return memoria.getvalue()
