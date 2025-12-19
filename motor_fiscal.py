@@ -37,9 +37,13 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                     "AC": int(det.attrib.get('nItem', '0')), "CFOP": buscar('CFOP', prod), "NCM": ncm_limpo,
                     "COD_PROD": buscar('cProd', prod), "DESCR": buscar('xProd', prod),
                     "VPROD": float(buscar('vProd', prod)) if buscar('vProd', prod) else 0.0,
-                    "CST-ICMS": "", "BC-ICMS": 0.0, "VLR-ICMS": 0.0, "ALQ-ICMS": 0.0, "ICMS-ST": 0.0,
+                    # ICMS
+                    "CST-ICMS": "", "BC-ICMS": 0.0, "VLR-ICMS": 0.0, "ALQ-ICMS": 0.0,
+                    # PIS/COFINS
                     "CST-PIS": "", "CST-COF": "", "VAL-PIS": 0.0, "VAL-COF": 0.0, "BC-FED": 0.0,
+                    # IPI
                     "CST-IPI": "", "VAL-IPI": 0.0, "BC-IPI": 0.0, "ALQ-IPI": 0.0,
+                    # DIFAL
                     "VAL-DIFAL": 0.0
                 }
 
@@ -87,45 +91,58 @@ def gerar_excel_final(df_ent, df_sai):
     def limpar_txt(v): return str(v).replace('.0', '').strip()
     def format_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     
+    # Carregamento da Base Federal (Contém PIS, COFINS e IPI)
     try:
-        base_pc = pd.read_excel(".streamlit/Base_CST_Pis_Cofins.xlsx")
-        base_pc['NCM_KEY'] = base_pc.iloc[:, 0].apply(limpar_txt).str.replace(r'\D', '', regex=True).str.zfill(8)
-        base_pc.columns = [c.upper() for c in base_pc.columns]
-    except: base_pc = pd.DataFrame()
+        base_fed = pd.read_excel(".streamlit/Base_CST_Pis_Cofins.xlsx")
+        base_fed['NCM_KEY'] = base_fed.iloc[:, 0].apply(limpar_txt).str.replace(r'\D', '', regex=True).str.zfill(8)
+        base_fed.columns = [c.upper() for c in base_fed.columns]
+    except: base_fed = pd.DataFrame()
 
     if df_sai is None or df_sai.empty: df_sai = pd.DataFrame([{"AVISO": "Sem dados"}])
 
-    # --- ABAS PRESERVADAS (ICMS / PIS_COFINS) ---
-    df_icms = df_sai.copy() # Lógica anterior mantida internamente
-    df_pc = df_sai.copy()   # Lógica anterior mantida internamente
-
-    # --- ABA IPI LAPIDADA (ESPERADO VS DESTACADO) ---
+    # --- ABA IPI LAPIDADA (VALORES + CST) ---
     df_ipi = df_sai.copy()
     def audit_ipi(row):
         ncm = str(row['NCM']).zfill(8)
-        info = base_pc[base_pc['NCM_KEY'] == ncm] if not base_pc.empty else pd.DataFrame()
+        info = base_fed[base_fed['NCM_KEY'] == ncm] if not base_fed.empty else pd.DataFrame()
         
-        if info.empty: return pd.Series(["NCM não mapeado", format_brl(row['VAL-IPI']), "R$ 0,00", "Cadastrar NCM na Base"])
+        if info.empty: 
+            return pd.Series(["NCM não mapeado", row['CST-IPI'], "-", format_brl(row['VAL-IPI']), "R$ 0,00", "Cadastrar NCM"])
         
         try:
             cst_i_esp = str(info.iloc[0]['CST_IPI']).zfill(2)
             aliq_i_esp = float(info.iloc[0]['ALQ_IPI'])
-        except: cst_i_esp, aliq_i_esp = "50", 0.0
+        except: 
+            cst_i_esp, aliq_i_esp = "50", 0.0
 
         v_esp = row['BC-IPI'] * (aliq_i_esp / 100)
         diag_ipi, acao_ipi = [], []
 
+        # Comparação de CST
         if str(row['CST-IPI']) != cst_i_esp:
             diag_ipi.append(f"CST: XML {row['CST-IPI']} vs Base {cst_i_esp}")
-            acao_ipi.append(f"Cc-e (Corrigir CST IPI para {cst_i_esp})")
+            acao_ipi.append(f"Cc-e (CST IPI para {cst_i_esp})")
         
+        # Comparação de Valores
         if abs(row['VAL-IPI'] - v_esp) > 0.01:
             diag_ipi.append(f"VALOR: XML {format_brl(row['VAL-IPI'])} vs Esperado {format_brl(v_esp)}")
-            acao_ipi.append("Emitir NF Complementar de IPI" if row['VAL-IPI'] < v_esp else "Estorno de IPI")
+            acao_ipi.append("Emitir NF Complementar" if row['VAL-IPI'] < v_esp else "Estorno de IPI")
 
-        return pd.Series(["; ".join(diag_ipi) if diag_ipi else "✅ Correto", format_brl(row['VAL-IPI']), format_brl(v_esp), " + ".join(acao_ipi) if acao_ipi else "✅ Correto"])
+        return pd.Series([
+            "; ".join(diag_ipi) if diag_ipi else "✅ Correto",
+            row['CST-IPI'],
+            cst_i_esp,
+            format_brl(row['VAL-IPI']),
+            format_brl(v_esp),
+            " + ".join(acao_ipi) if acao_ipi else "✅ Correto"
+        ])
 
-    df_ipi[['Diagnóstico', 'IPI XML', 'IPI Esperado', 'Ação']] = df_ipi.apply(audit_ipi, axis=1)
+    df_ipi[['Diagnóstico', 'CST XML', 'CST Base', 'IPI XML', 'IPI Esperado', 'Ação']] = df_ipi.apply(audit_ipi, axis=1)
+
+    # --- MANTENDO DEMAIS ABAS ---
+    df_icms = df_sai.copy() # (Preservado conforme Aprovação 2)
+    df_pc = df_sai.copy()   # (Preservado conforme Aprovação 2)
+    df_difal = df_sai.copy()
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
@@ -133,5 +150,5 @@ def gerar_excel_final(df_ent, df_sai):
         df_icms.to_excel(wr, sheet_name='ICMS', index=False)
         df_pc.to_excel(wr, sheet_name='PIS_COFINS', index=False)
         df_ipi.to_excel(wr, sheet_name='IPI', index=False)
-        df_sai.to_excel(wr, sheet_name='DIFAL', index=False)
+        df_difal.to_excel(wr, sheet_name='DIFAL', index=False)
     return mem.getvalue()
