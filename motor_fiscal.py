@@ -83,11 +83,11 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
         base_icms['NCM_KEY'] = base_icms.iloc[:, 0].apply(limpar_txt).str.replace(r'\D', '', regex=True).str.zfill(8)
         base_icms['CST_KEY'] = base_icms.iloc[:, 2].apply(limpar_txt).str.zfill(2)
     except: base_icms = pd.DataFrame()
-
+    
     if df_sai is None: df_sai = pd.DataFrame()
     if df_ent is None: df_ent = pd.DataFrame()
 
-    # --- ABA ICMS ---
+    # --- ABA ICMS (ORIGINAL) ---
     df_icms_audit = df_sai.copy(); tem_e = not df_ent.empty
     ncm_st = df_ent[(df_ent['CST-ICMS']=="60") | (df_ent['ICMS-ST'] > 0)]['NCM'].unique().tolist() if tem_e else []
     def audit_icms(row):
@@ -102,7 +102,7 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     if not df_icms_audit.empty:
         df_icms_audit[['ST na Entrada', 'Diagnóstico', 'ICMS XML', 'ICMS Esperado', 'Ação', 'Complemento']] = df_icms_audit.apply(audit_icms, axis=1)
 
-    # --- ABA ICMS_DESTINO ---
+    # --- ABA ICMS_DESTINO (ORIGINAL) ---
     if not df_sai.empty:
         df_dest = df_sai.groupby('UF_DEST').agg({'ICMS-ST': 'sum', 'VAL-DIFAL': 'sum', 'VAL-FCP': 'sum', 'VAL-FCPST': 'sum'}).reset_index()
         df_dest.columns = ['ESTADO', 'ST', 'DIFAL', 'FCP', 'FCP-ST']
@@ -113,73 +113,65 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     def load_gerencial_flexible(f, target_cols):
         if not f: return pd.DataFrame()
         try:
-            f.seek(0)
-            raw = f.read().decode('utf-8-sig', errors='replace')
-            sep = ';' if raw.count(';') > raw.count(',') else ','
+            f.seek(0); raw = f.read().decode('utf-8-sig', errors='replace'); sep = ';' if raw.count(';') > raw.count(',') else ','
             df = pd.read_csv(io.StringIO(raw), sep=sep, header=None, engine='python', dtype={0: str})
             if df.shape[0] > 0 and not str(df.iloc[0, 0]).strip().isdigit(): df = df.iloc[1:]
-            num_cols_df = df.shape[1]
-            num_cols_target = len(target_cols)
+            num_cols_df = df.shape[1]; num_cols_target = len(target_cols)
             if num_cols_df > num_cols_target: df = df.iloc[:, :num_cols_target]
             elif num_cols_df < num_cols_target:
                 for i in range(num_cols_target - num_cols_df): df[f'Vazia_{i}'] = ""
-            df.columns = target_cols
-            return df
-        except: return pd.DataFrame()
+            df.columns = target_cols; return df
+        except Exception: return pd.DataFrame()
 
     c_sai = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
     c_ent = ['NUM_NF','DATA_EMISSAO','CNPJ','UF','VLR_NF','AC','CFOP','COD_PROD','DESCR','NCM','UNID','VUNIT','QTDE','VPROD','DESC','FRETE','SEG','DESP','VC','CST-ICMS','Coluna2','BC-ICMS','VLR-ICMS','BC-ICMS-ST','ICMS-ST','VLR_IPI','CST_PIS','BC_PIS','VLR_PIS','CST_COF','BC_COF','VLR_COF']
-    
-    df_ge = load_gerencial_flexible(file_ger_ent, c_ent)
-    df_gs = load_gerencial_flexible(file_ger_sai, c_sai)
+    df_ge = load_gerencial_flexible(file_ger_ent, c_ent); df_gs = load_gerencial_flexible(file_ger_sai, c_sai)
 
-    # --- NOVA ABA: APURAÇÃO PIS E COFINS (PADRÃO ESCRITÓRIO) ---
-    def gerar_apuracao_pc(ge, gs):
+    # --- NOVA ABA: APURAÇÃO PIS E COFINS ---
+    def gerar_apuracao_pc_escritorio(ge, gs):
         if gs.empty and ge.empty: return pd.DataFrame()
-        
-        # Conversores para cálculo
-        for c in ['VC', 'IPI', 'ICMS', 'BC_PIS', 'PIS', 'BC_COF', 'COF']:
+        for c in ['VC', 'IPI', 'ICMS', 'BC_PIS', 'PIS', 'BC_COF', 'COF', 'Coluna3']:
             if c in gs.columns: gs[c] = pd.to_numeric(gs[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
         for c in ['VLR_NF', 'VLR_IPI', 'VLR-ICMS', 'BC_PIS', 'VLR_PIS', 'BC_COF', 'VLR_COF']:
             if c in ge.columns: ge[c] = pd.to_numeric(ge[c].astype(str).str.replace(',', '.'), errors='coerce').fillna(0)
-
-        # Débitos CST 01
-        deb = gs[gs['CST_PIS'].isin(['01', '1'])].groupby(['AC', 'CFOP']).agg({
-            'VC': 'sum', 'Coluna3': 'sum', 'ICMS': 'sum' 
-        }).reset_index()
-        deb.columns = ['ACUMULADOR', 'CFOP', 'Valor Contábil', 'IPI', 'ICMS']
-        deb['Base de Cálculo'] = deb['Valor Contábil'] - deb['IPI'] - deb['ICMS']
-        deb.insert(0, 'TIPO', 'DÉBITOS (CST 01)')
-
-        # Créditos Entrada
-        cred = ge.groupby(['AC', 'CFOP']).agg({
-            'VLR_NF': 'sum', 'VLR_IPI': 'sum', 'VLR-ICMS': 'sum'
-        }).reset_index()
-        cred.columns = ['ACUMULADOR', 'CFOP', 'Valor Contábil', 'IPI', 'ICMS']
-        cred['Base de Cálculo'] = cred['Valor Contábil'] - cred['IPI']
-        cred.insert(0, 'TIPO', 'CRÉDITOS')
-
-        res = pd.concat([deb, cred], ignore_index=True)
+        
+        # Débitos (CST 01)
+        df_deb = gs[gs['CST_PIS'].isin(['01', '1'])].groupby(['AC', 'CFOP']).agg({'VC': 'sum', 'Coluna3': 'sum', 'ICMS': 'sum'}).reset_index()
+        df_deb.columns = ['ACUMULADOR', 'CFOP', 'Valor Contábil', 'IPI', 'ICMS']
+        df_deb['Base de Cálculo'] = df_deb['Valor Contábil'] - df_deb['IPI'] - df_deb['ICMS']
+        df_deb.insert(0, 'TIPO', 'DÉBITOS (CST 01)')
+        
+        # Créditos
+        df_cred = ge.groupby(['AC', 'CFOP']).agg({'VLR_NF': 'sum', 'VLR_IPI': 'sum', 'VLR-ICMS': 'sum'}).reset_index()
+        df_cred.columns = ['ACUMULADOR', 'CFOP', 'Valor Contábil', 'IPI', 'ICMS']
+        df_cred['Base de Cálculo'] = df_cred['Valor Contábil'] - df_cred['IPI']
+        df_cred.insert(0, 'TIPO', 'CRÉDITOS')
+        
+        res = pd.concat([df_deb, df_cred], ignore_index=True)
         res['PIS (1,65%)'] = res['Base de Cálculo'] * 0.0165
         res['COFINS (7,6%)'] = res['Base de Cálculo'] * 0.076
         return res
 
-    df_apuracao = gerar_apuracao_pc(df_ge, df_gs)
+    df_apuracao = gerar_apuracao_pc_escritorio(df_ge, df_gs)
 
+    # --- GRAVAÇÃO FINAL (RESTORED ALL TABS) ---
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
         if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS', index=False)
         if not df_sai.empty: df_sai.to_excel(wr, sheet_name='SAIDAS', index=False)
         if not df_icms_audit.empty: df_icms_audit.to_excel(wr, sheet_name='ICMS', index=False)
+        if not df_dest.empty: df_dest.to_excel(wr, sheet_name='ICMS_Destino', index=False)
         
-        # Aba Padrão do Escritório
+        # Aba nova
         if not df_apuracao.empty: df_apuracao.to_excel(wr, sheet_name='PIS e COFINS', index=False)
         
+        # Abas gerenciais
         if not df_ge.empty: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
         if not df_gs.empty: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
 
-        wb = wr.book; f_txt = wb.add_format({'num_format': '@'})
+        # Travamento formato texto na coluna A
+        wb = wr.book; f_t = wb.add_format({'num_format': '@'})
         for s in ['Gerenc. Entradas', 'Gerenc. Saídas']:
-            if s in wr.sheets: wr.sheets[s].set_column('A:A', 20, f_txt)
+            if s in wr.sheets: wr.sheets[s].set_column('A:A', 20, f_t)
                 
     return mem.getvalue()
