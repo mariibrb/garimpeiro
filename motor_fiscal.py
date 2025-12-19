@@ -101,35 +101,35 @@ def gerar_excel_final(df_ent, df_sai):
             mensagens = []
             cst_atual = str(row['CST-ICMS']).strip()
 
-            # --- REGRA SUPREMA PARA CST 60 ---
             if cst_atual == "60":
-                # Se for 60, NÃO PODE cobrar imposto. Se estiver zerado, está PERFEITO.
                 if row['VLR-ICMS'] > 0:
                     mensagens.append("CST 060 com destaque indevido")
-                
-                # Mas continua checando se o NCM veio de uma entrada com ST
                 if row['NCM'] not in ncms_ent_st:
-                    mensagens.append("Validar: NCM em CST 60 sem entrada correspondente")
-                
-                # Força a alíquota esperada para zero para não dar conflito nas outras fórmulas
+                    mensagens.append(f"Inconsistência: NCM {row['NCM']} sem histórico de ST na Entrada")
                 aliq_esp = 0.0
-            
             else:
-                # SÓ AQUI ele checa se o imposto foi omitido (quando o CST NÃO é 60)
                 if aliq_esp > 0 and row['VLR-ICMS'] == 0:
                     mensagens.append("Imposto não destacado")
-
-                # Validações de CST e Alíquota para os demais casos
                 if cst_atual != cst_esp and cst_esp != "NCM não encontrado":
                     mensagens.append(f"CST Errado (XML:{cst_atual}|Base:{cst_esp})")
-                
                 if row['ALQ-ICMS'] != aliq_esp and aliq_esp > 0:
                     mensagens.append(f"Aliq. Errada ({row['ALQ-ICMS']}% vs {aliq_esp}%)")
 
             complemento = (aliq_esp - row['ALQ-ICMS']) * row['BC-ICMS'] / 100 if (row['ALQ-ICMS'] < aliq_esp and cst_atual != "60") else 0.0
-            
             diag = "; ".join(mensagens) if mensagens else "✅ Correto"
-            acao = "Estornar ICMS destacado" if "CST 060 com destaque" in diag else ("NF Complementar" if "não destacado" in diag else ("Revisar entrada do NCM" if "Validar" in diag else "Manter conforme XML"))
+            
+            # --- MENSAGENS DE AÇÃO MAIS LÓGICAS ---
+            if "sem histórico" in diag:
+                acao = "Vincular XML de Entrada com ST ou alterar CST de Saída"
+            elif "destaque indevido" in diag:
+                acao = "Zerar ICMS no XML e usar CST 060"
+            elif "não destacado" in diag:
+                acao = "Emitir NF Complementar de ICMS"
+            elif diag == "✅ Correto":
+                acao = "Manter conforme XML"
+            else:
+                acao = "Ajustar parâmetro tributário no ERP"
+
             cce = "Cc-e disponível" if "CST" in diag and "060" not in diag else "Não permitido"
 
             def f_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
