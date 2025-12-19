@@ -6,7 +6,7 @@ from datetime import datetime
 from motor_fiscal import extrair_dados_xml, gerar_excel_final
 
 # --- CONFIGURAÇÃO VISUAL ---
-st.set_page_config(page_title="Nascel | Auditoria", page_icon="🧡", layout="wide")
+st.set_page_config(page_title="Nascel | Sentinela Dashboard", page_icon="🧡", layout="wide")
 
 st.markdown("""
     <style>
@@ -14,12 +14,9 @@ st.markdown("""
     html, body, [class*="css"] { font-family: 'Quicksand', sans-serif; }
     .stApp { background-color: #F7F7F7; }
     h1, h2, h3, h4 { color: #FF6F00 !important; font-weight: 700; }
-    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlock"] {
-        background-color: white; padding: 20px; border-radius: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.05);
-    }
+    div[data-testid="stMetricValue"] { color: #FF6F00 !important; font-size: 1.8rem !important; }
     .stButton>button { background-color: #FF6F00; color: white; border-radius: 25px; font-weight: bold; width: 100%; border: none; padding: 12px; }
-    .stButton>button:hover { background-color: #E65100; transform: scale(1.02); }
-    .stFileUploader { padding: 5px; border: 1px dashed #FF6F00; border-radius: 10px; }
+    .stButton>button:hover { background-color: #E65100; transform: scale(1.01); }
     </style>
 """, unsafe_allow_html=True)
 
@@ -31,13 +28,7 @@ with st.sidebar:
     if os.path.exists(".streamlit/nascel sem fundo.png"):
         st.image(".streamlit/nascel sem fundo.png", use_container_width=True)
     st.markdown("---")
-    with st.expander("📥 **Baixar Gabaritos**", expanded=False):
-        df_modelo = pd.DataFrame(columns=['CHAVE', 'STATUS'])
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df_modelo.to_excel(writer, index=False)
-        st.download_button("📄 Modelo ICMS", buffer.getvalue(), "modelo_icms.xlsx", use_container_width=True)
-        st.download_button("📄 Modelo PIS/COFINS", buffer.getvalue(), "modelo_pis_cofins.xlsx", use_container_width=True)
+    st.info("Carregue os arquivos Gerenciais para gerar o Dashboard de PIS/COFINS.")
 
 # --- ÁREA CENTRAL ---
 c1, c2, c3 = st.columns([3, 4, 3])
@@ -49,66 +40,54 @@ st.markdown("---")
 
 col_ent, col_sai = st.columns(2, gap="large")
 with col_ent:
-    head_e1, head_e2 = st.columns([3, 1])
-    with head_e1: st.markdown("### 📥 1. Entradas")
-    with head_e2:
-        if st.button("🗑️ Limpar", key="btn_clear_ent"):
-            st.session_state.xml_ent_key += 1
-            st.rerun()
+    st.markdown("### 📥 1. Entradas")
     xml_ent = st.file_uploader("📂 XMLs de Entrada", type='xml', accept_multiple_files=True, key=f"xml_e_{st.session_state.xml_ent_key}")
-    aut_ent = st.file_uploader("🔍 Autenticidade Entrada", type=['xlsx'], key="ae")
     ger_ent = st.file_uploader("📊 Gerenc. Entradas (CSV)", type=['csv'], key="ge")
 
 with col_sai:
-    head_s1, head_s2 = st.columns([3, 1])
-    with head_s1: st.markdown("### 📤 2. Saídas")
-    with head_s2:
-        if st.button("🗑️ Limpar", key="btn_clear_sai"):
-            st.session_state.xml_sai_key += 1
-            st.rerun()
+    st.markdown("### 📤 2. Saídas")
     xml_sai = st.file_uploader("📂 XMLs de Saída", type='xml', accept_multiple_files=True, key=f"xml_s_{st.session_state.xml_sai_key}")
-    aut_sai = st.file_uploader("🔍 Autenticidade Saída", type=['xlsx'], key="as")
     ger_sai = st.file_uploader("📊 Gerenc. Saídas (CSV)", type=['csv'], key="gs")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- LÓGICA DE EXECUÇÃO FLEXÍVEL ---
-if st.button("🚀 EXECUTAR AUDITORIA / DASHBOARD", type="primary", use_container_width=True):
-    # Agora permite executar se tiver arquivos XML OU arquivos Gerenciais
-    if not (xml_ent or xml_sai or ger_ent or ger_sai):
-        st.error("Por favor, carregue os arquivos (XMLs ou Gerenciais) para processar.")
+if st.button("🚀 PROCESSAR DASHBOARD E AUDITORIA", type="primary", use_container_width=True):
+    if not (ger_ent or ger_sai or xml_ent or xml_sai):
+        st.error("Por favor, carregue ao menos os arquivos Gerenciais.")
     else:
         try:
-            with st.spinner("O Sentinela está processando... 🧡"):
-                df_autent_data = None
-                arq_aut = aut_sai if aut_sai else aut_ent
-                if arq_aut: df_autent_data = pd.read_excel(arq_aut)
-
-                # Processa XMLs se existirem
-                df_e = extrair_dados_xml(xml_ent, "Entrada", df_autenticidade=df_autent_data) if xml_ent else pd.DataFrame()
-                df_s = extrair_dados_xml(xml_sai, "Saída", df_autenticidade=df_autent_data) if xml_sai else pd.DataFrame()
+            with st.spinner("Compilando dados para o Dashboard... 🧡"):
+                # Processamento de XMLs (opcional)
+                df_e = extrair_dados_xml(xml_ent, "Entrada") if xml_ent else pd.DataFrame()
+                df_s = extrair_dados_xml(xml_sai, "Saída") if xml_sai else pd.DataFrame()
                 
-                # Gera o Excel e os dados para o Dash
-                excel_binario, dash_stats = gerar_excel_final(df_e, df_s, file_ger_ent=ger_ent, file_ger_sai=ger_sai)
+                # Motor gera o Excel e as métricas do Dash
+                excel_binario, stats = gerar_excel_final(df_e, df_s, file_ger_ent=ger_ent, file_ger_sai=ger_sai)
                 
                 if excel_binario:
-                    st.success("Processamento concluído! 🧡")
+                    st.success("Dados processados com sucesso!")
                     
-                    # --- DASHBOARD VISUAL (Baseado nos Gerenciais) ---
-                    if ger_ent or ger_sai:
-                        st.markdown("## 📊 Dashboard de Apuração PIS/COFINS")
-                        m1, m2, m3 = st.columns(3)
-                        m1.metric("Débitos Totais", f"R$ {dash_stats['total_deb']:,.2f}")
-                        m2.metric("Créditos Totais", f"R$ {dash_stats['total_cred']:,.2f}")
-                        saldo = dash_stats['total_deb'] - dash_stats['total_cred']
-                        m3.metric("Saldo Final", f"R$ {saldo:,.2f}", delta=f"{saldo:,.2f}", delta_color="inverse")
+                    # --- DASHBOARD (O que você pediu) ---
+                    st.markdown("### 📊 Resultado da Apuração PIS/COFINS")
+                    m1, m2, m3 = st.columns(3)
                     
+                    with m1:
+                        st.metric("Débitos (Saídas)", f"R$ {stats['deb']:,.2f}")
+                    with m2:
+                        st.metric("Créditos (Entradas)", f"R$ {stats['cred']:,.2f}")
+                    with m3:
+                        saldo = stats['deb'] - stats['cred']
+                        cor = "normal" if saldo > 0 else "inverse"
+                        st.metric("Saldo a Pagar / Credor", f"R$ {abs(saldo):,.2f}", 
+                                  delta="A PAGAR" if saldo > 0 else "CREDOR", delta_color=cor)
+
+                    st.markdown("---")
                     st.download_button(
-                        label="💾 BAIXAR RELATÓRIO COMPLETO",
+                        label="💾 BAIXAR RELATÓRIO EXCEL COMPLETO",
                         data=excel_binario,
-                        file_name="Auditoria_Sentinela_Completa.xlsx",
+                        file_name="Apuração_Sentinela.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         use_container_width=True
                     )
         except Exception as e:
-            st.error(f"Erro crítico no processamento: {e}")
+            st.error(f"Erro no processamento: {e}")
