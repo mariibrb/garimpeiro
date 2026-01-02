@@ -3,7 +3,6 @@ import numpy as np
 import xml.etree.ElementTree as ET
 import re
 import io
-import streamlit as st
 
 def extrair_dados_xml(files, fluxo, df_autenticidade=None):
     dados_lista = []
@@ -16,11 +15,14 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
             texto_xml = re.sub(r'<\?xml[^?]*\?>', '', texto_xml)
             texto_xml = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', texto_xml)
             root = ET.fromstring(texto_xml)
+            
             def buscar(caminho, raiz=root):
                 alvo = raiz.find(f'.//{caminho}')
                 return alvo.text if alvo is not None and alvo.text is not None else ""
+
             inf_nfe = root.find('.//infNFe')
             chave_acesso = inf_nfe.attrib.get('Id', '')[3:] if inf_nfe is not None else ""
+            
             for det in root.findall('.//det'):
                 prod = det.find('prod'); imp = det.find('imposto')
                 ncm_limpo = re.sub(r'\D', '', buscar('NCM', prod)).zfill(8)
@@ -33,46 +35,22 @@ def extrair_dados_xml(files, fluxo, df_autenticidade=None):
                     "VPROD": float(buscar('vProd', prod)) if buscar('vProd', prod) else 0.0,
                     "CST-ICMS": "", "BC-ICMS": 0.0, "VLR-ICMS": 0.0, "ALQ-ICMS": 0.0, "ICMS-ST": 0.0,
                     "CST-PIS": "", "CST-COF": "", "VAL-PIS": 0.0, "VAL-COF": 0.0, "BC-FED": 0.0,
-                    "CST-IPI": "", "VAL-IPI": 0.0, "BC-IPI": 0.0, "ALQ-IPI": 0.0, "VAL-DIFAL": 0.0,
-                    "VAL-FCP": 0.0, "VAL-FCPST": 0.0 
+                    "CST-IPI": "", "VAL-IPI": 0.0, "BC-IPI": 0.0, "ALQ-IPI": 0.0, "VAL-DIFAL": 0.0
                 }
                 if imp is not None:
-                    # Lógica de extração de impostos do XML completa conforme aprovado
-                    icms_n = imp.find('.//ICMS')
-                    if icms_n is not None:
-                        for n in icms_n:
+                    ic = imp.find('.//ICMS')
+                    if ic is not None:
+                        for n in ic:
                             cst = n.find('CST') if n.find('CST') is not None else n.find('CSOSN')
                             if cst is not None: linha["CST-ICMS"] = cst.text.zfill(2)
                             if n.find('vBC') is not None: linha["BC-ICMS"] = float(n.find('vBC').text)
                             if n.find('vICMS') is not None: linha["VLR-ICMS"] = float(n.find('vICMS').text)
-                            if n.find('pICMS') is not None: linha["ALQ-ICMS"] = float(n.find('pICMS').text)
-                            if n.find('vICMSST') is not None: linha["ICMS-ST"] = float(n.find('vICMSST').text)
-                    pis = imp.find('.//PIS')
-                    if pis is not None:
-                        for p in pis:
-                            if p.find('CST') is not None: linha["CST-PIS"] = p.find('CST').text.zfill(2)
-                            if p.find('vPIS') is not None: linha["VAL-PIS"] = float(p.find('vPIS').text)
-                    cof = imp.find('.//COFINS')
-                    if cof is not None:
-                        for c in cof:
-                            if c.find('CST') is not None: linha["CST-COF"] = c.find('CST').text.zfill(2)
-                            if c.find('vCOFINS') is not None: linha["VAL-COF"] = float(c.find('vCOFINS').text)
                 dados_lista.append(linha)
         except: continue
     return pd.DataFrame(dados_lista)
 
 def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
-    def limpar_txt(v): return str(v).replace('.0', '').strip()
-    def format_brl(v): return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    
-    # Bases de apoio para auditoria
-    try:
-        base_icms = pd.read_excel(".streamlit/Base_ICMS.xlsx")
-        base_icms['NCM_KEY'] = base_icms.iloc[:, 0].apply(limpar_txt).str.replace(r'\D', '', regex=True).str.zfill(8)
-    except: base_icms = pd.DataFrame()
-
-    # Leitura dos Gerenciais (Versão Blindada)
-    def load_gerencial(f, target_cols):
+    def load_ger(f, target_cols):
         if not f: return pd.DataFrame()
         try:
             f.seek(0); raw = f.read().decode('utf-8-sig', errors='replace'); sep = ';' if raw.count(';') > raw.count(',') else ','
@@ -85,18 +63,13 @@ def gerar_excel_final(df_ent, df_sai, file_ger_ent=None, file_ger_sai=None):
     c_sai = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
     c_ent = ['NUM_NF','DATA_EMISSAO','CNPJ','UF','VLR_NF','AC','CFOP','COD_PROD','DESCR','NCM','UNID','VUNIT','QTDE','VPROD','DESC','FRETE','SEG','DESP','VC','CST-ICMS','Coluna2','BC-ICMS','VLR-ICMS','BC-ICMS-ST','ICMS-ST','VLR_IPI','CST_PIS','BC_PIS','VLR_PIS','CST_COF','BC_COF','VLR_COF']
     
-    df_ge = load_gerencial(file_ger_ent, c_ent)
-    df_gs = load_gerencial(file_ger_sai, c_sai)
+    df_ge = load_ger(file_ger_ent, c_ent); df_gs = load_ger(file_ger_sai, c_sai)
 
     mem = io.BytesIO()
     with pd.ExcelWriter(mem, engine='xlsxwriter') as wr:
         if not df_ent.empty: df_ent.to_excel(wr, sheet_name='ENTRADAS_XML', index=False)
         if not df_sai.empty: df_sai.to_excel(wr, sheet_name='SAIDAS_XML', index=False)
-        if not df_ge.empty: df_ge.to_excel(wr, sheet_name='Gerenc. Entradas', index=False)
-        if not df_gs.empty: df_gs.to_excel(wr, sheet_name='Gerenc. Saídas', index=False)
-        
-        workbook = wr.book; f_txt = workbook.add_format({'num_format': '@'})
-        for s in wr.sheets:
-            if 'Gerenc' in s: wr.sheets[s].set_column('A:A', 20, f_txt)
-                
+        if not df_ge.empty: df_ge.to_excel(wr, sheet_name='Gerencial Entradas', index=False)
+        if not df_gs.empty: df_gs.to_excel(wr, sheet_name='Gerencial Saídas', index=False)
+        for s in wr.sheets: wr.sheets[s].set_column('A:A', 20, wr.book.add_format({'num_format': '@'}))
     return mem.getvalue()
