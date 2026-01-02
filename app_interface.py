@@ -23,30 +23,27 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-if 'xml_ent_key' not in st.session_state: st.session_state.xml_ent_key = 0
-if 'xml_sai_key' not in st.session_state: st.session_state.xml_sai_key = 0
+# --- INICIALIZAÇÃO DE ESTADO ---
+if 'xml_e_key' not in st.session_state: st.session_state.xml_e_key = 0
+if 'xml_s_key' not in st.session_state: st.session_state.xml_s_key = 0
 
-# --- BARRA LATERAL (DO JEITO QUE VOCÊ APROVOU) ---
+# --- BARRA LATERAL (SIDEBAR RESTAURADA) ---
 with st.sidebar:
     if os.path.exists(".streamlit/nascel sem fundo.png"):
         st.image(".streamlit/nascel sem fundo.png", use_container_width=True)
-    
     st.markdown("---")
     with st.expander("📥 **Baixar Gabaritos**", expanded=False):
-        df_modelo = pd.DataFrame(columns=['CHAVE', 'STATUS'])
+        df_mod = pd.DataFrame(columns=['CHAVE', 'STATUS'])
         buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-            df_modelo.to_excel(writer, index=False)
+        with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer: df_mod.to_excel(writer, index=False)
         st.download_button("📄 Modelo ICMS", buffer.getvalue(), "modelo_icms.xlsx", use_container_width=True)
         st.download_button("📄 Modelo PIS/COFINS", buffer.getvalue(), "modelo_pis_cofins.xlsx", use_container_width=True)
-
     st.markdown("### ⚙️ Configurações de Base")
     with st.expander("🔄 **Atualizar Base ICMS**"):
         up_icms = st.file_uploader("Arquivo ICMS", type=['xlsx'], key='base_i')
         if up_icms:
             with open(".streamlit/Base_ICMS.xlsx", "wb") as f: f.write(up_icms.getbuffer())
             st.toast("Base ICMS atualizada!", icon="✅")
-
     with st.expander("🔄 **Atualizar Base PIS/COF**"):
         up_pis = st.file_uploader("Arquivo PIS", type=['xlsx'], key='base_p')
         if up_pis:
@@ -65,47 +62,40 @@ col_ent, col_sai = st.columns(2, gap="large")
 with col_ent:
     h1, h2 = st.columns([3, 1])
     h1.markdown("### 📥 1. Entradas")
-    if h2.button("🗑️ Limpar", key="clr_e"): 
-        st.session_state.xml_ent_key += 1
-        st.rerun()
-    xml_ent = st.file_uploader("📂 XMLs", type='xml', accept_multiple_files=True, key=f"e_{st.session_state.xml_ent_key}")
+    if h2.button("🗑️ Limpar", key="clr_e"):
+        st.session_state.xml_e_key += 1; st.rerun()
+    xml_ent = st.file_uploader("📂 XMLs", type='xml', accept_multiple_files=True, key=f"e_{st.session_state.xml_e_key}")
     ger_ent = st.file_uploader("📊 Gerencial Entradas (CSV)", type=['csv'], key="ge")
 
 with col_sai:
     h3, h4 = st.columns([3, 1])
     h3.markdown("### 📤 2. Saídas")
-    if h4.button("🗑️ Limpar", key="clr_s"): 
-        st.session_state.xml_sai_key += 1
-        st.rerun()
-    xml_sai = st.file_uploader("📂 XMLs ", type='xml', accept_multiple_files=True, key=f"s_{st.session_state.xml_sai_key}")
+    if h4.button("🗑️ Limpar", key="clr_s"):
+        st.session_state.xml_s_key += 1; st.rerun()
+    xml_sai = st.file_uploader("📂 XMLs ", type='xml', accept_multiple_files=True, key=f"s_{st.session_state.xml_s_key}")
     ger_sai = st.file_uploader("📊 Gerencial Saídas (CSV)", type=['csv'], key="gs")
 
-# --- EXECUÇÃO E DASHBOARD ---
+# --- EXECUÇÃO ---
 st.markdown("<br>", unsafe_allow_html=True)
 if st.button("🚀 EXECUTAR SENTINELA", type="primary", use_container_width=True):
     try:
         with st.spinner("🧡 Processando..."):
-            df_e_xml = extrair_dados_xml(xml_ent, "Entrada") if xml_ent else pd.DataFrame()
-            df_s_xml = extrair_dados_xml(xml_sai, "Saída") if xml_sai else pd.DataFrame()
-            
-            excel_bin, stats = gerar_excel_final(df_e_xml, df_s_xml, file_ger_ent=ger_ent, file_ger_sai=ger_sai)
+            df_e = extrair_dados_xml(xml_ent, "Entrada") if xml_ent else pd.DataFrame()
+            df_s = extrair_dados_xml(xml_sai, "Saída") if xml_sai else pd.DataFrame()
+            excel_bin, stats = gerar_excel_final(df_e, df_s, file_ger_ent=ger_ent, file_ger_sai=ger_sai)
             
             if excel_bin:
                 st.success("Análise concluída!")
-                
-                # Exibição do Dashboard (Todas as métricas que você pediu)
-                t1, t2 = st.tabs(["💰 PIS/COFINS", "🧾 ICMS e IPI"])
-                with t1:
+                tab1, tab2 = st.tabs(["💰 PIS/COFINS", "🧾 ICMS e IPI"])
+                with tab1:
                     m1, m2, m3 = st.columns(3)
-                    m1.metric("Débitos PIS/COF", f"R$ {stats['total_deb']:,.2f}")
-                    m2.metric("Créditos PIS/COF", f"R$ {stats['total_cred']:,.2f}")
-                    saldo_pc = stats['total_deb'] - stats['total_cred']
-                    m3.metric("Saldo Período", f"R$ {abs(saldo_pc):,.2f}", delta="A PAGAR" if saldo_pc > 0 else "CREDOR")
-                with t2:
+                    m1.metric("Débitos", f"R$ {stats['total_deb']:,.2f}")
+                    m2.metric("Créditos", f"R$ {stats['total_cred']:,.2f}")
+                    m3.metric("Saldo", f"R$ {abs(stats['total_deb']-stats['total_cred']):,.2f}")
+                with tab2:
                     c1, c2 = st.columns(2)
                     c1.metric("Débito ICMS", f"R$ {stats['icms_deb']:,.2f}")
                     c2.metric("Débito IPI", f"R$ {stats['ipi_deb']:,.2f}")
-
-                st.download_button("💾 BAIXAR RELATÓRIO COMPLETO", excel_bin, "Auditoria_Sentinela.xlsx", use_container_width=True)
+                st.download_button("💾 BAIXAR RELATÓRIO", excel_bin, "Auditoria_Nascel.xlsx", use_container_width=True)
     except Exception as e:
         st.error(f"Erro: {e}")
