@@ -41,22 +41,15 @@ with st.sidebar:
 
     st.markdown("### ⚙️ Configurações de Base")
     with st.expander("🔄 **Atualizar Base ICMS**"):
-        up_icms = st.file_uploader("Arquivo ICMS", type=['xlsx'], key='base_i', label_visibility="collapsed")
+        up_icms = st.file_uploader("Arquivo ICMS", type=['xlsx'], key='base_i')
         if up_icms:
             with open(".streamlit/Base_ICMS.xlsx", "wb") as f: f.write(up_icms.getbuffer())
             st.toast("Base ICMS atualizada!", icon="✅")
-
     with st.expander("🔄 **Atualizar Base PIS/COF**"):
-        up_pis = st.file_uploader("Arquivo PIS", type=['xlsx'], key='base_p', label_visibility="collapsed")
+        up_pis = st.file_uploader("Arquivo PIS", type=['xlsx'], key='base_p')
         if up_pis:
             with open(".streamlit/Base_CST_Pis_Cofins.xlsx", "wb") as f: f.write(up_pis.getbuffer())
             st.toast("Base PIS/COF atualizada!", icon="✅")
-
-    with st.expander("🔄 **Atualizar Base TIPI**"):
-        up_tipi = st.file_uploader("Arquivo TIPI", type=['xlsx'], key='base_t', label_visibility="collapsed")
-        if up_tipi:
-            with open(".streamlit/Base_IPI_Tipi.xlsx", "wb") as f: f.write(up_tipi.getbuffer())
-            st.toast("Base TIPI atualizada!", icon="✅")
 
 # --- ÁREA CENTRAL ---
 c1, c2, c3 = st.columns([3, 4, 3])
@@ -75,7 +68,6 @@ with col_ent:
             st.session_state.xml_ent_key += 1
             st.rerun()
     xml_ent = st.file_uploader("📂 XMLs", type='xml', accept_multiple_files=True, key=f"xml_e_{st.session_state.xml_ent_key}")
-    aut_ent = st.file_uploader("🔍 Autenticidade", type=['xlsx'], key="ae")
     ger_ent = st.file_uploader("📊 Gerenc. Entradas (CSV)", type=['csv'], key="ge")
 
 with col_sai:
@@ -86,7 +78,6 @@ with col_sai:
             st.session_state.xml_sai_key += 1
             st.rerun()
     xml_sai = st.file_uploader("📂 XMLs ", type='xml', accept_multiple_files=True, key=f"xml_s_{st.session_state.xml_sai_key}")
-    aut_sai = st.file_uploader("🔍 Autenticidade ", type=['xlsx'], key="as")
     ger_sai = st.file_uploader("📊 Gerenc. Saídas (CSV)", type=['csv'], key="gs")
 
 st.markdown("<br>", unsafe_allow_html=True)
@@ -96,14 +87,11 @@ if st.button("🚀 EXECUTAR AUDITORIA", type="primary", use_container_width=True
     else:
         try:
             with st.spinner("O Sentinela está processando... 🧡"):
-                df_autent_data = None
-                arq_aut = aut_sai if aut_sai else aut_ent
-                if arq_aut: df_autent_data = pd.read_excel(arq_aut)
-                df_e = extrair_dados_xml(xml_ent, "Entrada", df_autenticidade=df_autent_data)
-                df_s = extrair_dados_xml(xml_sai, "Saída", df_autenticidade=df_autent_data)
+                df_e = extrair_dados_xml(xml_ent, "Entrada")
+                df_s = extrair_dados_xml(xml_sai, "Saída")
                 excel_binario = gerar_excel_final(df_e, df_s, file_ger_ent=ger_ent, file_ger_sai=ger_sai)
                 if excel_binario:
                     st.success("Análise concluída! 🧡")
-                    st.download_button(label="💾 BAIXAR RELATÓRIO", data=excel_binario, file_name="Auditoria_Sentinela_Completa.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    st.download_button(label="💾 BAIXAR RELATÓRIO", data=excel_binario, file_name="Auditoria_Sentinela.xlsx", use_container_width=True)
         except Exception as e:
-            st.error(f"Erro crítico no processamento: {e}")
+            st.error(f"Erro crítico: {e}")
