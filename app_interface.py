@@ -2,28 +2,31 @@ import streamlit as st
 import os, io, pandas as pd
 from motor_fiscal import extrair_dados_xml, gerar_excel_final
 
+# Configuração da página
 st.set_page_config(page_title="Sentinela Nascel", page_icon="🧡", layout="wide", initial_sidebar_state="expanded")
 
+# Estilo CSS
 st.markdown("""
     <style>
     .stApp { background-color: #F7F7F7; }
     h1, h2, h3 { color: #FF6F00 !important; font-weight: 700; }
-    .stButton>button { background-color: #FF6F00; color: white; border-radius: 20px; font-weight: bold; }
+    .stButton>button { background-color: #FF6F00; color: white; border-radius: 20px; font-weight: bold; width: 100%; }
     .stFileUploader { border: 1px dashed #FF6F00; border-radius: 10px; }
     </style>
 """, unsafe_allow_html=True)
 
-# Função auxiliar para não dar erro no download vazio
+# Função para evitar erro no download vazio
 def get_empty_excel():
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as wr:
-        pd.DataFrame().to_excel(wr, sheet_name='Planilha1')
+        pd.DataFrame().to_excel(wr, sheet_name='Modelos')
     return output.getvalue()
 
 empty_data = get_empty_excel()
 
-# --- SIDEBAR ---
+# --- SIDEBAR (CORRIGIDA) ---
 with st.sidebar:
+    # Lógica da logo separada para não imprimir texto indesejado
     if os.path.exists(".streamlit/nascel sem fundo.png"):
         st.image(".streamlit/nascel sem fundo.png", use_container_width=True)
     else:
@@ -31,6 +34,7 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("⚙️ Configurações de Base")
+    
     with st.expander("🔄 Upload de Bases", expanded=False):
         st.file_uploader("Base ICMS (xlsx)", type='xlsx', key='u_icms')
         st.file_uploader("Base PIS/COFINS (xlsx)", type='xlsx', key='u_pc')
@@ -60,7 +64,7 @@ with col_sai:
     aut_s = st.file_uploader("🔍 Autenticidade Saídas (XLSX)", type=['xlsx'], key="as")
 
 st.markdown("---")
-if st.button("🚀 EXECUTAR AUDITORIA", type="primary", use_container_width=True):
+if st.button("🚀 EXECUTAR AUDITORIA COMPLETA", type="primary", use_container_width=True):
     if not (xml_e or xml_s):
         st.warning("Carregue os XMLs para começar.")
     else:
@@ -72,4 +76,4 @@ if st.button("🚀 EXECUTAR AUDITORIA", type="primary", use_container_width=True
                 st.success("Auditoria concluída!")
                 st.download_button("💾 BAIXAR RELATÓRIO", relatorio, "Relatorio_Sentinela.xlsx", use_container_width=True)
             except Exception as e:
-                st.error(f"Erro ao gerar: {e}")
+                st.error(f"Erro ao processar: {e}")
