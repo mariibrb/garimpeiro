@@ -40,18 +40,32 @@ def extrair_dados_xml(files):
                             if cst is not None: linha["CST-ICMS"] = cst.text.zfill(2)
                             if n.find('vBC') is not None: linha["BC-ICMS"] = float(n.find('vBC').text)
                             if n.find('vICMS') is not None: linha["VLR-ICMS"] = float(n.find('vICMS').text)
+                            if n.find('pICMS') is not None: linha["ALQ-ICMS"] = float(n.find('pICMS').text)
                 dados_lista.append(linha)
         except: continue
     return pd.DataFrame(dados_lista)
 
-def gerar_excel_final(df_xe, df_xs, ge_file=None, gs_file=None):
+def gerar_excel_final(df_xe, df_xs, ge_file=None, gs_file=None, ae_file=None, as_file=None):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        # 1. Dados Brutos do XML
         if not df_xe.empty: df_xe.to_excel(writer, sheet_name='XML_ENTRADAS', index=False)
         if not df_xs.empty: df_xs.to_excel(writer, sheet_name='XML_SAIDAS', index=False)
         
-        # ABA DE ANÁLISE TRIBUTÁRIA
+        # 2. Processamento de Autenticidade
+        if ae_file:
+            try: pd.read_excel(ae_file).to_excel(writer, sheet_name='VAL_AUTENTIC_ENT', index=False)
+            except: pass
+        if as_file:
+            try: pd.read_excel(as_file).to_excel(writer, sheet_name='VAL_AUTENTIC_SAI', index=False)
+            except: pass
+            
+        # 3. ANÁLISES TRIBUTÁRIAS (Cruzamento de Dados)
         if not df_xs.empty:
-            resumo = df_xs.groupby('CFOP').agg({'VPROD': 'sum', 'VLR-ICMS': 'sum'}).reset_index()
-            resumo.to_excel(writer, sheet_name='CONFERENCIA_FISCAL', index=False)
+            resumo_fiscal = df_xs.groupby('CFOP').agg({
+                'VPROD': 'sum', 
+                'VLR-ICMS': 'sum'
+            }).reset_index()
+            resumo_fiscal.to_excel(writer, sheet_name='ANALISE_RESUMO_FISCAL', index=False)
+            
     return output.getvalue()
