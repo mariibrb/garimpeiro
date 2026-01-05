@@ -61,14 +61,11 @@ def gerar_excel_final(df_xml_e, df_xml_s, f_ge=None, f_gs=None, f_ae=None, f_as=
             df = df.iloc[:, :len(cols)]; df.columns = cols
             return df
         except: return pd.DataFrame()
-
     cols_e = ['NUM_NF','DATA_EMISSAO','CNPJ','UF','VLR_NF','AC','CFOP','COD_PROD','DESCR','NCM','UNID','VUNIT','QTDE','VPROD','DESC','FRETE','SEG','DESP','VC','CST-ICMS','Coluna2','BC-ICMS','VLR-ICMS','BC-ICMS-ST','ICMS-ST','VLR_IPI','CST_PIS','BC_PIS','VLR_PIS','CST_COF','BC_COF','VLR_COF']
     cols_s = ['NF','DATA_EMISSAO','CNPJ','Ufp','VC','AC','CFOP','COD_ITEM','VUNIT','QTDE','VITEM','DESC','FRETE','SEG','OUTRAS','VC_ITEM','CST','Coluna2','Coluna3','BC_ICMS','ALIQ_ICMS','ICMS','BC_ICMSST','ICMSST','IPI','CST_PIS','BC_PIS','PIS','CST_COF','BC_COF','COF']
-    
     df_ge = load_csv(f_ge, cols_e); df_gs = load_csv(f_gs, cols_s)
     df_ae = pd.read_excel(f_ae) if f_ae else pd.DataFrame()
     df_as = pd.read_excel(f_as) if f_as else pd.DataFrame()
-
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as wr:
         if not df_xml_e.empty: df_xml_e.to_excel(wr, sheet_name='XML_ENTRADAS', index=False)
