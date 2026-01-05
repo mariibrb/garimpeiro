@@ -2,30 +2,34 @@ import streamlit as st
 import os, io, pandas as pd
 from motor_fiscal import extrair_dados_xml, gerar_excel_final
 
-# Configuração da página - Sidebar recolhida por padrão
+# Configuração da página - Removemos qualquer sidebar indesejada
 st.set_page_config(page_title="Sentinela Nascel", page_icon="🧡", layout="wide", initial_sidebar_state="collapsed")
 
-# Estilos CSS para manter a identidade Nascel
+# Estilos CSS
 st.markdown("""
 <style>
+    [data-testid="stSidebar"] { display: none; }
     .stApp { background-color: #F7F7F7; }
     h1, h2, h3 { color: #FF6F00 !important; font-weight: 700; text-align: center; }
-    .stButton>button { background-color: #FF6F00; color: white; border-radius: 20px; font-weight: bold; width: 100%; height: 50px; }
+    .stButton>button { background-color: #FF6F00; color: white; border-radius: 20px; font-weight: bold; width: 100%; height: 50px; border: none; }
+    .stButton>button:hover { background-color: #E65100; }
     .stFileUploader { border: 1px dashed #FF6F00; border-radius: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- CABEÇALHO COM O LOGO DO SOLDADINHO ---
+# --- LOGO CENTRALIZADO (RESOLVENDO O ERRO DE TEXTO) ---
 c1, c2, c3 = st.columns([1, 2, 1])
 with c2:
-    if os.path.exists(".streamlit/Sentinela.png"):
-        st.image(".streamlit/Sentinela.png", use_container_width=True)
+    # Usamos o caminho absoluto ou relativo direto para evitar que o Python imprima o objeto
+    logo = ".streamlit/Sentinela.png"
+    if os.path.exists(logo):
+        st.image(logo, use_container_width=True)
     else:
         st.title("🚀 SENTINELA NASCEL")
 
 st.markdown("---")
 
-# --- TELA PRINCIPAL - FLUXOS ---
+# --- ÁREA DE UPLOADS ---
 col_ent, col_sai = st.columns(2, gap="large")
 
 with col_ent:
@@ -45,7 +49,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 # --- BOTÃO DE EXECUÇÃO ---
 if st.button("🚀 EXECUTAR AUDITORIA COMPLETA", type="primary"):
     if not (xml_e or xml_s):
-        st.warning("Por favor, carregue os arquivos XML para começar.")
+        st.warning("🧡 Por favor, carregue os arquivos XML para começar.")
     else:
         with st.spinner("🧡 O Sentinela está trabalhando..."):
             try:
