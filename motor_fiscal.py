@@ -25,14 +25,13 @@ def extrair_dados_xml(files):
                     "AC": int(det.attrib.get('nItem', '0')), "CFOP": buscar('CFOP', prod),
                     "NCM": re.sub(r'\D', '', buscar('NCM', prod)).zfill(8),
                     "COD_PROD": buscar('cProd', prod), "DESCR": buscar('xProd', prod),
-                    "VPROD": float(buscar('vProd', prod) or 0),
-                    "CST-ICMS": "", "BC-ICMS": 0.0, "VLR-ICMS": 0.0
+                    "VPROD": float(buscar('vProd', prod) or 0)
                 }
                 dados_lista.append(linha)
         except: continue
     return pd.DataFrame(dados_lista)
 
-def gerar_excel_final(df_xe, df_xs, ge=None, gs=None, ae=None, as_f=None):
+def gerar_excel_final(df_xe, df_xs, ge=None, gs=None):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as wr:
         if not df_xe.empty: df_xe.to_excel(wr, sheet_name='XML_ENTRADAS', index=False)
