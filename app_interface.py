@@ -2,10 +2,10 @@ import streamlit as st
 import os, io, pandas as pd
 from motor_fiscal import extrair_dados_xml, gerar_excel_final
 
-# Configuração da página
+# 1. Configuração da página
 st.set_page_config(page_title="Sentinela Nascel", page_icon="🧡", layout="wide", initial_sidebar_state="expanded")
 
-# Estilos CSS (Cores da Nascel e Limpeza)
+# 2. Estilos CSS (Removendo bordas e ajustando cores)
 st.markdown("""
 <style>
     .stApp { background-color: #F7F7F7; }
@@ -15,61 +15,71 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. LADO ESQUERDO (SIDEBAR RESTAURADA) ---
-with st.sidebar:
-    logo_lateral = ".streamlit/nascel sem fundo.png"
-    if os.path.exists(logo_lateral):
-        st.image(logo_lateral, use_container_width=True)
-    
-    st.markdown("---")
-    st.subheader("⚙️ Configurações de Base")
-    
-    # UPLOADS DE BASES
-    st.file_uploader("Upload Base ICMS", type=['xlsx'], key='base_icms_side')
-    st.file_uploader("Upload Base PIS/COFINS", type=['xlsx'], key='base_pc_side')
-    
-    st.markdown("---")
-    st.subheader("📥 Downloads de Base")
-    # Arquivo fictício para os botões não darem erro
+# Função para evitar erro nos botões de download
+def get_model_data():
     buf = io.BytesIO()
     pd.DataFrame().to_excel(buf)
-    st.download_button("Download Base PIS/COFINS", buf.getvalue(), "base_piscofins.xlsx", use_container_width=True)
-    st.download_button("Download Base IPI", buf.getvalue(), "base_ipi.xlsx", use_container_width=True)
+    return buf.getvalue()
 
-# --- 2. TELA PRINCIPAL (CENTRO) ---
+dummy_data = get_model_data()
+
+# --- 3. LADO ESQUERDO (SIDEBAR LIMPA) ---
+with st.sidebar:
+    # Logo Nascel no topo da sidebar
+    path_logo_nascel = ".streamlit/nascel sem fundo.png"
+    if os.path.exists(path_logo_nascel):
+        st.image(path_logo_nascel, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # Upload de Bases
+    st.subheader("🔄 Upload de Bases")
+    st.file_uploader("Base de Dados ICMS", type=['xlsx'], key='sidebar_icms')
+    st.file_uploader("Base de Dados PIS/COFINS", type=['xlsx'], key='sidebar_pc')
+    
+    st.markdown("---")
+    
+    # Download de Bases
+    st.subheader("📥 Download de Bases")
+    st.download_button("Download Base PIS/COFINS", dummy_data, "base_piscofins.xlsx", use_container_width=True)
+    st.download_button("Download Base IPI", dummy_data, "base_ipi.xlsx", use_container_width=True)
+
+# --- 4. TELA PRINCIPAL (CENTRO) ---
+# Soldadinho Centralizado
 c1, c2, c3 = st.columns([1, 2, 1])
 with c2:
-    logo_centro = ".streamlit/Sentinela.png"
-    if os.path.exists(logo_centro):
-        st.image(logo_centro, use_container_width=True)
+    path_soldadinho = ".streamlit/Sentinela.png"
+    if os.path.exists(path_soldadinho):
+        st.image(path_soldadinho, use_container_width=True)
     else:
         st.title("🚀 SENTINELA NASCEL")
 
 st.markdown("---")
 
+# Seção de Uploads Principais
 col_ent, col_sai = st.columns(2, gap="large")
 
 with col_ent:
     st.subheader("📥 FLUXO DE ENTRADAS")
-    xml_e = st.file_uploader("📂 XMLs de Entrada", type='xml', accept_multiple_files=True, key="xe")
-    ger_e = st.file_uploader("📊 Gerencial Entrada", type=['csv'], key="ge")
-    aut_e = st.file_uploader("🔍 Autenticidade Entrada", type=['xlsx'], key="ae")
+    xml_e = st.file_uploader("📂 XMLs de Entrada", type='xml', accept_multiple_files=True, key="xe_main")
+    ger_e = st.file_uploader("📊 Gerencial Entrada", type=['csv'], key="ge_main")
+    aut_e = st.file_uploader("🔍 Autenticidade Entrada", type=['xlsx'], key="ae_main")
 
 with col_sai:
     st.subheader("📤 FLUXO DE SAÍDAS")
-    xml_s = st.file_uploader("📂 XMLs de Saída", type='xml', accept_multiple_files=True, key="xs")
-    ger_s = st.file_uploader("📊 Gerencial Saída", type=['csv'], key="gs")
-    aut_s = st.file_uploader("🔍 Autenticidade Saída", type=['xlsx'], key="as")
+    xml_s = st.file_uploader("📂 XMLs de Saída", type='xml', accept_multiple_files=True, key="xs_main")
+    ger_s = st.file_uploader("📊 Gerencial Saída", type=['csv'], key="gs_main")
+    aut_s = st.file_uploader("🔍 Autenticidade Saída", type=['xlsx'], key="as_main")
 
 st.markdown("<br>", unsafe_allow_html=True)
 
 if st.button("🚀 EXECUTAR AUDITORIA COMPLETA", type="primary"):
-    with st.spinner("🧡 O Sentinela está trabalhando..."):
+    with st.spinner("🧡 O Sentinela está auditando seus dados..."):
         try:
             df_xe = extrair_dados_xml(xml_e)
             df_xs = extrair_dados_xml(xml_s)
-            relatorio = gerar_excel_final(df_xe, df_xs, ger_e, ger_s, aut_e, aut_s)
+            relat = gerar_excel_final(df_xe, df_xs, ger_e, ger_s, aut_e, aut_s)
             st.success("Análise concluída com sucesso! 🧡")
-            st.download_button("💾 BAIXAR RELATÓRIO", relatorio, "Auditoria.xlsx", use_container_width=True)
+            st.download_button("💾 BAIXAR RELATÓRIO", relat, "Auditoria_Final.xlsx", use_container_width=True)
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro no processamento: {e}")
