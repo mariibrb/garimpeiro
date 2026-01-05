@@ -64,6 +64,6 @@ def gerar_excel_final(df_xe, df_xs, ge=None, gs=None, ae=None, as_f=None):
     with pd.ExcelWriter(output, engine='xlsxwriter') as wr:
         if not df_xe.empty: df_xe.to_excel(wr, sheet_name='XML_ENTRADAS', index=False)
         if not df_xs.empty: df_xs.to_excel(wr, sheet_name='XML_SAIDAS', index=False)
-        load_csv(ge, c_e).to_excel(wr, sheet_name='GER_ENT', index=False)
-        load_csv(gs, c_s).to_excel(wr, sheet_name='GER_SAI', index=False)
+        if ge: load_csv(ge, c_e).to_excel(wr, sheet_name='GER_ENT', index=False)
+        if gs: load_csv(gs, c_s).to_excel(wr, sheet_name='GER_SAI', index=False)
     return output.getvalue()
