@@ -107,8 +107,8 @@ st.markdown("""
 
 st.markdown("<h1 style='text-align: center;'>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 
-if 'garimpo_ok' not in st.session_state: st.session_state['garimpo_ok'] = False
 if 'confirmado' not in st.session_state: st.session_state['confirmado'] = False
+if 'garimpo_ok' not in st.session_state: st.session_state['garimpo_ok'] = False
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -135,10 +135,13 @@ else:
     if uploaded_files:
         if st.button("🚀 INICIAR GRANDE GARIMPO"):
             processed_keys, sequencias, relatorio_lista = set(), {}, []
-            zip_buffer = io.BytesIO()
+            
+            buffer_final = io.BytesIO()
+            buffer_todos = io.BytesIO()
+            
             with st.status("⛏️ Minerando...", expanded=True) as status:
-                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf_final:
-                    for i, file in enumerate(uploaded_files):
+                with zipfile.ZipFile(buffer_final, "w", zipfile.ZIP_DEFLATED) as zf_final:
+                    for file in uploaded_files:
                         f_bytes = file.read()
                         if file.name.lower().endswith('.zip'):
                             process_zip_recursively(f_bytes, zf_final, processed_keys, sequencias, relatorio_lista, cnpj_limpo)
@@ -155,6 +158,12 @@ else:
                                         if s_key not in sequencias: sequencias[s_key] = set()
                                         sequencias[s_key].add(resumo["Número"])
                 
+                # CRIANDO A PASTA "TODOS" DENTRO DO ZIP
+                with zipfile.ZipFile(buffer_todos, "w", zipfile.ZIP_DEFLATED) as zf_todos:
+                    for item in relatorio_lista:
+                        # O segredo está aqui: adicionamos 'TODOS/' antes do nome do arquivo
+                        zf_todos.writestr(f"TODOS/{item['Arquivo']}", item['Conteúdo'])
+                
                 # Relatório de Faltantes
                 faltantes_data = []
                 for (tipo, serie), numeros in sequencias.items():
@@ -164,21 +173,15 @@ else:
                         for b in buracos:
                             faltantes_data.append({"Documento": tipo, "Série": serie, "Nº Faltante": b})
                 st.session_state['df_faltantes'] = pd.DataFrame(faltantes_data) if faltantes_data else pd.DataFrame()
+                
+                st.session_state['zip_final_data'] = buffer_final.getvalue()
+                st.session_state['zip_todos_data'] = buffer_todos.getvalue()
+                st.session_state['relatorio_data'] = relatorio_lista
+                st.session_state['garimpo_ok'] = True
+                
                 status.update(label="💰 Garimpo Concluído!", state="complete")
 
-            if relatorio_lista:
-                # Criar o arquivo TODOS (Pasta única, sem subdivisão, apenas arquivos únicos)
-                todos_buffer = io.BytesIO()
-                with zipfile.ZipFile(todos_buffer, "w", zipfile.ZIP_DEFLATED) as zf_todos:
-                    for item in relatorio_lista:
-                        zf_todos.writestr(item['Arquivo'], item['Conteúdo'])
-                
-                st.session_state.update({
-                    'relatorio': relatorio_lista, 
-                    'zip_final': zip_buffer.getvalue(), 
-                    'zip_todos': todos_buffer.getvalue(),
-                    'garimpo_ok': True
-                })
+            if st.session_state['garimpo_ok']:
                 icons = ["💰", "🪙", "💎", "🥇", "✨"]
                 rain_html = "".join([f'<div class="gold-item" style="left:{random.randint(0,95)}%; animation-delay:{random.uniform(0,2.5)}s; font-size:{random.randint(25,45)}px;">{random.choice(icons)}</div>' for i in range(70)])
                 st.markdown(rain_html, unsafe_allow_html=True)
@@ -186,7 +189,7 @@ else:
 # --- RESULTADOS ---
 if st.session_state.get('garimpo_ok'):
     st.divider()
-    df_res = pd.DataFrame(st.session_state['relatorio'])
+    df_res = pd.DataFrame(st.session_state['relatorio_data'])
     col1, col2, col3 = st.columns(3)
     col1.metric("📦 VOLUME MINERADO", f"{len(df_res)}")
     emitidas = len(df_res[df_res['Pasta'].str.contains("EMITIDOS")])
@@ -215,9 +218,9 @@ if st.session_state.get('garimpo_ok'):
     with c1:
         st.markdown("#### 🏛️ GARIMPO FINAL")
         st.caption("Organizado por pastas: Tipo, Série e Status.")
-        st.download_button("📥 BAIXAR GARIMPO FINAL (.ZIP)", st.session_state['zip_final'], "garimpo_final.zip", use_container_width=True)
+        st.download_button("📥 BAIXAR GARIMPO FINAL (.ZIP)", st.session_state['zip_final_data'], "garimpo_final.zip", use_container_width=True)
     
     with c2:
         st.markdown("#### 📦 TODOS")
-        st.caption("Pasta única com todos os arquivos únicos misturados.")
-        st.download_button("📥 BAIXAR TODOS (.ZIP)", st.session_state['zip_todos'], "TODOS.zip", use_container_width=True)
+        st.caption("Uma única pasta chamada 'TODOS' com tudo misturado.")
+        st.download_button("📥 BAIXAR TODOS (.ZIP)", st.session_state['zip_todos_data'], "TODOS.zip", use_container_width=True)
