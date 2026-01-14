@@ -91,7 +91,7 @@ def format_cnpj(cnpj):
     return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
 
 # --- DESIGN LÚDICO PREMIUM (SIDEBAR CLARO E LEITURA FÁCIL) ---
-st.set_page_config(page_title="Garimpeiro Gold v14", layout="wide", page_icon="⛏️")
+st.set_page_config(page_title="Garimpeiro", layout="wide", page_icon="⛏️")
 
 st.markdown("""
     <style>
