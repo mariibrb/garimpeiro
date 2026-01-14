@@ -7,166 +7,182 @@ import re
 import pandas as pd
 import gc
 
-# --- MOTOR DE IDENTIFICAÇÃO (VERSÃO ASPIRADOR) ---
-def get_xml_key(content_str):
-    match = re.search(r'\d{44}', content_str)
-    return match.group(0) if match else None
-
+# --- MOTOR DE EXTRAÇÃO DE DADOS ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     
-    # Valores padrão para não perder o arquivo nunca
-    pasta = "RECEBIDOS_TERCEIROS/Outros_ou_Eventos"
-    chave = get_xml_key(content_bytes.decode('utf-8', errors='ignore')) or file_name.replace('.xml', '').replace('.XML', '')
-    is_p = False
-    serie = "0"
-    num = None
-    d_type = "XML_Geral"
+    resumo_nota = {
+        "Arquivo": file_name,
+        "Chave": "",
+        "Tipo": "Outros",
+        "Série": "0",
+        "Número": 0,
+        "Data": "",
+        "Valor": 0.0,
+        "CNPJ_Emit": "",
+        "Pasta": "RECEBIDOS_TERCEIROS/OUTROS",
+        "Conteúdo": content_bytes # Mantemos o conteúdo para download individual
+    }
 
     try:
-        try:
-            content_str = content_bytes.decode('utf-8')
-        except UnicodeDecodeError:
-            content_str = content_bytes.decode('latin-1', errors='ignore')
-
-        # Identificação de Tipo
+        content_str = content_bytes.decode('utf-8', errors='ignore')
+        match_ch = re.search(r'\d{44}', content_str)
+        resumo_nota["Chave"] = match_ch.group(0) if match_ch else ""
+        
         tag_lower = content_str.lower()
-        if '<mod>65</mod>' in tag_lower: d_type = "NFC-e"
-        elif '<infcte' in tag_lower: d_type = "CT-e"
-        elif '<infmdfe' in tag_lower: d_type = "MDF-e"
-        elif '<infnfe' in tag_lower: d_type = "NF-e"
-        elif '<evento' in tag_lower: d_type = "Eventos"
+        if '<mod>65</mod>' in tag_lower: resumo_nota["Tipo"] = "NFC-e"
+        elif '<infcte' in tag_lower: resumo_nota["Tipo"] = "CT-e"
+        elif '<infmdfe' in tag_lower: resumo_nota["Tipo"] = "MDF-e"
+        elif '<infnfe' in tag_lower: resumo_nota["Tipo"] = "NF-e"
 
-        # Parser XML
-        clean_content = re.sub(r'\sxmlns="[^"]+"', '', content_str, count=1)
-        root = ET.fromstring(clean_content)
+        s_match = re.search(r'<serie>(\d+)</serie>', content_str)
+        resumo_nota["Série"] = s_match.group(1) if s_match else "0"
         
-        # Identifica Emitente
-        emit_cnpj = ""
-        emit_tag = root.find(".//emit/CNPJ")
-        if emit_tag is not None and emit_tag.text:
-            emit_cnpj = "".join(filter(str.isdigit, emit_tag.text))
+        n_match = re.search(r'<(?:nNF|nCT|nMDF)>(\d+)</(?:nNF|nCT|nMDF)>', content_str)
+        resumo_nota["Número"] = int(n_match.group(1)) if n_match else 0
         
-        # Série e Número
-        s_tag = root.find(".//ide/serie")
-        if s_tag is not None: serie = s_tag.text
-        
-        n_tag = root.find(".//ide/nNF") or root.find(".//ide/nCT") or root.find(".//ide/nMDF")
-        if n_tag is not None: num = int(n_tag.text)
+        v_match = re.search(r'<(?:vNF|vTPrest|vTPT)>([\d.]+)</(?:vNF|vTPrest|vTPT)>', content_str)
+        resumo_nota["Valor"] = float(v_match.group(1)) if v_match else 0.0
 
-        # SEPARAÇÃO EMITIDA VS RECEBIDA
-        if client_cnpj_clean and (emit_cnpj == client_cnpj_clean or (chave and client_cnpj_clean in chave[6:20])):
-            is_p = True
-            pasta = f"EMITIDOS_CLIENTE/{d_type}/Serie_{serie}"
+        emit_match = re.search(r'<emit>.*?<CNPJ>(\d+)</CNPJ>', content_str, re.DOTALL)
+        resumo_nota["CNPJ_Emit"] = emit_match.group(1) if emit_match else ""
+
+        is_p = (client_cnpj_clean != "" and resumo_nota["CNPJ_Emit"] == client_cnpj_clean)
+        if not is_p and resumo_nota["Chave"]:
+            is_p = (client_cnpj_clean in resumo_nota["Chave"][6:20])
+
+        if is_p:
+            resumo_nota["Pasta"] = f"EMITIDOS_CLIENTE/{resumo_nota['Tipo']}/Serie_{resumo_nota['Série']}"
         else:
-            is_p = False
-            pasta = f"RECEBIDOS_TERCEIROS/{d_type}"
+            resumo_nota["Pasta"] = f"RECEBIDOS_TERCEIROS/{resumo_nota['Tipo']}"
             
-        return pasta, chave, is_p, serie, num, d_type
+        return resumo_nota, is_p
     except:
-        # Se der erro no parser, ainda assim mantemos o arquivo nos Recebidos
-        return "RECEBIDOS_TERCEIROS/Nao_Categorizados", chave, False, "0", None, "XML_Geral"
+        return resumo_nota, False
 
-def process_zip_recursively(file_bytes, zf_output, processed_keys, sequencias, resumo, client_cnpj):
+def process_zip_recursively(file_bytes, zf_output, processed_keys, sequencias, relatorio_lista, client_cnpj):
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
             for info in z.infolist():
                 if info.is_dir(): continue
                 content = z.read(info.filename)
-                fname_lower = info.filename.lower()
-                
-                if fname_lower.endswith('.zip'):
-                    process_zip_recursively(content, zf_output, processed_keys, sequencias, resumo, client_cnpj)
-                
-                elif fname_lower.endswith('.xml'):
-                    pasta, chave, is_p, serie, num, d_type = identify_xml_info(content, client_cnpj, info.filename)
+                if info.filename.lower().endswith('.zip'):
+                    process_zip_recursively(content, zf_output, processed_keys, sequencias, relatorio_lista, client_cnpj)
+                elif info.filename.lower().endswith('.xml'):
+                    resumo, is_p = identify_xml_info(content, client_cnpj, info.filename)
+                    ident = resumo["Chave"] if resumo["Chave"] else info.filename
                     
-                    # Usamos o nome do arquivo + chave para garantir unicidade
-                    identificador_unico = chave if chave else info.filename
-                    
-                    if identificador_unico not in processed_keys:
-                        processed_keys.add(identificador_unico)
-                        zf_output.writestr(f"{pasta}/{identificador_unico}.xml", content)
-                        
-                        cat = pasta.replace('/', ' - ')
-                        resumo[cat] = resumo.get(cat, 0) + 1
-                        
-                        if is_p and num:
-                            chave_seq = (d_type, serie)
-                            if chave_seq not in sequencias: sequencias[chave_seq] = set()
-                            sequencias[chave_seq].add(num)
+                    if ident not in processed_keys:
+                        processed_keys.add(ident)
+                        zf_output.writestr(f"{resumo['Pasta']}/{ident}.xml", content)
+                        relatorio_lista.append(resumo)
+                        if is_p and resumo["Número"]:
+                            s_key = (resumo["Tipo"], resumo["Série"])
+                            if s_key not in sequencias: sequencias[s_key] = set()
+                            sequencias[s_key].add(resumo["Número"])
     except: pass
 
 # --- INTERFACE ---
-st.set_page_config(page_title="Garimpeiro v5.0", layout="wide", page_icon="⛏️")
-st.title("⛏️ Garimpeiro v5.0 - Coleta Total (Sem Perdas)")
+st.set_page_config(page_title="Garimpeiro v5.4", layout="wide")
+st.title("⛏️ Garimpeiro v5.4 - Com Busca Individual")
 
 with st.sidebar:
-    st.header("⚙️ Configurações")
-    cnpj_input = st.text_input("CNPJ do Cliente", placeholder="Ex: 12.345.678/0001-99")
-    if st.button("🗑️ Resetar Tudo"):
+    cnpj_input = st.text_input("CNPJ do Cliente (Só números)", placeholder="Ex: 12345678000199")
+    st.divider()
+    if st.button("🗑️ Limpar Memória"):
         st.cache_data.clear()
         st.rerun()
-    st.info("💡 v5.0: Agora captura até XMLs com erros ou sem chave definida.")
 
-uploaded_files = st.file_uploader("Suba seus XMLs ou ZIPs", accept_multiple_files=True)
+uploaded_files = st.file_uploader("Suba seus arquivos (XML ou ZIP)", accept_multiple_files=True)
 
 if uploaded_files:
-    if st.button("🚀 INICIAR GARIMPO", use_container_width=True):
+    if st.button("🚀 INICIAR GARIMPO COMPLETO", use_container_width=True):
         processed_keys = set()
         sequencias = {} 
-        resumo = {}
+        relatorio_lista = []
         zip_buffer = io.BytesIO()
-        total = len(uploaded_files)
-        bar = st.progress(0)
 
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf_final:
-            for i, file in enumerate(uploaded_files):
-                file_bytes = file.read()
-                fname_lower = file.name.lower()
-                
-                if fname_lower.endswith('.zip'):
-                    process_zip_recursively(file_bytes, zf_final, processed_keys, sequencias, resumo, cnpj_input)
-                elif fname_lower.endswith('.xml'):
-                    pasta, chave, is_p, serie, num, d_type = identify_xml_info(file_bytes, cnpj_input, file.name)
-                    
-                    identificador = chave if chave else file.name
-                    if identificador not in processed_keys:
-                        processed_keys.add(identificador)
-                        zf_final.writestr(f"{pasta}/{identificador}.xml", file_bytes)
-                        cat = pasta.replace('/', ' - ')
-                        resumo[cat] = resumo.get(cat, 0) + 1
-                        if is_p and num:
-                            chave_seq = (d_type, serie)
-                            if chave_seq not in sequencias: sequencias[chave_seq] = set()
-                            sequencias[chave_seq].add(num)
-                
-                bar.progress((i + 1) / total)
+            for file in uploaded_files:
+                f_bytes = file.read()
+                if file.name.lower().endswith('.zip'):
+                    process_zip_recursively(f_bytes, zf_final, processed_keys, sequencias, relatorio_lista, cnpj_input)
+                elif file.name.lower().endswith('.xml'):
+                    resumo, is_p = identify_xml_info(f_bytes, cnpj_input, file.name)
+                    ident = resumo["Chave"] if resumo["Chave"] else file.name
+                    if ident not in processed_keys:
+                        processed_keys.add(ident)
+                        zf_final.writestr(f"{resumo['Pasta']}/{ident}.xml", f_bytes)
+                        relatorio_lista.append(resumo)
+                        if is_p and resumo["Número"]:
+                            s_key = (resumo["Tipo"], resumo["Série"])
+                            if s_key not in sequencias: sequencias[s_key] = set()
+                            sequencias[s_key].add(resumo["Número"])
                 gc.collect()
 
-        if processed_keys:
-            st.success(f"✅ Concluído! {len(processed_keys)} arquivos minerados.")
-            
-            # Relatório de Faltantes
-            faltantes_data = []
-            for (d_type, serie), nums in sequencias.items():
-                if nums:
-                    ideal = set(range(min(nums), max(nums) + 1))
-                    buracos = sorted(list(ideal - nums))
-                    for b in buracos:
-                        faltantes_data.append({"Tipo": d_type, "Série": serie, "Nº Faltante": b})
+        if relatorio_lista:
+            st.session_state['relatorio'] = relatorio_lista # Salva na sessão para a busca
+            st.session_state['zip_completo'] = zip_buffer.getvalue()
+            st.session_state['sequencias'] = sequencias
+            st.success(f"✅ {len(processed_keys)} notas mineradas!")
 
-            c_a, c_b = st.columns(2)
-            with c_a:
-                st.write("### 📊 Inventário Final")
-                st.table(pd.DataFrame(list(resumo.items()), columns=['Caminho', 'Qtd']))
-            with c_b:
-                st.write("### ⚠️ Notas Faltantes")
-                if faltantes_data:
-                    st.dataframe(pd.DataFrame(faltantes_data), use_container_width=True)
-                else:
-                    st.info("Sequência completa!")
+if 'relatorio' in st.session_state:
+    df_geral = pd.DataFrame(st.session_state['relatorio'])
 
-            st.download_button("📥 BAIXAR GARIMPO COMPLETO", zip_buffer.getvalue(), "garimpo_v5.zip", use_container_width=True)
-        zip_buffer.close()
-        gc.collect()
+    # --- NOVO: BUSCA INDIVIDUAL ---
+    st.divider()
+    st.write("### 🔍 Localizador Rápido de XML")
+    busca = st.text_input("Digite o Número da Nota ou Chave de Acesso para baixar o arquivo avulso:", placeholder="Ex: 12345")
+    
+    if busca:
+        # Busca por número (convertido para string) ou por chave
+        resultado = df_geral[
+            (df_geral['Número'].astype(str) == busca) | 
+            (df_geral['Chave'].str.contains(busca))
+        ]
+        
+        if not resultado.empty:
+            st.write(f"✅ Encontrado: {len(resultado)} nota(s)")
+            for idx, row in resultado.iterrows():
+                with st.container(border=True):
+                    st.write(f"**Tipo:** {row['Tipo']} | **Série:** {row['Série']} | **Número:** {row['Número']}")
+                    st.caption(f"Chave: {row['Chave']}")
+                    st.download_button(
+                        label=f"📥 Baixar XML {row['Número']}",
+                        data=row['Conteúdo'],
+                        file_name=f"{row['Chave'] if row['Chave'] else row['Número']}.xml",
+                        key=f"dl_{idx}"
+                    )
+        else:
+            st.error("Nenhuma nota encontrada com esse termo.")
+
+    # --- RELATÓRIO DE FALTANTES ---
+    st.divider()
+    faltantes_data = []
+    for (t, s), nums in st.session_state['sequencias'].items():
+        ideal = set(range(min(nums), max(nums) + 1))
+        buracos = sorted(list(ideal - nums))
+        for b in buracos: faltantes_data.append({"Tipo": t, "Série": s, "Nº Faltante": b})
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("### 📊 Inventário Final")
+        resumo_pastas = df_geral['Pasta'].value_counts().reset_index()
+        resumo_pastas.columns = ['Caminho', 'Qtd']
+        st.table(resumo_pastas)
+    
+    with col2:
+        st.write("### ⚠️ Notas Faltantes")
+        if faltantes_data:
+            st.dataframe(pd.DataFrame(faltantes_data), use_container_width=True)
+        else:
+            st.info("Sequência completa!")
+
+    # DOWNLOAD GERAL
+    st.divider()
+    st.download_button(
+        "📥 BAIXAR ZIP COMPLETO ORGANIZADO",
+        st.session_state['zip_completo'],
+        "garimpo_v5_4.zip",
+        use_container_width=True
+    )
