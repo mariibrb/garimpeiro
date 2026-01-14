@@ -50,14 +50,14 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
     except:
         return resumo_nota, False
 
-def process_zip_recursively(file_bytes, zf_output, processed_keys, sequencias, relatorio_lista, client_cnpj):
+def process_zip_recursively(file_bytes, zf_output, processed_keys, relatorio_lista, client_cnpj):
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
             for info in z.infolist():
                 if info.is_dir(): continue
                 content = z.read(info.filename)
                 if info.filename.lower().endswith('.zip'):
-                    process_zip_recursively(content, zf_output, processed_keys, sequencias, relatorio_lista, client_cnpj)
+                    process_zip_recursively(content, zf_output, processed_keys, relatorio_lista, client_cnpj)
                 elif info.filename.lower().endswith('.xml'):
                     resumo, is_p = identify_xml_info(content, client_cnpj, info.filename)
                     ident = resumo["Chave"] if len(resumo["Chave"]) == 44 else f"{resumo['Pasta']}_{resumo['Número']}_{info.filename}"
@@ -65,21 +65,13 @@ def process_zip_recursively(file_bytes, zf_output, processed_keys, sequencias, r
                         processed_keys.add(ident)
                         zf_output.writestr(f"{resumo['Pasta']}/{info.filename}", content)
                         relatorio_lista.append(resumo)
-                        if is_p and resumo["Número"] > 0 and "EMITIDOS" in resumo["Pasta"]:
-                            if resumo["Tipo"] in ["NF-e", "NFC-e", "CT-e", "MDF-e"]:
-                                s_key = (resumo["Tipo"], resumo["Série"])
-                                if s_key not in sequencias: sequencias[s_key] = set()
-                                sequencias[s_key].add(resumo["Número"])
     except: pass
 
 def format_cnpj(cnpj):
     cnpj = "".join(filter(str.isdigit, cnpj))
-    if len(cnpj) > 14: cnpj = cnpj[:14]
-    if len(cnpj) <= 2: return cnpj
-    if len(cnpj) <= 5: return f"{cnpj[:2]}.{cnpj[2:]}"
-    if len(cnpj) <= 8: return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:]}"
-    if len(cnpj) <= 12: return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:]}"
-    return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
+    if len(cnpj) <= 14:
+        return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
+    return cnpj
 
 # --- DESIGN E BLINDAGEM ---
 st.set_page_config(page_title="O Garimpeiro", layout="wide", page_icon="⛏️")
@@ -92,20 +84,18 @@ st.markdown("""
     .stApp { background-color: #f7f3f0; }
     [data-testid="stSidebar"] { background: linear-gradient(180deg, #EADBC8 0%, #D2B48C 100%) !important; border-right: 3px solid #b8860b; }
     [data-testid="stSidebar"] * { color: #2b1e16 !important; font-weight: 800 !important; }
-    h1, h2, h3, h4, p, label, .stMetric label { color: #2b1e16 !important; font-family: 'Playfair Display', serif; font-weight: 800 !important; }
-    h1 { font-size: 3.5rem !important; text-shadow: 2px 2px 0px #fff; }
+    h1, h2, h3, h4, p, label { color: #2b1e16 !important; font-family: 'Playfair Display', serif; font-weight: 800 !important; }
     
-    /* BOTÃO DE DOWNLOAD ESTILIZADO */
     .stDownloadButton > button {
         background: linear-gradient(180deg, #fcf6ba 0%, #d4af37 40%, #aa771c 100%) !important;
         color: #2b1e16 !important;
         border: 3px solid #8a6d3b !important;
-        padding: 25px !important;
+        padding: 30px !important;
         font-weight: 900 !important;
-        font-size: 20px !important;
-        border-radius: 15px !important;
+        font-size: 22px !important;
+        border-radius: 20px !important;
         width: 100% !important;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.3) !important;
+        text-transform: uppercase !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -134,14 +124,13 @@ with st.sidebar:
 if not st.session_state['confirmado']:
     st.info("💰 Para iniciar, identifique o CNPJ no menu lateral e clique em **LIBERAR OPERAÇÃO**.")
 else:
-    # SE O GARIMPO AINDA NÃO FOI FEITO, MOSTRA O UPLOADER
     if not st.session_state['garimpo_ok']:
         st.markdown(f"### 📦 JAZIDA DE ARQUIVOS: {format_cnpj(raw_cnpj)}")
         uploaded_files = st.file_uploader("Arraste seus XMLs ou ZIPs aqui:", accept_multiple_files=True)
 
         if uploaded_files:
             if st.button("🚀 INICIAR GRANDE GARIMPO"):
-                processed_keys, sequencias, relatorio_lista = set(), {}, []
+                processed_keys, relatorio_lista = set(), []
                 
                 # 1. ZIP ORGANIZADO
                 buf_org = io.BytesIO()
@@ -149,7 +138,7 @@ else:
                     for f in uploaded_files:
                         f_bytes = f.read()
                         if f.name.lower().endswith('.zip'):
-                            process_zip_recursively(f_bytes, zf, processed_keys, sequencias, relatorio_lista, cnpj_limpo)
+                            process_zip_recursively(f_bytes, zf, processed_keys, relatorio_lista, cnpj_limpo)
                         elif f.name.lower().endswith('.xml'):
                             resumo, is_p = identify_xml_info(f_bytes, cnpj_limpo, f.name)
                             ident = resumo["Chave"] if len(resumo["Chave"]) == 44 else f.name
@@ -157,52 +146,42 @@ else:
                                 processed_keys.add(ident)
                                 zf.writestr(f"{resumo['Pasta']}/{f.name}", f_bytes)
                                 relatorio_lista.append(resumo)
-                                if is_p and resumo["Número"] > 0 and "EMITIDOS" in resumo["Pasta"]:
-                                    if resumo["Tipo"] in ["NF-e", "NFC-e", "CT-e", "MDF-e"]:
-                                        s_key = (resumo["Tipo"], resumo["Série"])
-                                        if s_key not in sequencias: sequencias[s_key] = set()
-                                        sequencias[s_key].add(resumo["Número"])
                 
-                # 2. ZIP TODOS COM PASTA INTERNA
+                # 2. ZIP TODOS (COM PASTA TODOS INTERNA)
                 buf_todos = io.BytesIO()
                 with zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_DEFLATED) as zf_t:
                     for item in relatorio_lista:
                         zf_t.writestr(f"TODOS/{item['Arquivo']}", item['Conteúdo'])
 
-                # SALVAR NO ESTADO
+                # SALVAR TUDO
                 st.session_state['zip_download_org'] = buf_org.getvalue()
                 st.session_state['zip_download_todos'] = buf_todos.getvalue()
-                st.session_state['relatorio_final'] = relatorio_lista
                 st.session_state['garimpo_ok'] = True
                 st.rerun()
     else:
-        # --- EXIBIÇÃO DOS BOTÕES (FOCO TOTAL AQUI AGORA) ---
+        # --- EXIBIÇÃO FINAL (AQUI NÃO TEM ERRO) ---
         st.success("💰 MINERAÇÃO FINALIZADA!")
         
-        st.markdown("## 📥 BAIXAR RESULTADOS")
+        st.markdown("## 📥 BAIXAR SEUS ARQUIVOS")
         
-        # COLUNAS PARA OS BOTÕES
-        col_esq, col_dir = st.columns(2)
-        
-        with col_esq:
-            st.markdown("### 📦 OPÇÃO 1")
+        c1, c2 = st.columns(2)
+        with c1:
             st.download_button(
-                label="📥 BAIXAR TODOS (PASTA ÚNICA)",
+                label="📦 BAIXAR TODOS (PASTA ÚNICA)",
                 data=st.session_state['zip_download_todos'],
                 file_name="TODOS.zip",
                 mime="application/zip"
             )
-            st.caption("Contém uma pasta chamada 'TODOS' com todos os XMLs misturados.")
+            st.markdown("<p style='text-align:center;'>Pasta única 'TODOS' com tudo misturado.</p>", unsafe_allow_html=True)
 
-        with col_dir:
-            st.markdown("### 📂 OPÇÃO 2")
+        with c2:
             st.download_button(
-                label="📥 BAIXAR GARIMPO FINAL (ORGANIZADO)",
+                label="📂 BAIXAR GARIMPO FINAL (ORGANIZADO)",
                 data=st.session_state['zip_download_org'],
                 file_name="garimpo_final.zip",
                 mime="application/zip"
             )
-            st.caption("Organizado por pastas (Emitidas, Recebidas, etc).")
+            st.markdown("<p style='text-align:center;'>Pastas separadas (Emitidas/Recebidas).</p>", unsafe_allow_html=True)
 
         st.divider()
         if st.button("⛏️ FAZER NOVO GARIMPO"):
