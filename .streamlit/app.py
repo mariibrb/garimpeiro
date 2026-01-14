@@ -7,20 +7,21 @@ import re
 import pandas as pd
 import gc
 
-# --- MOTOR DE IDENTIFICAÇÃO ---
+# --- MOTOR DE IDENTIFICAÇÃO (VERSÃO ASPIRADOR) ---
 def get_xml_key(content_str):
     match = re.search(r'\d{44}', content_str)
     return match.group(0) if match else None
 
-def identify_xml_info(content_bytes, client_cnpj):
+def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     
-    pasta = "NAO_IDENTIFICADOS"
-    chave = None
+    # Valores padrão para não perder o arquivo nunca
+    pasta = "RECEBIDOS_TERCEIROS/Outros_ou_Eventos"
+    chave = get_xml_key(content_bytes.decode('utf-8', errors='ignore')) or file_name.replace('.xml', '').replace('.XML', '')
     is_p = False
     serie = "0"
     num = None
-    d_type = "Outros"
+    d_type = "XML_Geral"
 
     try:
         try:
@@ -28,8 +29,7 @@ def identify_xml_info(content_bytes, client_cnpj):
         except UnicodeDecodeError:
             content_str = content_bytes.decode('latin-1', errors='ignore')
 
-        chave = get_xml_key(content_str)
-        
+        # Identificação de Tipo
         tag_lower = content_str.lower()
         if '<mod>65</mod>' in tag_lower: d_type = "NFC-e"
         elif '<infcte' in tag_lower: d_type = "CT-e"
@@ -37,54 +37,56 @@ def identify_xml_info(content_bytes, client_cnpj):
         elif '<infnfe' in tag_lower: d_type = "NF-e"
         elif '<evento' in tag_lower: d_type = "Eventos"
 
+        # Parser XML
         clean_content = re.sub(r'\sxmlns="[^"]+"', '', content_str, count=1)
         root = ET.fromstring(clean_content)
         
+        # Identifica Emitente
         emit_cnpj = ""
         emit_tag = root.find(".//emit/CNPJ")
         if emit_tag is not None and emit_tag.text:
             emit_cnpj = "".join(filter(str.isdigit, emit_tag.text))
         
+        # Série e Número
         s_tag = root.find(".//ide/serie")
         if s_tag is not None: serie = s_tag.text
         
         n_tag = root.find(".//ide/nNF") or root.find(".//ide/nCT") or root.find(".//ide/nMDF")
         if n_tag is not None: num = int(n_tag.text)
 
-        if client_cnpj_clean and emit_cnpj == client_cnpj_clean:
+        # SEPARAÇÃO EMITIDA VS RECEBIDA
+        if client_cnpj_clean and (emit_cnpj == client_cnpj_clean or (chave and client_cnpj_clean in chave[6:20])):
             is_p = True
             pasta = f"EMITIDOS_CLIENTE/{d_type}/Serie_{serie}"
         else:
-            if chave and client_cnpj_clean and client_cnpj_clean in chave[6:20]:
-                is_p = True
-                pasta = f"EMITIDOS_CLIENTE/{d_type}/Serie_{serie}"
-            else:
-                is_p = False
-                pasta = f"RECEBIDOS_TERCEIROS/{d_type}"
+            is_p = False
+            pasta = f"RECEBIDOS_TERCEIROS/{d_type}"
             
         return pasta, chave, is_p, serie, num, d_type
     except:
-        return "ERRO_PROCESSAMENTO", None, False, "0", None, "ERRO"
+        # Se der erro no parser, ainda assim mantemos o arquivo nos Recebidos
+        return "RECEBIDOS_TERCEIROS/Nao_Categorizados", chave, False, "0", None, "XML_Geral"
 
-# --- FUNÇÃO RECURSIVA PARA ZIP DENTRO DE ZIP ---
 def process_zip_recursively(file_bytes, zf_output, processed_keys, sequencias, resumo, client_cnpj):
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
             for info in z.infolist():
                 if info.is_dir(): continue
                 content = z.read(info.filename)
+                fname_lower = info.filename.lower()
                 
-                # Se for outro ZIP dentro, chama a função de novo (Recursividade)
-                if info.filename.lower().endswith('.zip'):
+                if fname_lower.endswith('.zip'):
                     process_zip_recursively(content, zf_output, processed_keys, sequencias, resumo, client_cnpj)
                 
-                # Se for XML, processa
-                elif info.filename.lower().endswith('.xml'):
-                    pasta, chave, is_p, serie, num, d_type = identify_xml_info(content, client_cnpj)
+                elif fname_lower.endswith('.xml'):
+                    pasta, chave, is_p, serie, num, d_type = identify_xml_info(content, client_cnpj, info.filename)
                     
-                    if pasta != "ERRO_PROCESSAMENTO" and chave and chave not in processed_keys:
-                        processed_keys.add(chave)
-                        zf_output.writestr(f"{pasta}/{chave}.xml", content)
+                    # Usamos o nome do arquivo + chave para garantir unicidade
+                    identificador_unico = chave if chave else info.filename
+                    
+                    if identificador_unico not in processed_keys:
+                        processed_keys.add(identificador_unico)
+                        zf_output.writestr(f"{pasta}/{identificador_unico}.xml", content)
                         
                         cat = pasta.replace('/', ' - ')
                         resumo[cat] = resumo.get(cat, 0) + 1
@@ -93,12 +95,11 @@ def process_zip_recursively(file_bytes, zf_output, processed_keys, sequencias, r
                             chave_seq = (d_type, serie)
                             if chave_seq not in sequencias: sequencias[chave_seq] = set()
                             sequencias[chave_seq].add(num)
-    except:
-        pass
+    except: pass
 
 # --- INTERFACE ---
-st.set_page_config(page_title="Garimpeiro v4.9", layout="wide", page_icon="⛏️")
-st.title("⛏️ Garimpeiro v4.9 - Visão Raio-X (ZIP em ZIP)")
+st.set_page_config(page_title="Garimpeiro v5.0", layout="wide", page_icon="⛏️")
+st.title("⛏️ Garimpeiro v5.0 - Coleta Total (Sem Perdas)")
 
 with st.sidebar:
     st.header("⚙️ Configurações")
@@ -106,15 +107,15 @@ with st.sidebar:
     if st.button("🗑️ Resetar Tudo"):
         st.cache_data.clear()
         st.rerun()
+    st.info("💡 v5.0: Agora captura até XMLs com erros ou sem chave definida.")
 
 uploaded_files = st.file_uploader("Suba seus XMLs ou ZIPs", accept_multiple_files=True)
 
 if uploaded_files:
-    if st.button("🚀 INICIAR GARIMPO RECURSIVO", use_container_width=True):
+    if st.button("🚀 INICIAR GARIMPO", use_container_width=True):
         processed_keys = set()
         sequencias = {} 
         resumo = {}
-        
         zip_buffer = io.BytesIO()
         total = len(uploaded_files)
         bar = st.progress(0)
@@ -122,14 +123,17 @@ if uploaded_files:
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf_final:
             for i, file in enumerate(uploaded_files):
                 file_bytes = file.read()
+                fname_lower = file.name.lower()
                 
-                if file.name.lower().endswith('.zip'):
+                if fname_lower.endswith('.zip'):
                     process_zip_recursively(file_bytes, zf_final, processed_keys, sequencias, resumo, cnpj_input)
-                elif file.name.lower().endswith('.xml'):
-                    pasta, chave, is_p, serie, num, d_type = identify_xml_info(file_bytes, cnpj_input)
-                    if pasta != "ERRO_PROCESSAMENTO" and chave and chave not in processed_keys:
-                        processed_keys.add(chave)
-                        zf_final.writestr(f"{pasta}/{chave}.xml", file_bytes)
+                elif fname_lower.endswith('.xml'):
+                    pasta, chave, is_p, serie, num, d_type = identify_xml_info(file_bytes, cnpj_input, file.name)
+                    
+                    identificador = chave if chave else file.name
+                    if identificador not in processed_keys:
+                        processed_keys.add(identificador)
+                        zf_final.writestr(f"{pasta}/{identificador}.xml", file_bytes)
                         cat = pasta.replace('/', ' - ')
                         resumo[cat] = resumo.get(cat, 0) + 1
                         if is_p and num:
@@ -141,7 +145,7 @@ if uploaded_files:
                 gc.collect()
 
         if processed_keys:
-            st.success(f"✅ Concluído! {len(processed_keys)} notas mineradas em todas as camadas.")
+            st.success(f"✅ Concluído! {len(processed_keys)} arquivos minerados.")
             
             # Relatório de Faltantes
             faltantes_data = []
@@ -163,7 +167,6 @@ if uploaded_files:
                 else:
                     st.info("Sequência completa!")
 
-            st.download_button("📥 BAIXAR GARIMPO (.ZIP)", zip_buffer.getvalue(), "garimpo_recursivo.zip", use_container_width=True)
-        
+            st.download_button("📥 BAIXAR GARIMPO COMPLETO", zip_buffer.getvalue(), "garimpo_v5.zip", use_container_width=True)
         zip_buffer.close()
         gc.collect()
