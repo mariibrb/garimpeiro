@@ -7,7 +7,7 @@ import re
 import pandas as pd
 import gc
 
-# --- MOTOR DE IDENTIFICAÇÃO (FISCAL) ---
+# --- FUNÇÕES DE IDENTIFICAÇÃO ---
 def get_xml_key(root, content_str):
     try:
         ch_tag = root.find(".//chNFe") or root.find(".//chCTe") or root.find(".//chMDFe")
@@ -27,8 +27,9 @@ def identify_xml_info(content_bytes, client_cnpj):
     client_cnpj = "".join(filter(str.isdigit, client_cnpj))
     try:
         content_str = content_bytes.decode('utf-8', errors='ignore')
-        # Limpeza para economizar RAM
-        root = ET.fromstring(re.sub(r'\sxmlns="[^"]+"', '', content_str, count=1))
+        # Limpeza agressiva de namespaces para economizar RAM
+        clean_content = re.sub(r'\sxmlns="[^"]+"', '', content_str, count=1)
+        root = ET.fromstring(clean_content)
         
         doc_type = "Outros"
         tag_lower = content_str.lower()
@@ -55,9 +56,105 @@ def identify_xml_info(content_bytes, client_cnpj):
     except:
         return "NAO_IDENTIFICADOS", None, False, "0", None
 
-def process_files(uploaded_files, client_cnpj):
-    all_xml_data = {}
-    processed_keys = set()
-    sequencias = {}
-    
-    total
+def process_recursively(file_name, file_bytes, xml_files_dict, client_cnpj, processed_keys, sequencias):
+    if file_name.lower().endswith('.zip'):
+        try:
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+                for info in z.infolist():
+                    if info.is_dir(): continue
+                    process_recursively(info.filename, z.read(info.filename), xml_files_dict, client_cnpj, processed_keys, sequencias)
+        except: pass
+    elif file_name.lower().endswith('.xml'):
+        pasta, chave, is_propria, serie, numero = identify_xml_info(file_bytes, client_cnpj)
+        if chave and chave not in processed_keys:
+            processed_keys.add(chave)
+            xml_files_dict[f"{pasta}/{chave}.xml"] = file_bytes
+            if is_propria and numero:
+                if serie not in sequencias: sequencias[serie] = set()
+                sequencias[serie].add(numero)
+
+# --- INTERFACE ---
+st.set_page_config(page_title="Garimpeiro v3.7", page_icon="⛏️", layout="wide")
+st.title("⛏️ Garimpeiro de XML 💎")
+
+with st.sidebar:
+    st.header("⚙️ Configurações")
+    cnpj_input = st.text_input("CNPJ do Cliente (Só números)", placeholder="Ex: 12345678000199")
+    st.divider()
+    if st.button("🗑️ Resetar Memória"):
+        st.cache_data.clear()
+        st.rerun()
+
+uploaded_files = st.file_uploader("Solte a pasta ou arquivos aqui", accept_multiple_files=True)
+
+if uploaded_files:
+    total = len(uploaded_files)
+    if st.button("🚀 INICIAR GARIMPO TOTAL", use_container_width=True):
+        all_xml_data = {}
+        processed_keys = set()
+        sequencias_proprias = {}
+
+        progress_box = st.container(border=True)
+        with progress_box:
+            st.write("### 📈 Progresso do Garimpo")
+            barra_geral = st.progress(0)
+            c1, c2, c3 = st.columns(3)
+            m_perc = c1.empty()
+            m_qtd = c2.empty()
+            m_rest = c3.empty()
+
+        for i, file in enumerate(uploaded_files):
+            process_recursively(file.name, file.read(), all_xml_data, cnpj_input, processed_keys, sequencias_proprias)
+            
+            prog = (i + 1) / total
+            barra_geral.progress(prog)
+            m_perc.metric("Status", f"{int(prog * 100)}%")
+            m_qtd.metric("Lidos", f"{i+1} de {total}")
+            m_rest.metric("Faltam", total - (i+1))
+            
+            if i % 20 == 0: gc.collect() # Limpeza constante de memória
+
+        if all_xml_data:
+            st.success(f"✨ Concluído! {len(all_xml_data)} XMLs únicos.")
+            
+            # INVENTÁRIO
+            st.write("### 📊 Inventário do Tesouro")
+            resumo = {}
+            for path in all_xml_data.keys():
+                cat = " - ".join(path.split('/')[:-1]).replace('_', ' ')
+                resumo[cat] = resumo.get(cat, 0) + 1
+            st.table(pd.DataFrame(list(resumo.items()), columns=['Categoria / Série', 'Quantidade']))
+
+            # RELATÓRIO DE FALTANTES
+            st.divider()
+            st.write("### ⚠️ Notas de Emissão Própria Faltantes")
+            faltantes_list = []
+            for serie, numeros in sequencias_proprias.items():
+                if numeros:
+                    seq_ideal = set(range(min(numeros), max(numeros) + 1))
+                    for f in sorted(list(seq_ideal - numeros)):
+                        faltantes_list.append({"Série": serie, "Número Faltante": f})
+            
+            if faltantes_list:
+                df_f = pd.DataFrame(faltantes_list)
+                st.dataframe(df_f, use_container_width=True)
+                st.download_button("📥 Baixar Faltantes (CSV)", df_f.to_csv(index=False).encode('utf-8'), "faltantes.csv")
+            else:
+                st.info("✅ Sequência numérica completa!")
+
+            # ZIP FINAL
+            zip_out = io.BytesIO()
+            with zipfile.ZipFile(zip_out, "w", zipfile.ZIP_DEFLATED) as zf:
+                for path, data in all_xml_data.items():
+                    zf.writestr(path, data)
+                if faltantes_list:
+                    zf.writestr("RELATORIOS/faltantes.csv", pd.DataFrame(faltantes_list).to_csv(index=False))
+            
+            st.download_button("📥 BAIXAR TUDO ORGANIZADO (.ZIP)", zip_out.getvalue(), "garimpo_v3_7.zip", use_container_width=True)
+            
+            # Limpeza final
+            all_xml_data.clear()
+            gc.collect()
+
+st.divider()
+st.caption("v3.7 - Estabilidade Máxima Ativada")
