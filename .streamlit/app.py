@@ -6,6 +6,7 @@ import xml.etree.ElementTree as ET
 import re
 import pandas as pd
 import random
+import gc  # Gerenciador de memória
 
 # --- MOTOR DE IDENTIFICAÇÃO ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
@@ -93,8 +94,14 @@ def format_cnpj(cnpj):
 # --- DESIGN PREMIUM REFINADO ---
 st.set_page_config(page_title="O Garimpeiro", layout="wide", page_icon="⛏️")
 
+# CSS para esconder o Menu e o Botão do GitHub (Blindagem)
 st.markdown("""
     <style>
+    #MainMenu {visibility: hidden !important;}
+    footer {visibility: hidden !important;}
+    header {visibility: hidden !important;}
+    .stAppDeployButton {display:none !important;}
+    
     .stApp { background-color: #f7f3f0; }
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #EADBC8 0%, #D2B48C 100%) !important;
@@ -187,6 +194,10 @@ else:
 
             if relatorio_lista:
                 st.session_state.update({'relatorio': relatorio_lista, 'zip_completo': zip_buffer.getvalue(), 'garimpo_ok': True})
+                # Limpeza forçada de memória
+                del processed_keys, sequencias
+                gc.collect()
+                
                 icons = ["💰", "🪙", "💎", "🥇", "✨"]
                 rain_html = "".join([f'<div class="gold-item" style="left:{random.randint(0,95)}%; animation-delay:{random.uniform(0,2.5)}s; font-size:{random.randint(25,45)}px;">{random.choice(icons)}</div>' for i in range(70)])
                 st.markdown(rain_html, unsafe_allow_html=True)
@@ -210,7 +221,7 @@ if st.session_state.get('garimpo_ok'):
         filtro = df_res[df_res['Número'].astype(str).str.contains(busca) | df_res['Chave'].str.contains(busca)]
         if not filtro.empty:
             for _, row in filtro.iterrows():
-                st.download_button(f"📥 Baixar XML: {row['Tipo']} - Nº {row['Número']}", row['Conteúdo'], file_name=row['Arquivo'])
+                st.download_button(f"📥 Baixar XML: {row['Tipo']} - Nº {row['Número']}", row['Conteúdo'], file_name=row['Arquivo'], key=row['Chave'])
         else:
             st.warning("Nenhuma pepita encontrada com esse número.")
 
