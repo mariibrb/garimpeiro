@@ -7,19 +7,16 @@ import re
 import pandas as pd
 import gc
 
-# --- FUNÇÕES DE IDENTIFICAÇÃO ---
+# --- FUNÇÕES DE IDENTIFICAÇÃO (EXTREMA LEVEZA) ---
 def get_xml_key(root, content_str):
     try:
+        # Busca direta por regex na string costuma ser mais leve que percorrer o XML inteiro
+        found = re.search(r'(?:chNFe|chCTe|chMDFe|infNFe Id="|infCTe Id="|infMDFe Id=")[^\d]*(\d{44})', content_str)
+        if found: return found.group(1)
+        
+        # Backup caso o regex falhe
         ch_tag = root.find(".//chNFe") or root.find(".//chCTe") or root.find(".//chMDFe")
         if ch_tag is not None and ch_tag.text: return ch_tag.text
-        inf_tags = [".//infNFe", ".//infCTe", ".//infMDFe", ".//infProc"]
-        for tag in inf_tags:
-            el = root.find(tag)
-            if el is not None and 'Id' in el.attrib:
-                k = re.sub(r'\D', '', el.attrib['Id'])
-                if len(k) == 44: return k
-        f = re.findall(r'\d{44}', content_str)
-        if f: return f[0]
     except: pass
     return None
 
@@ -27,7 +24,7 @@ def identify_xml_info(content_bytes, client_cnpj):
     client_cnpj = "".join(filter(str.isdigit, client_cnpj))
     try:
         content_str = content_bytes.decode('utf-8', errors='ignore')
-        # Limpeza agressiva de namespaces para economizar RAM
+        # Remove espaços e namespaces para o parser não fritar a RAM
         clean_content = re.sub(r'\sxmlns="[^"]+"', '', content_str, count=1)
         root = ET.fromstring(clean_content)
         
@@ -74,14 +71,13 @@ def process_recursively(file_name, file_bytes, xml_files_dict, client_cnpj, proc
                 sequencias[serie].add(numero)
 
 # --- INTERFACE ---
-st.set_page_config(page_title="Garimpeiro v3.7", page_icon="⛏️", layout="wide")
+st.set_page_config(page_title="Garimpeiro v3.8", page_icon="⛏️", layout="wide")
 st.title("⛏️ Garimpeiro de XML 💎")
 
 with st.sidebar:
     st.header("⚙️ Configurações")
     cnpj_input = st.text_input("CNPJ do Cliente (Só números)", placeholder="Ex: 12345678000199")
-    st.divider()
-    if st.button("🗑️ Resetar Memória"):
+    if st.button("🗑️ Resetar Tudo"):
         st.cache_data.clear()
         st.rerun()
 
@@ -94,40 +90,31 @@ if uploaded_files:
         processed_keys = set()
         sequencias_proprias = {}
 
-        progress_box = st.container(border=True)
-        with progress_box:
-            st.write("### 📈 Progresso do Garimpo")
-            barra_geral = st.progress(0)
-            c1, c2, c3 = st.columns(3)
-            m_perc = c1.empty()
-            m_qtd = c2.empty()
-            m_rest = c3.empty()
+        # Barra de progresso simplificada
+        prog_bar = st.progress(0)
+        status = st.empty()
 
         for i, file in enumerate(uploaded_files):
             process_recursively(file.name, file.read(), all_xml_data, cnpj_input, processed_keys, sequencias_proprias)
             
-            prog = (i + 1) / total
-            barra_geral.progress(prog)
-            m_perc.metric("Status", f"{int(prog * 100)}%")
-            m_qtd.metric("Lidos", f"{i+1} de {total}")
-            m_rest.metric("Faltam", total - (i+1))
-            
-            if i % 20 == 0: gc.collect() # Limpeza constante de memória
+            if i % 10 == 0: # Atualiza menos vezes para poupar processamento
+                prog = (i + 1) / total
+                prog_bar.progress(prog)
+                status.write(f"⛏️ Processando: {i+1} de {total}")
+                gc.collect() # Limpeza agressiva de RAM
 
         if all_xml_data:
-            st.success(f"✨ Concluído! {len(all_xml_data)} XMLs únicos.")
+            st.success("✨ Garimpo Concluído!")
             
             # INVENTÁRIO
-            st.write("### 📊 Inventário do Tesouro")
             resumo = {}
             for path in all_xml_data.keys():
                 cat = " - ".join(path.split('/')[:-1]).replace('_', ' ')
                 resumo[cat] = resumo.get(cat, 0) + 1
+            st.write("### 📊 Inventário")
             st.table(pd.DataFrame(list(resumo.items()), columns=['Categoria / Série', 'Quantidade']))
 
-            # RELATÓRIO DE FALTANTES
-            st.divider()
-            st.write("### ⚠️ Notas de Emissão Própria Faltantes")
+            # FALTANTES
             faltantes_list = []
             for serie, numeros in sequencias_proprias.items():
                 if numeros:
@@ -136,25 +123,24 @@ if uploaded_files:
                         faltantes_list.append({"Série": serie, "Número Faltante": f})
             
             if faltantes_list:
+                st.write("### ⚠️ Notas Faltantes")
                 df_f = pd.DataFrame(faltantes_list)
                 st.dataframe(df_f, use_container_width=True)
-                st.download_button("📥 Baixar Faltantes (CSV)", df_f.to_csv(index=False).encode('utf-8'), "faltantes.csv")
-            else:
-                st.info("✅ Sequência numérica completa!")
-
-            # ZIP FINAL
+            
+            # ZIP FINAL (Usando compressão mínima para não travar a CPU)
             zip_out = io.BytesIO()
-            with zipfile.ZipFile(zip_out, "w", zipfile.ZIP_DEFLATED) as zf:
+            with zipfile.ZipFile(zip_out, "w", zipfile.STORED) as zf:
                 for path, data in all_xml_data.items():
                     zf.writestr(path, data)
                 if faltantes_list:
-                    zf.writestr("RELATORIOS/faltantes.csv", pd.DataFrame(faltantes_list).to_csv(index=False))
+                    zf.writestr("faltantes.csv", pd.DataFrame(faltantes_list).to_csv(index=False))
             
-            st.download_button("📥 BAIXAR TUDO ORGANIZADO (.ZIP)", zip_out.getvalue(), "garimpo_v3_7.zip", use_container_width=True)
+            st.download_button("📥 BAIXAR GARIMPO (.ZIP)", zip_out.getvalue(), "garimpo.zip", use_container_width=True)
             
-            # Limpeza final
+            # Limpeza final total
             all_xml_data.clear()
+            processed_keys.clear()
             gc.collect()
 
 st.divider()
-st.caption("v3.7 - Estabilidade Máxima Ativada")
+st.caption("v3.8 - Otimização de Fluxo de Dados")
