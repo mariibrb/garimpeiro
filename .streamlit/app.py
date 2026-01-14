@@ -104,6 +104,21 @@ st.markdown("""
     }
     div.stButton > button:first-child:hover { transform: scale(1.02); box-shadow: 0 6px 20px rgba(0,0,0,0.3); border: 1px solid white; }
     [data-testid="stMetric"] { background-color: rgba(255, 255, 255, 0.6); padding: 15px; border-radius: 15px; border: 1px solid rgba(212, 175, 55, 0.3); }
+
+    /* CSS para o efeito de pepitas de ouro */
+    @keyframes gold-sparkle {
+        0% { transform: translateY(0) scale(0.5); opacity: 0; }
+        50% { opacity: 1; }
+        100% { transform: translateY(-100px) scale(1.5); opacity: 0; }
+    }
+    .gold-particle {
+        position: fixed;
+        background-color: #FFD700; /* Cor do ouro */
+        border-radius: 50%;
+        opacity: 0;
+        animation: gold-sparkle 2s ease-out forwards;
+        z-index: 9999;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -124,6 +139,7 @@ with st.sidebar:
     if st.button("🗑️ Resetar Jazida"):
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.rerun()
+    st.caption("Versão 7.4 | Pepita de Ouro Edition")
 
 # --- ÁREA DE TRABALHO TRAVADA ---
 cnpj_limpo = "".join(filter(str.isdigit, raw_cnpj))
@@ -175,7 +191,19 @@ else:
 
             if relatorio_lista:
                 st.session_state.update({'relatorio': relatorio_lista, 'zip_completo': zip_buffer.getvalue(), 'garimpo_ok': True})
-                st.balloons()
+                # Efeito de pepitas de ouro subindo
+                st.markdown("""
+                    <div class="gold-particle" style="left: 10%; top: 80%; width: 10px; height: 10px; animation-delay: 0s;"></div>
+                    <div class="gold-particle" style="left: 20%; top: 90%; width: 8px; height: 8px; animation-delay: 0.2s;"></div>
+                    <div class="gold-particle" style="left: 30%; top: 70%; width: 12px; height: 12px; animation-delay: 0.4s;"></div>
+                    <div class="gold-particle" style="left: 40%; top: 85%; width: 9px; height: 9px; animation-delay: 0.6s;"></div>
+                    <div class="gold-particle" style="left: 50%; top: 75%; width: 11px; height: 11px; animation-delay: 0.8s;"></div>
+                    <div class="gold-particle" style="left: 60%; top: 82%; width: 7px; height: 7px; animation-delay: 1s;"></div>
+                    <div class="gold-particle" style="left: 70%; top: 78%; width: 10px; height: 10px; animation-delay: 1.2s;"></div>
+                    <div class="gold-particle" style="left: 80%; top: 88%; width: 8px; height: 8px; animation-delay: 1.4s;"></div>
+                    <div class="gold-particle" style="left: 90%; top: 72%; width: 12px; height: 12px; animation-delay: 1.6s;"></div>
+                """, unsafe_allow_html=True)
+
 
 # --- RESULTADOS ---
 if st.session_state.get('garimpo_ok'):
@@ -203,4 +231,4 @@ if st.session_state.get('garimpo_ok'):
             st.info("Nenhuma falha de sequência detectada.")
 
     st.divider()
-    st.download_button("📥 BAIXAR RESULTADO COMPLETO (.ZIP)", st.session_state['zip_completo'], "garimpo_v7_3.zip", use_container_width=True)
+    st.download_button("📥 BAIXAR RESULTADO COMPLETO (.ZIP)", st.session_state['zip_completo'], "garimpo_v7_4.zip", use_container_width=True)
