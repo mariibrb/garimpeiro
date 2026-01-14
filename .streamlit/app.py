@@ -9,8 +9,10 @@ import random
 # --- MOTOR DE IDENTIFICAÇÃO ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
+    # Forçamos o nome a ser apenas o arquivo, sem caminhos de pastas
+    clean_name = os.path.basename(file_name)
     resumo_nota = {
-        "Arquivo": file_name, "Chave": "", "Tipo": "Outros", "Série": "0",
+        "Arquivo": clean_name, "Chave": "", "Tipo": "Outros", "Série": "0",
         "Número": 0, "Pasta": "RECEBIDOS_TERCEIROS/OUTROS", "Conteúdo": content_bytes
     }
     try:
@@ -64,7 +66,7 @@ def format_cnpj(cnpj):
     if len(cnpj) <= 12: return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:]}"
     return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
 
-# --- DESIGN PREMIUM E BLINDAGEM ---
+# --- DESIGN PREMIUM ---
 st.set_page_config(page_title="O Garimpeiro", layout="wide", page_icon="⛏️")
 
 st.markdown("""
@@ -80,7 +82,6 @@ st.markdown("""
     [data-testid="stMetric"] { background: linear-gradient(135deg, #ffffff 0%, #fff9e6 100%); border: 2px solid #d4af37; border-radius: 20px; padding: 25px; box-shadow: 8px 8px 20px rgba(0,0,0,0.12); }
     [data-testid="stMetricValue"] { color: #a67c00 !important; font-weight: 900 !important; font-size: 2.5rem !important; }
     
-    /* Botões Principais */
     div.stButton > button:first-child {
         background: linear-gradient(180deg, #fcf6ba 0%, #d4af37 40%, #aa771c 100%);
         color: #2b1e16 !important; border: 2px solid #8a6d3b; padding: 20px 40px;
@@ -88,7 +89,6 @@ st.markdown("""
         width: 100%; text-transform: uppercase;
     }
     
-    /* Botões de Download */
     .stDownloadButton > button {
         background: linear-gradient(180deg, #fcf6ba 0%, #d4af37 40%, #aa771c 100%) !important;
         color: #2b1e16 !important; border: 2px solid #8a6d3b !important;
@@ -122,9 +122,7 @@ with st.sidebar:
         st.rerun()
 
 # --- ÁREA DE TRABALHO ---
-if not st.session_state['confirmado']:
-    st.info("💰 Para iniciar, identifique o CNPJ no menu lateral e clique em **LIBERAR OPERAÇÃO**.")
-else:
+if st.session_state['confirmado']:
     if not st.session_state['garimpo_ok']:
         st.markdown(f"### 📦 JAZIDA DE ARQUIVOS: {format_cnpj(raw_cnpj)}")
         uploaded_files = st.file_uploader("Arraste seus XMLs ou ZIPs aqui:", accept_multiple_files=True)
@@ -144,17 +142,22 @@ else:
                             if file.name.lower().endswith('.zip'):
                                 with zipfile.ZipFile(io.BytesIO(f_bytes)) as z_in:
                                     for name in z_in.namelist():
-                                        if name.lower().endswith('.xml'): contents.append((name, z_in.read(name)))
+                                        if name.lower().endswith('.xml'):
+                                            # Extrai apenas o nome do XML, limpando qualquer pasta
+                                            base_name = os.path.basename(name)
+                                            contents.append((base_name, z_in.read(name)))
                             else:
-                                contents.append((file.name, f_bytes))
+                                contents.append((os.path.basename(file.name), f_bytes))
 
                             for name, xml_data in contents:
                                 res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
                                 key = res["Chave"] if len(res["Chave"]) == 44 else name
                                 if key not in processed_keys:
                                     processed_keys.add(key)
+                                    # Grava no ZIP Organizado (com subpastas)
                                     z_org.writestr(f"{res['Pasta']}/{name}", xml_data)
-                                    z_todos.writestr(f"TODOS/{name}", xml_data)
+                                    # Grava no ZIP de XMLs Soltos (direto na raiz)
+                                    z_todos.writestr(name, xml_data)
                                     relatorio_lista.append(res)
                                     
                                     if is_p and res["Número"] > 0 and "EMITIDOS" in res["Pasta"]:
@@ -162,29 +165,29 @@ else:
                                         if s_key not in sequencias: sequencias[s_key] = set()
                                         sequencias[s_key].add(res["Número"])
 
-                # Auditoria
+                st.session_state.update({
+                    'zip_org': buf_org.getvalue(),
+                    'zip_todos': buf_todos.getvalue(),
+                    'relatorio': relatorio_lista,
+                    'df_faltantes': pd.DataFrame(sequencias), # Apenas para controle interno agora
+                    'garimpo_ok': True
+                })
+                # Cálculo de faltantes simplificado para a exibição
                 faltantes = []
                 for (t, s), nums in sequencias.items():
                     if len(nums) > 1:
                         ideal = set(range(min(nums), max(nums) + 1))
                         for b in sorted(list(ideal - nums)):
                             faltantes.append({"Documento": t, "Série": s, "Nº Faltante": b})
-
-                st.session_state.update({
-                    'zip_org': buf_org.getvalue(),
-                    'zip_todos': buf_todos.getvalue(),
-                    'relatorio': relatorio_lista,
-                    'df_faltantes': pd.DataFrame(faltantes),
-                    'garimpo_ok': True
-                })
+                st.session_state['df_faltantes'] = pd.DataFrame(faltantes)
                 st.rerun()
     else:
-        # --- EXIBIÇÃO DOS RESULTADOS ---
+        # --- EXIBIÇÃO ---
         icons = ["💰", "✨", "💎", "🥇"]
         rain_html = "".join([f'<div class="gold-item" style="left:{random.randint(0,95)}%; animation-delay:{random.uniform(0,2)}s; font-size:{random.randint(25,45)}px;">{random.choice(icons)}</div>' for i in range(50)])
         st.markdown(rain_html, unsafe_allow_html=True)
         
-        st.success(f"⛏️ Garimpo Finalizado! {len(st.session_state['relatorio'])} arquivos processados.")
+        st.success(f"⛏️ Garimpo Finalizado! {len(st.session_state['relatorio'])} XMLs minerados.")
         
         df_res = pd.DataFrame(st.session_state['relatorio'])
         c_m1, c_m2, c_m3 = st.columns(3)
@@ -197,11 +200,11 @@ else:
         st.markdown("### 📥 EXTRAIR TESOURO")
         col_down1, col_down2 = st.columns(2)
         with col_down1:
-            st.download_button("📂 BAIXAR GARIMPO FINAL (ORGANIZADO)", st.session_state['zip_org'], "garimpo_final.zip", "application/zip", use_container_width=True)
-            st.caption("Organizado por Pastas: Emitidas, Recebidas, Série e Status.")
+            st.download_button("📂 BAIXAR GARIMPO ORGANIZADO", st.session_state['zip_org'], "garimpo_folders.zip", "application/zip", use_container_width=True)
+            st.caption("XMLs separados em pastas (Emitidas/Recebidas).")
         with col_down2:
-            st.download_button("📦 BAIXAR TODOS (PASTA ÚNICA)", st.session_state['zip_todos'], "TODOS.zip", "application/zip", use_container_width=True)
-            st.caption("Todos os arquivos únicos dentro de uma pasta única chamada 'TODOS'.")
+            st.download_button("📦 BAIXAR SÓ OS XMLs (SOLTOS)", st.session_state['zip_todos'], "TODOS_XML.zip", "application/zip", use_container_width=True)
+            st.caption("ZIP sem pastas. Todos os XMLs direto na raiz.")
 
         st.divider()
         st.markdown("### 🔍 PENEIRA INDIVIDUAL")
