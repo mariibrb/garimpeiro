@@ -86,7 +86,7 @@ def process_recursively(file_name, file_bytes, xml_files_dict, client_cnpj, proc
 
 # --- INTERFACE ---
 
-st.set_page_config(page_title="Garimpeiro de XML v2.5", page_icon="⛏️", layout="wide")
+st.set_page_config(page_title="Garimpeiro de XML v2.6", page_icon="⛏️", layout="wide")
 
 st.title("⛏️ Garimpeiro de XML 💎")
 
@@ -97,55 +97,50 @@ with st.sidebar:
     st.info("🛡️ Anti-Duplicidade Ativa")
     st.info("📊 Separação por Série Ativa")
 
+# --- ÁREA DE CARREGAMENTO E STATUS ---
+st.markdown("### 📥 Passo 1: Carregar os arquivos")
 uploaded_files = st.file_uploader(
-    "Arraste sua pasta ou arquivos (Ctrl+A)", 
+    "Arraste sua pasta ou arquivos aqui", 
     accept_multiple_files=True
 )
 
 if uploaded_files:
     total_files = len(uploaded_files)
-    st.write(f"📂 **{total_files}** itens prontos para processar.")
-
-    if st.button("🚀 INICIAR GARIMPO", use_container_width=True):
+    st.info(f"📁 {total_files} itens prontos na fila. Clique no botão abaixo para iniciar o processamento.")
+    
+    if st.button("🚀 INICIAR EXTRAÇÃO E VER PROGRESSO TOTAL", use_container_width=True):
         all_xml_data = {}
         processed_keys = set()
         
-        # --- NOVO QUADRO DE PROGRESSO TOTAL ---
-        # Criamos um container para agrupar tudo visualmente
+        # Criando o painel de progresso fixo que vai aparecer LOGO ACIMA do resultado
         with st.container(border=True):
-            st.markdown("### 📊 Progresso Total da Extração")
-            # Esta é a barra geral que você quer ver
-            total_bar = st.progress(0)
-            
-            c1, c2, c3 = st.columns(3)
-            txt_porcentagem = c1.empty()
-            txt_contador = c2.empty()
-            txt_unicos = c3.empty()
-            
-            # Espaço fixo para o nome do arquivo (não vai empurrar a barra)
-            txt_arquivo_atual = st.empty()
+            st.markdown("## 📈 PROGRESSO TOTAL DO GARIMPO")
+            barra_total = st.progress(0)
+            col1, col2, col3 = st.columns(3)
+            p_metric = col1.empty()
+            c_metric = col2.empty()
+            u_metric = col3.empty()
+            txt_atual = st.empty()
 
-        # Loop de processamento
+        # Loop de processamento real
         for i, file in enumerate(uploaded_files):
-            # Calcula o progresso (0.0 a 1.0)
-            progresso_v = (i + 1) / total_files
+            # Lógica de progresso
+            progresso_atual = (i + 1) / total_files
             
-            # ATUALIZAÇÃO DA BARRA TOTAL
-            total_bar.progress(progresso_v)
+            # Atualiza visualmente a BARRA GERAL
+            barra_total.progress(progresso_atual)
+            p_metric.metric("Concluído", f"{int(progresso_atual * 100)}%")
+            c_metric.metric("Arquivos Lidos", f"{i+1} de {total_files}")
+            u_metric.metric("XMLs Únicos", len(all_xml_data))
+            txt_atual.caption(f"⛏️ Minerando: {file.name}")
             
-            # ATUALIZAÇÃO DAS MÉTRICAS
-            txt_porcentagem.markdown(f"**Status:** {int(progresso_v * 100)}%")
-            txt_contador.markdown(f"**Lidos:** {i+1} de {total_files}")
-            txt_unicos.markdown(f"**Únicos:** {len(all_xml_data)}")
-            txt_arquivo_atual.caption(f"⛏️ Processando agora: {file.name}")
-            
-            # Processamento real
+            # Lê o conteúdo e processa
             process_recursively(file.name, file.read(), all_xml_data, cnpj_input, processed_keys)
 
-        # Finalização limpa
-        txt_arquivo_atual.empty()
+        # Finalização
+        txt_atual.empty()
         st.balloons()
-        st.success(f"✨ Concluído! {len(all_xml_data)} XMLs únicos encontrados.")
+        st.success(f"✨ Garimpo Finalizado! {len(all_xml_data)} XMLs organizados.")
         
         # Gerar ZIP
         zip_buffer = io.BytesIO()
@@ -153,7 +148,7 @@ if uploaded_files:
             for path, data in all_xml_data.items():
                 zf.writestr(path, data)
         
-        # Tabela de Resumo
+        # Resumo
         resumo = {}
         for path in all_xml_data.keys():
             partes = path.split('/')
@@ -164,7 +159,7 @@ if uploaded_files:
         st.table(resumo)
 
         st.download_button(
-            label="📥 BAIXAR ZIP ORGANIZADO",
+            label="📥 BAIXAR ZIP FINAL",
             data=zip_buffer.getvalue(),
             file_name="garimpo_xml_final.zip",
             mime="application/zip",
@@ -172,4 +167,4 @@ if uploaded_files:
         )
 
 st.divider()
-st.caption("FoxHelper: Barra de progresso v2.5 com container fixo.")
+st.caption("FoxHelper: Sistema com Barra de Progresso Unificada v2.6")
