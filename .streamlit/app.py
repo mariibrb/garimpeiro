@@ -5,99 +5,104 @@ import os
 
 def extract_xml_recursive(data, xml_files_dict):
     """
-    Lê bytes de um arquivo. Se for um ZIP, abre e olha dentro.
-    Se encontrar outro ZIP dentro, mergulha recursivamente.
-    Se encontrar XML, salva no dicionário.
+    Lê bytes de um arquivo. Se for um ZIP, abre e olha dentro de forma recursiva.
     """
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             for file_info in z.infolist():
-                # Ignora pastas vazias dentro do ZIP
                 if file_info.is_dir():
                     continue
                 
                 filename = file_info.filename
-                # Se for um ZIP dentro do ZIP
-                if filename.lower().endswith('.zip'):
-                    nested_zip_bytes = z.read(filename)
-                    extract_xml_recursive(nested_zip_bytes, xml_files_dict)
                 
-                # Se for um XML dentro do ZIP
+                # Se encontrar um ZIP dentro do ZIP, mergulha de novo
+                if filename.lower().endswith('.zip'):
+                    try:
+                        nested_zip_bytes = z.read(filename)
+                        extract_xml_recursive(nested_zip_bytes, xml_files_dict)
+                    except Exception:
+                        continue
+                
+                # Se encontrar um XML dentro do ZIP
                 elif filename.lower().endswith('.xml'):
                     content = z.read(filename)
-                    simple_name = os.path.basename(filename)
-                    if simple_name:
-                        # Se o nome já existir, anexa um contador para não sobrescrever
-                        base_name = simple_name
-                        counter = 1
-                        while simple_name in xml_files_dict:
-                            name_part, ext_part = os.path.splitext(base_name)
-                            simple_name = f"{name_part}_{counter}{ext_part}"
-                            counter += 1
-                        xml_files_dict[simple_name] = content
+                    add_to_dict(filename, content, xml_files_dict)
     except zipfile.BadZipFile:
-        # Se não for um ZIP válido, apenas ignora
         pass
 
-# Configuração da Página
-st.set_page_config(page_title="Extrator Total XML", page_icon="⚡")
+def add_to_dict(filepath, content, xml_files_dict):
+    """
+    Adiciona o XML ao dicionário garantindo que o nome seja único.
+    """
+    simple_name = os.path.basename(filepath)
+    if not simple_name:
+        return
 
-st.title("⚡ Extrator Total de XML")
+    name_to_save = simple_name
+    counter = 1
+    
+    # Se o nome já existir (ex: nota.xml de pastas diferentes), renomeia
+    while name_to_save in xml_files_dict:
+        name_part, ext_part = os.path.splitext(simple_name)
+        name_to_save = f"{name_part}_{counter}{ext_part}"
+        counter += 1
+    
+    xml_files_dict[name_to_save] = content
+
+# --- INTERFACE STREAMLIT ---
+
+st.set_page_config(page_title="Garimpeiro de XML", page_icon="🔍", layout="centered")
+
+st.title("🔍 Garimpeiro de XML")
+st.subheader("Extraia XMLs de Pastas, ZIPs e Subpastas")
+
 st.markdown("""
-Arraste para cá:
-1. **Arquivos ZIP** (mesmo que tenham pastas ou outros ZIPs dentro).
-2. **Pastas inteiras** do seu computador.
-3. **Arquivos XML** avulsos.
+**Como usar:**
+1. Selecione ou arraste **Pastas**, **Arquivos ZIP** ou **XMLs soltos**.
+2. O sistema vai ignorar a bagunça de pastas e encontrar todos os arquivos `.xml`.
+3. No final, você baixa um único arquivo ZIP com tudo organizado.
 """)
 
-# Componente de Upload
+# O accept_multiple_files permite que você selecione vários arquivos ou arraste uma pasta
 uploaded_files = st.file_uploader(
-    "Solte seus arquivos ou pastas aqui", 
+    "Arraste tudo aqui (Pastas, ZIPs, XMLs)", 
     accept_multiple_files=True
 )
 
 if uploaded_files:
-    if st.button("🚀 Extrair tudo para um único ZIP"):
-        all_xmls = {} # {nome_do_arquivo: conteudo_em_bytes}
+    if st.button("🚀 Iniciar Varredura Total"):
+        all_xmls = {} # Dicionário: {nome_unico.xml: bytes}
         
-        with st.spinner("Processando..."):
+        with st.spinner("Vasculhando arquivos... aguarde."):
             for uploaded_file in uploaded_files:
                 file_bytes = uploaded_file.read()
-                fname = uploaded_file.name.lower()
+                file_name = uploaded_file.name.lower()
                 
-                # Caso 1: O arquivo enviado é um ZIP
-                if fname.endswith('.zip'):
+                # Se for um ZIP que você subiu ou que estava na pasta
+                if file_name.endswith('.zip'):
                     extract_xml_recursive(file_bytes, all_xmls)
                 
-                # Caso 2: O arquivo enviado é um XML solto (ou veio de uma pasta arrastada)
-                elif fname.endswith('.xml'):
-                    simple_name = os.path.basename(uploaded_file.name)
-                    # Lógica para evitar nomes duplicados
-                    name_to_save = simple_name
-                    c = 1
-                    while name_to_save in all_xmls:
-                        n, e = os.path.splitext(simple_name)
-                        name_to_save = f"{n}_{c}{e}"
-                        c += 1
-                    all_xmls[name_to_save] = file_bytes
-
+                # Se for um XML que estava solto na pasta ou subpasta
+                elif file_name.endswith('.xml'):
+                    add_to_dict(uploaded_file.name, file_bytes, all_xmls)
+        
         if all_xmls:
-            st.success(f"Encontrados {len(all_xmls)} arquivos XML!")
+            st.success(f"✅ Sucesso! Localizamos {len(all_xmls)} arquivos XML.")
             
-            # Criar ZIP final
+            # Criar o ZIP de saída
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as new_zip:
                 for name, content in all_xmls.items():
                     new_zip.writestr(name, content)
             
             st.download_button(
-                label="📥 Baixar ZIP com todos os XMLs",
+                label="📥 Baixar Pack de XMLs",
                 data=zip_buffer.getvalue(),
-                file_name="xmls_extraidos.zip",
+                file_name="xmls_consolidados.zip",
                 mime="application/zip"
             )
         else:
-            st.error("Nenhum XML encontrado nos arquivos fornecidos.")
+            st.error("⚠️ Nenhum arquivo XML foi encontrado nos itens enviados.")
 
 st.divider()
-st.info("Dica: Ao arrastar uma pasta, o navegador enviará todos os arquivos contidos nela individualmente para o Streamlit.")
+st.caption("Dica: Você pode selecionar múltiplos arquivos e pastas de uma vez usando o Ctrl (ou Cmd) + A.")
