@@ -7,7 +7,7 @@ import re
 import pandas as pd
 import random
 
-# --- MOTOR DE IDENTIFICAÇÃO (PRECISÃO GARIMPEIRA) ---
+# --- MOTOR DE IDENTIFICAÇÃO ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     resumo_nota = {
@@ -19,11 +19,13 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         content_str = content_bytes.decode('utf-8', errors='ignore')
         match_ch = re.search(r'\d{44}', content_str)
         resumo_nota["Chave"] = match_ch.group(0) if match_ch else ""
+        
         tag_lower = content_str.lower()
         d_type = "NF-e"
         if '<mod>65</mod>' in tag_lower: d_type = "NFC-e"
         elif '<infcte' in tag_lower: d_type = "CT-e"
         elif '<infmdfe' in tag_lower: d_type = "MDF-e"
+        
         status = "NORMAIS"
         if '<procevento' in tag_lower or '<revento' in tag_lower:
             status = "EVENTOS_CANCELAMENTOS"
@@ -32,21 +34,27 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         elif '<inutnfe' in tag_lower or '<procinut' in tag_lower:
             status = "INUTILIZADOS"
             d_type = "Inutilizacoes"
+
         resumo_nota["Tipo"] = d_type
         s_match = re.search(r'<(?:serie|serie)>(\d+)</?:serie|serie>', content_str)
         resumo_nota["Série"] = s_match.group(1) if s_match else "0"
+        
         n_match = re.search(r'<(?:nNF|nCT|nMDF|nNFIni)>(\d+)</(?:nNF|nCT|nMDF|nNFIni)>', content_str)
         resumo_nota["Número"] = int(n_match.group(1)) if n_match else 0
+        
         emit_match = re.search(r'<(?:emit|infInut|detEvento)>.*?<CNPJ>(\d+)</CNPJ>', content_str, re.DOTALL)
         resumo_nota["CNPJ_Emit"] = emit_match.group(1) if emit_match else ""
+
         is_p = False
         if client_cnpj_clean:
             if resumo_nota["CNPJ_Emit"] == client_cnpj_clean: is_p = True
             elif resumo_nota["Chave"] and client_cnpj_clean in resumo_nota["Chave"][6:20]: is_p = True
+
         if is_p:
             resumo_nota["Pasta"] = f"EMITIDOS_CLIENTE/{d_type}/{status}/Serie_{resumo_nota['Série']}"
         else:
             resumo_nota["Pasta"] = f"RECEBIDOS_TERCEIROS/{d_type}"
+            
         return resumo_nota, is_p
     except:
         return resumo_nota, False
@@ -66,9 +74,9 @@ def process_zip_recursively(file_bytes, zf_output, processed_keys, sequencias, r
                         processed_keys.add(ident)
                         zf_output.writestr(f"{resumo['Pasta']}/{info.filename}", content)
                         relatorio_lista.append(resumo)
-                        if is_p and resumo["Número"] > 0 and resumo["Tipo"] != "Inutilizacoes":
-                            doc_base = "NFC-e" if "NFC-e" in resumo["Pasta"] else ("NF-e" if "NF-e" in resumo["Pasta"] else resumo["Tipo"])
-                            s_key = (doc_base, resumo["Série"])
+                        # SÓ ENTRA NA SEQUÊNCIA SE FOR EMITIDO PELO CLIENTE E NÃO FOR INUTILIZAÇÃO/EVENTO
+                        if is_p and resumo["Número"] > 0 and "EMITIDOS" in resumo["Pasta"] and "Serie_" in resumo["Pasta"]:
+                            s_key = (resumo["Tipo"], resumo["Série"])
                             if s_key not in sequencias: sequencias[s_key] = set()
                             sequencias[s_key].add(resumo["Número"])
     except: pass
@@ -82,56 +90,48 @@ def format_cnpj(cnpj):
     if len(cnpj) <= 12: return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:]}"
     return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
 
-# --- DESIGN GOLD MINER (CHAMPAGNE & CAFE) ---
-st.set_page_config(page_title="O Garimpeiro v9.0", layout="wide", page_icon="⛏️")
+# --- DESIGN PREMIUM REFINADO (ESTILO IMAGEM) ---
+st.set_page_config(page_title="O Garimpeiro", layout="wide", page_icon="⛏️")
 
 st.markdown("""
     <style>
-    /* Background Degradê Champagne Real */
-    .stApp {
-        background: linear-gradient(180deg, #FFFFFF 0%, #E2D1C3 100%);
-    }
+    /* Background Champagne Suave */
+    .stApp { background: linear-gradient(180deg, #FFFFFF 0%, #E2D1C3 100%); }
     
-    /* Sidebar Dourada Luxo */
+    /* Sidebar Dourada Integrada */
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #FFFFFF 0%, #D2B48C 100%);
         border-right: 1px solid #C4A484;
     }
     
-    /* Textos em Marrom Café Profundo */
-    h1, h2, h3, p, label, .stMetric label, [data-testid="stMetricValue"], [data-testid="stMarkdownContainer"] p {
+    /* Textos Marrom Café (Onyx) */
+    h1, h2, h3, h4, p, label, .stMetric label, [data-testid="stMetricValue"] {
         color: #3D2B1F !important;
         font-family: 'Playfair Display', serif;
     }
 
-    /* Cards de Métricas arredondados do jogo */
+    /* Cards de Métricas Arredondados */
     [data-testid="stMetric"] {
-        background-color: rgba(255, 255, 255, 0.45);
-        border: 2px solid #D4AF37;
+        background-color: rgba(255, 255, 255, 0.5);
+        border: 1px solid #D4AF37;
         border-radius: 20px;
-        box-shadow: 0 4px 15px rgba(184, 134, 11, 0.1);
+        padding: 15px;
     }
 
-    /* Botão Dourado com Relevo Gold Miner */
+    /* Botão Dourado Elegante */
     div.stButton > button {
         background: linear-gradient(180deg, #F9D976 0%, #D4AF37 100%);
         color: #3D2B1F !important;
-        border: 2px solid #B8860B;
-        padding: 15px 40px;
+        border: 1px solid #B8860B;
+        padding: 12px 40px;
         font-size: 18px;
-        font-weight: 800;
-        border-radius: 40px;
-        box-shadow: 0 5px 0px #8B4513, 0 8px 15px rgba(0,0,0,0.2);
+        font-weight: bold;
+        border-radius: 35px;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
         width: 100%;
-        transition: 0.1s;
     }
     
-    div.stButton > button:active {
-        transform: translateY(4px);
-        box-shadow: 0 1px 0px #8B4513;
-    }
-
-    /* Chuva de Ouro Aleatória (Pepitas e Diamantes) */
+    /* Chuva de Ouro Aleatória */
     .gold-particle {
         position: fixed; top: -50px; z-index: 9999;
         pointer-events: none; animation: fall linear forwards;
@@ -147,6 +147,7 @@ st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 
 if 'confirmado' not in st.session_state: st.session_state['confirmado'] = False
 if 'garimpo_ok' not in st.session_state: st.session_state['garimpo_ok'] = False
+if 'df_faltantes' not in st.session_state: st.session_state['df_faltantes'] = None
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -155,31 +156,31 @@ with st.sidebar:
     cnpj_limpo = "".join(filter(str.isdigit, raw_cnpj))
     
     if len(cnpj_limpo) == 14:
-        st.markdown(f"**Mina Identificada:**\n{format_cnpj(raw_cnpj)}")
-        if st.button("✅ LIBERAR GARIMPO"):
+        st.markdown(f"**Cliente:** {format_cnpj(raw_cnpj)}")
+        if st.button("✅ CONFIRMAR CLIENTE"):
             st.session_state['confirmado'] = True
             st.rerun()
     
     st.divider()
-    if st.button("🗑️ Resetar Tudo"):
+    if st.button("🗑️ Resetar Jazida"):
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.rerun()
 
-# --- ÁREA DE TRABALHO ---
+# --- TRABALHO ---
 if not st.session_state['confirmado']:
-    st.info("💰 Para começar a minerar, identifique o CNPJ no menu lateral e clique em **LIBERAR GARIMPO**.")
+    st.info("👋 Por favor, informe o CNPJ completo no menu lateral e clique em **Confirmar**.")
 else:
     st.markdown(f"### 📦 Depósito de Brutos: {format_cnpj(raw_cnpj)}")
-    uploaded_files = st.file_uploader("Arraste seus XMLs ou ZIPs:", accept_multiple_files=True)
+    uploaded_files = st.file_uploader("Suba seus arquivos XML ou ZIP:", accept_multiple_files=True)
 
     if uploaded_files:
-        if st.button("🌟 INICIAR GRANDE GARIMPO"):
+        if st.button("🌟 INICIAR GARIMPO"):
             processed_keys, sequencias, relatorio_lista = set(), {}, []
             zip_buffer = io.BytesIO()
             
-            with st.status("💎 Minerando pepitas...", expanded=True) as status:
+            with st.status("💎 Minerando...", expanded=True) as status:
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf_final:
-                    for i, file in enumerate(uploaded_files):
+                    for file in uploaded_files:
                         f_bytes = file.read()
                         if file.name.lower().endswith('.zip'):
                             process_zip_recursively(f_bytes, zf_final, processed_keys, sequencias, relatorio_lista, cnpj_limpo)
@@ -190,25 +191,31 @@ else:
                                 processed_keys.add(ident)
                                 zf_final.writestr(f"{resumo['Pasta']}/{file.name}", f_bytes)
                                 relatorio_lista.append(resumo)
-                                if is_p and resumo["Número"] > 0 and resumo["Tipo"] != "Inutilizacoes":
-                                    doc_base = "NFC-e" if "NFC-e" in resumo["Pasta"] else ("NF-e" if "NF-e" in resumo["Pasta"] else resumo["Tipo"])
-                                    s_key = (doc_base, resumo["Série"])
+                                if is_p and resumo["Número"] > 0 and "EMITIDOS" in resumo["Pasta"]:
+                                    s_key = (resumo["Tipo"], resumo["Série"])
                                     if s_key not in sequencias: sequencias[s_key] = set()
                                     sequencias[s_key].add(resumo["Número"])
-                status.update(label="✨ Garimpo concluído com sucesso!", state="complete")
+                
+                # CORREÇÃO DO RELATÓRIO DE BURACOS
+                faltantes_data = []
+                for (tipo, serie), numeros in sequencias.items():
+                    if numeros:
+                        ideal = set(range(min(numeros), max(numeros) + 1))
+                        buracos = sorted(list(ideal - numeros))
+                        for b in buracos:
+                            faltantes_data.append({"Documento": tipo, "Série": serie, "Nº Faltante": b})
+                
+                st.session_state['df_faltantes'] = pd.DataFrame(faltantes_data) if faltantes_data else pd.DataFrame()
+                status.update(label="✅ Garimpo finalizado!", state="complete")
 
             if relatorio_lista:
                 st.session_state.update({'relatorio': relatorio_lista, 'zip_completo': zip_buffer.getvalue(), 'garimpo_ok': True})
                 
-                # CHUVA DE OURO REALISTA (MODO GOLD MINER)
-                icons = ["💰", "🪙", "💎", "🥇", "✨", "⛏️"]
+                # CHUVA DE OURO ESPAÇADA
                 rain_html = ""
-                for i in range(85):
-                    icon = random.choice(icons)
-                    left = random.randint(0, 98)
-                    delay = random.uniform(0, 2.5)
-                    size = random.randint(15, 35)
-                    rain_html += f'<div class="gold-particle" style="left:{left}%; top:-50px; font-size:{size}px; animation-delay:{delay}s; animation-duration:{random.uniform(2.5, 4.5)}s;">{icon}</div>'
+                for i in range(70):
+                    left, delay, icon = random.randint(0, 98), random.uniform(0, 2), random.choice(["💰","💎","✨","🪙"])
+                    rain_html += f'<div class="gold-particle" style="left:{left}%; top:-50px; font-size:{random.randint(15,30)}px; animation-delay:{delay}s; animation-duration:{random.uniform(2,4)}s;">{icon}</div>'
                 st.markdown(rain_html, unsafe_allow_html=True)
 
 # --- RESULTADOS ---
@@ -217,13 +224,24 @@ if st.session_state.get('garimpo_ok'):
     df_res = pd.DataFrame(st.session_state['relatorio'])
     
     c1, c2, c3 = st.columns(3)
-    c1.metric("📦 Volume minerado", f"{len(df_res)} itens")
-    c2.metric("✨ Notas do Cliente", f"{len(df_res[df_res['Pasta'].str.contains('EMITIDOS')])}")
-    c3.metric("⚠️ Buracos", "Analisar relatório")
+    c1.metric("📦 Volume Minerado", f"{len(df_res)}")
+    emitidas = len(df_res[df_res['Pasta'].str.contains("EMITIDOS")])
+    c2.metric("💎 Notas do Cliente", f"{emitidas}")
+    
+    df_f = st.session_state.get('df_faltantes')
+    buracos_qtd = len(df_f) if df_f is not None and not df_f.empty else 0
+    c3.metric("⚠️ Buracos Encontrados", f"{buracos_qtd}")
 
-    st.download_button(
-        label="📥 BAIXAR RESULTADO COMPLETO I .ZIP",
-        data=st.session_state['zip_completo'],
-        file_name=f"garimpo_finalizado.zip",
-        use_container_width=True
-    )
+    col_v1, col_v2 = st.columns(2)
+    with col_v1:
+        st.markdown("#### 📂 Estrutura de Pastas")
+        st.dataframe(df_res['Pasta'].value_counts().reset_index().rename(columns={'Pasta': 'Caminho', 'count': 'Qtd'}), use_container_width=True, hide_index=True)
+    with col_v2:
+        st.markdown("#### ⚠️ Relatório de Faltantes")
+        if df_f is not None and not df_f.empty:
+            st.dataframe(df_f, use_container_width=True, hide_index=True)
+        else:
+            st.success("Sequência de notas 100% completa!")
+
+    st.divider()
+    st.download_button("📥 BAIXAR RESULTADO COMPLETO (.ZIP)", st.session_state['zip_completo'], "garimpeiro_final.zip", use_container_width=True)
