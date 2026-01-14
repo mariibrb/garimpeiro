@@ -5,6 +5,7 @@ import os
 import xml.etree.ElementTree as ET
 import re
 import pandas as pd
+import gc  # Coletor de lixo para limpar a memória
 
 # --- FUNÇÕES DE IDENTIFICAÇÃO ---
 def get_xml_key(root, content_str):
@@ -26,7 +27,7 @@ def identify_xml_info(content_bytes, client_cnpj):
     client_cnpj = "".join(filter(str.isdigit, client_cnpj))
     try:
         content_str = content_bytes.decode('utf-8', errors='ignore')
-        # Limpeza leve de strings para economizar memória
+        # Limpeza para reduzir uso de memória
         clean_content = content_str.replace('xmlns="http://www.portalfiscal.inf.br/nfe"', '')
         clean_content = clean_content.replace('xmlns="http://www.portalfiscal.inf.br/cte"', '')
         clean_content = clean_content.replace('xmlns="http://www.portalfiscal.inf.br/mdfe"', '')
@@ -86,27 +87,27 @@ def process_recursively(file_name, file_bytes, xml_files_dict, client_cnpj, proc
         add_to_dict(file_name, file_bytes, xml_files_dict, client_cnpj, processed_keys, sequencias_proprias)
 
 # --- INTERFACE ---
-st.set_page_config(page_title="Garimpeiro v3.4", page_icon="⛏️", layout="wide")
+st.set_page_config(page_title="Garimpeiro v3.5", page_icon="⛏️", layout="wide")
 st.title("⛏️ Garimpeiro de XML 💎")
 
 with st.sidebar:
     st.header("⚙️ Configurações")
     cnpj_input = st.text_input("CNPJ do Cliente (Só números)", placeholder="Ex: 12345678000199")
     st.divider()
-    st.info("v3.4 - Versão Ultra Estável")
+    st.info("v3.5 - Modo Estabilidade Ativo")
 
-uploaded_files = st.file_uploader("Solte a pasta ou arquivos aqui", accept_multiple_files=True)
+uploaded_files = st.file_uploader("Arraste seus arquivos aqui", accept_multiple_files=True)
 
 if uploaded_files:
     total = len(uploaded_files)
-    if st.button("🚀 INICIAR GARIMPO COMPLETO", use_container_width=True):
+    if st.button("🚀 INICIAR GARIMPO AGORA", use_container_width=True):
         all_xml_data = {}
         processed_keys = set()
         sequencias_proprias = {}
 
-        progress_container = st.container(border=True)
-        with progress_container:
-            st.write("### 📈 Progresso Total")
+        # Painel de Progresso
+        with st.container(border=True):
+            st.write("### 📈 Progresso do Garimpo")
             barra_geral = st.progress(0)
             c1, c2, c3 = st.columns(3)
             m_perc = c1.empty()
@@ -114,23 +115,30 @@ if uploaded_files:
             m_rest = c3.empty()
 
         for i, file in enumerate(uploaded_files):
+            # Processamento
             process_recursively(file.name, file.read(), all_xml_data, cnpj_input, processed_keys, sequencias_proprias)
+            
+            # Atualização visual
             prog = (i + 1) / total
             barra_geral.progress(prog)
             m_perc.metric("Status", f"{int(prog * 100)}%")
             m_qtd.metric("Lidos", f"{i+1} de {total}")
             m_rest.metric("Faltam", total - (i+1))
+            
+            # Limpeza periódica de memória para evitar o erro "Oh No"
+            if i % 50 == 0:
+                gc.collect()
 
         if all_xml_data:
-            st.success(f"✨ Concluído! {len(all_xml_data)} XMLs únicos encontrados.")
+            st.success(f"✨ Garimpo Concluído! {len(all_xml_data)} XMLs únicos.")
             
-            # 1. INVENTÁRIO (TABELA DETALHADA)
+            # 1. INVENTÁRIO (O QUE FOI ACHADO)
             st.write("### 📊 Inventário do Tesouro")
             resumo = {}
             for path in all_xml_data.keys():
                 cat = " - ".join(path.split('/')[:-1]).replace('_', ' ')
                 resumo[cat] = resumo.get(cat, 0) + 1
-            st.table(pd.DataFrame(list(resumo.items()), columns=['Categoria', 'Quantidade']))
+            st.table(pd.DataFrame(list(resumo.items()), columns=['Categoria / Série', 'Quantidade']))
 
             # 2. RELATÓRIO DE FALTANTES
             st.divider()
@@ -145,12 +153,11 @@ if uploaded_files:
             if faltantes_list:
                 df_f = pd.DataFrame(faltantes_list)
                 st.dataframe(df_f, use_container_width=True)
-                csv_f = df_f.to_csv(index=False).encode('utf-8')
-                st.download_button("📥 Baixar Lista de Faltantes (CSV)", csv_f, "faltantes.csv")
+                st.download_button("📥 Baixar Lista de Faltantes (CSV)", df_f.to_csv(index=False).encode('utf-8'), "faltantes.csv")
             else:
                 st.info("✅ Nenhuma quebra de sequência detectada.")
 
-            # GERADOR DE ZIP OTIMIZADO
+            # GERADOR DE ZIP (FINAL)
             zip_out = io.BytesIO()
             with zipfile.ZipFile(zip_out, "w", zipfile.ZIP_DEFLATED) as zf:
                 for path, data in all_xml_data.items():
@@ -158,8 +165,8 @@ if uploaded_files:
                 if faltantes_list:
                     zf.writestr("RELATORIOS/faltantes.csv", pd.DataFrame(faltantes_list).to_csv(index=False))
             
-            st.download_button("📥 BAIXAR TUDO ORGANIZADO (.ZIP)", zip_out.getvalue(), "garimpo_v3_4.zip", use_container_width=True)
+            st.download_button("📥 BAIXAR TUDO ORGANIZADO (.ZIP)", zip_out.getvalue(), "garimpo_v3_5.zip", use_container_width=True)
             
-            # Limpa memória explicitamente
-            del all_xml_data
-            del processed_keys
+            # Limpeza final
+            all_xml_data.clear()
+            gc.collect()
