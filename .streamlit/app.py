@@ -7,7 +7,7 @@ import re
 import pandas as pd
 import gc
 
-# --- MOTOR DE IDENTIFICAÇÃO (MANTIDO) ---
+# --- MOTOR DE IDENTIFICAÇÃO (PRECISÃO TOTAL) ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     resumo_nota = {
@@ -90,76 +90,89 @@ def format_cnpj(cnpj):
     if len(cnpj) <= 12: return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:]}"
     return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
 
-# --- DESIGN PREMIUM CONFORME A IMAGEM ---
-st.set_page_config(page_title="O Garimpeiro", layout="wide", page_icon="⛏️")
+# --- DESIGN ROYAL GOLD (MARROM & DOURADO) ---
+st.set_page_config(page_title="O Garimpeiro v8.5", layout="wide", page_icon="💎")
 
 st.markdown("""
     <style>
-    /* Degradê Champagne/Bronze no fundo e sidebar */
+    /* Degradê de fundo champagne e Sidebar Dourada */
     .stApp, [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #FFFFFF 0%, #D2B48C 100%);
     }
     
-    [data-testid="stSidebar"] * { color: #5D4037 !important; }
+    /* Textos em Marrom Escuro (Café/Onyx) */
+    h1, h2, h3, h4, p, label, [data-testid="stMetricValue"], [data-testid="stMarkdownContainer"] p {
+        color: #3D2B1F !important;
+        font-family: 'Playfair Display', serif;
+    }
 
-    h1 { color: #5D4037 !important; font-family: 'Playfair Display', serif; font-weight: 800; text-align: center; }
-
-    /* Botões Dourados */
+    /* Botão Dourado Premium */
     div.stButton > button:first-child {
         background: linear-gradient(180deg, #E6BE8A 0%, #B8860B 100%);
-        color: #3D2B1F !important; border: 1px solid #8B4513;
-        padding: 10px 30px; font-size: 18px; font-weight: bold; border-radius: 25px;
+        color: #3D2B1F !important;
+        border: 1px solid #5D4037;
+        padding: 12px 30px;
+        font-size: 18px;
+        font-weight: bold;
+        border-radius: 30px;
         box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+        width: 100%;
     }
     
-    /* Efeito Chuva de Ouro */
-    .gold-item {
-        position: fixed; top: -50px; z-index: 9999;
-        pointer-events: none; animation: drop 3s linear forwards;
-        font-size: 32px;
+    /* Chuva de Ouro (Pepitas) Espaçadas */
+    .gold-particle {
+        position: fixed;
+        background: radial-gradient(circle, #FFD700 0%, #B8860B 100%);
+        border-radius: 50% 20% 50% 20%;
+        box-shadow: 0 0 12px #FFD700;
+        z-index: 9999;
+        pointer-events: none;
+        animation: fall linear forwards;
     }
-    @keyframes drop {
-        0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+    @keyframes fall {
+        0% { transform: translateY(-100px) rotate(0deg); opacity: 1; }
         100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
     }
     </style>
     """, unsafe_allow_html=True)
 
+# --- CABEÇALHO ---
 st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #5D4037; font-size: 1.1rem;'><b>Extraindo diamantes dos seus arquivos fiscais.</b></p>", unsafe_allow_html=True)
 
 if 'garimpo_ok' not in st.session_state: st.session_state['garimpo_ok'] = False
 if 'cnpj_confirmado' not in st.session_state: st.session_state['cnpj_confirmado'] = False
 
-# --- SIDEBAR DOURADINHA ---
+# --- SIDEBAR DOURADA ---
 with st.sidebar:
-    st.markdown("### 🏺 Identificação")
+    st.markdown("### 🏺 Identificação da Mina")
     raw_cnpj = st.text_input("CNPJ do Cliente", placeholder="00.000.000/0001-00")
     cnpj_limpo = "".join(filter(str.isdigit, raw_cnpj))
     
     if len(cnpj_limpo) == 14:
         st.markdown(f"**Formatado:** `{format_cnpj(raw_cnpj)}`")
-        if st.button("✅ CONFIRMAR CNPJ"):
+        if st.button("✅ CONFIRMAR CLIENTE"):
             st.session_state['cnpj_confirmado'] = True
             st.rerun()
     
     st.divider()
-    if st.button("🗑️ Resetar Jazida"):
+    if st.button("🗑️ Resetar Sistema"):
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.rerun()
 
 # --- ÁREA DE TRABALHO ---
 if not st.session_state['cnpj_confirmado']:
-    st.info("👋 Digite o CNPJ completo no menu lateral e clique em **Confirmar CNPJ** para começar.")
+    st.info("👋 Por favor, informe o CNPJ completo no menu lateral e confirme para começar.")
 else:
     st.markdown(f"### 📥 Depósito de Arquivos: {format_cnpj(raw_cnpj)}")
-    uploaded_files = st.file_uploader("Arraste aqui seus arquivos XML ou ZIP:", accept_multiple_files=True)
+    uploaded_files = st.file_uploader("Suba seus XMLs ou arquivos ZIP aqui:", accept_multiple_files=True)
 
     if uploaded_files:
         if st.button("🚀 INICIAR GARIMPO"):
             processed_keys, sequencias, relatorio_lista = set(), {}, []
             zip_buffer = io.BytesIO()
             
-            with st.status("💎 Minerando...", expanded=True) as status:
+            with st.status("💎 Analisando camadas de dados...", expanded=True) as status:
                 total = len(uploaded_files)
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf_final:
                     for i, file in enumerate(uploaded_files):
@@ -179,6 +192,7 @@ else:
                                     if s_key not in sequencias: sequencias[s_key] = set()
                                     sequencias[s_key].add(resumo["Número"])
                 
+                # Relatório de Faltantes
                 faltantes_lista = []
                 for (t, s), nums in sequencias.items():
                     if nums:
@@ -186,20 +200,28 @@ else:
                         for b in sorted(list(ideal - nums)):
                             faltantes_lista.append({"Tipo": t, "Série": s, "Nº Faltante": b})
                 st.session_state['df_faltantes'] = pd.DataFrame(faltantes_lista) if faltantes_lista else None
-                status.update(label="✅ Garimpo finalizado!", state="complete")
+                status.update(label="✨ Tesouro lapidado e organizado!", state="complete")
 
             if relatorio_lista:
                 st.session_state.update({'relatorio': relatorio_lista, 'zip_completo': zip_buffer.getvalue(), 'garimpo_ok': True})
-                # CHUVA DE OURO
-                icons = ["💰", "🪙", "💎", "🥇", "✨"]
-                rain_html = "".join([f'<div class="gold-item" style="left:{i*2}%; animation-delay:{i*0.1}s;">{icons[i%len(icons)]}</div>' for i in range(50)])
-                st.markdown(rain_html, unsafe_allow_html=True)
+                
+                # --- CHUVA DE OURO ESPAÇADA (PÓS-GARIMPO) ---
+                import random
+                pepita_html = ""
+                for i in range(60):
+                    left = random.randint(0, 95)
+                    delay = random.uniform(0, 2)
+                    duration = random.uniform(2, 4)
+                    size = random.randint(10, 22)
+                    pepita_html += f'<div class="gold-particle" style="left:{left}%; animation-delay:{delay}s; animation-duration:{duration}s; width:{size}px; height:{size}px;"></div>'
+                st.markdown(pepita_html, unsafe_allow_html=True)
 
 if st.session_state.get('garimpo_ok'):
     st.divider()
     df_res = pd.DataFrame(st.session_state['relatorio'])
     c1, c2, c3 = st.columns(3)
-    c1.metric("📦 Total Extraído", f"{len(df_res)}")
+    c1.metric("📦 Volume Total", f"{len(df_res)} itens")
     c2.metric("💎 Notas do Cliente", f"{len(df_res[df_res['Pasta'].str.contains('EMITIDOS')])}")
     c3.metric("⚠️ Buracos", f"{len(st.session_state['df_faltantes']) if st.session_state['df_faltantes'] is not None else 0}")
-    st.download_button("📥 BAIXAR RESULTADO COMPLETO (.ZIP)", st.session_state['zip_completo'], "garimpo_final.zip", use_container_width=True)
+    
+    st.download_button("📥 RECOLHER JAZIDA COMPLETA (.ZIP)", st.session_state['zip_completo'], "garimpeiro_v8_5.zip", use_container_width=True)
