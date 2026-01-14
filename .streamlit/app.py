@@ -90,40 +90,45 @@ def format_cnpj(cnpj):
     if len(cnpj) <= 12: return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:]}"
     return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
 
-# --- DESIGN LÚDICO PREMIUM AJUSTADO ---
-st.set_page_config(page_title="Garimpeiro Gold v12", layout="wide", page_icon="⛏️")
+# --- DESIGN LÚDICO PREMIUM (SIDEBAR CLARO E LEITURA FÁCIL) ---
+st.set_page_config(page_title="Garimpeiro Gold v14", layout="wide", page_icon="⛏️")
 
 st.markdown("""
     <style>
     /* Fundo Champagne */
     .stApp { background-color: #f7f3f0; }
     
-    /* Sidebar Café Profundo com Texto Dourado Legível */
+    /* Sidebar Marrom Claro (Efeito Madeira/Latte) */
     [data-testid="stSidebar"] {
-        background-color: #2b1e16 !important;
-        border-right: 3px solid #d4af37;
+        background: linear-gradient(180deg, #EADBC8 0%, #D2B48C 100%) !important;
+        border-right: 3px solid #b8860b;
     }
-    [data-testid="stSidebar"] * { color: #f4e4bc !important; font-weight: 800 !important; }
+    
+    /* Texto do Sidebar: Marrom Café Escuro para Contraste */
+    [data-testid="stSidebar"] * { 
+        color: #2b1e16 !important; 
+        font-weight: 800 !important; 
+    }
 
-    /* Estilo dos Botões do SIDEBAR (Correção de Leitura) */
+    /* Botões do Sidebar (Dourado com Texto Escuro Legível) */
     [data-testid="stSidebar"] div.stButton > button {
-        background: #d4af37 !important;
-        color: #2b1e16 !important; /* Texto escuro no botão claro para ler melhor */
-        border: 2px solid #f4e4bc !important;
+        background: linear-gradient(180deg, #fcf6ba 0%, #d4af37 100%) !important;
+        color: #2b1e16 !important; /* TEXTO ESCURO NO BOTÃO DOURADO */
+        border: 2px solid #8a6d3b !important;
         font-weight: 900 !important;
         text-transform: uppercase;
     }
 
-    /* Títulos e Tipografia Geral */
+    /* Títulos Gerais */
     h1, h2, h3, h4, p, label, .stMetric label { 
         color: #2b1e16 !important; 
         font-family: 'Playfair Display', serif;
         font-weight: 800 !important;
     }
     
-    h1 { font-size: 3.5rem !important; text-shadow: 2px 2px 0px #fff; letter-spacing: -1px; }
+    h1 { font-size: 3.5rem !important; text-shadow: 2px 2px 0px #fff; }
 
-    /* Cards de Métricas Estilizados (Efeito Ouro) */
+    /* Cards de Métricas */
     [data-testid="stMetric"] {
         background: linear-gradient(135deg, #ffffff 0%, #fff9e6 100%);
         border: 2px solid #d4af37;
@@ -133,7 +138,7 @@ st.markdown("""
     }
     [data-testid="stMetricValue"] { color: #a67c00 !important; font-weight: 900 !important; font-size: 2.5rem !important; }
 
-    /* Botão Principal da Área de Trabalho */
+    /* Botão Principal Grande */
     div.stButton > button:first-child {
         background: linear-gradient(180deg, #fcf6ba 0%, #d4af37 40%, #aa771c 100%);
         color: #2b1e16 !important;
@@ -145,15 +150,9 @@ st.markdown("""
         box-shadow: 0 6px 20px rgba(0,0,0,0.25);
         width: 100%;
         text-transform: uppercase;
-        letter-spacing: 1px;
-    }
-    
-    div.stButton > button:hover {
-        transform: scale(1.02) translateY(-2px);
-        box-shadow: 0 10px 25px rgba(212, 175, 55, 0.5);
     }
 
-    /* Chuva de Ouro Aleatória */
+    /* Chuva de Ouro */
     .gold-item { position: fixed; top: -50px; z-index: 9999; pointer-events: none; animation: drop 3.5s linear forwards; }
     @keyframes drop { 0% { transform: translateY(0) rotate(0deg); opacity: 1; } 100% { transform: translateY(110vh) rotate(720deg); opacity: 0; } }
     </style>
@@ -184,14 +183,14 @@ if not st.session_state['confirmado']:
     st.info("💰 Para iniciar, identifique o CNPJ no menu lateral e clique em **LIBERAR OPERAÇÃO**.")
 else:
     st.markdown(f"### 📦 JAZIDA DE ARQUIVOS: {format_cnpj(raw_cnpj)}")
-    uploaded_files = st.file_uploader("Arraste seus XMLs ou ZIPs para processamento:", accept_multiple_files=True)
+    uploaded_files = st.file_uploader("Arraste seus XMLs ou ZIPs aqui:", accept_multiple_files=True)
 
     if uploaded_files:
         if st.button("🚀 INICIAR GRANDE GARIMPO"):
             processed_keys, sequencias, relatorio_lista = set(), {}, []
             zip_buffer = io.BytesIO()
             
-            with st.status("⛏️ Minerando dados...", expanded=True) as status:
+            with st.status("⛏️ Minerando...", expanded=True) as status:
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf_final:
                     for i, file in enumerate(uploaded_files):
                         f_bytes = file.read()
@@ -223,7 +222,7 @@ else:
 
             if relatorio_lista:
                 st.session_state.update({'relatorio': relatorio_lista, 'zip_completo': zip_buffer.getvalue(), 'garimpo_ok': True})
-                # CHUVA DE OURO ESPAÇADA
+                # CHUVA DE OURO
                 icons = ["💰", "🪙", "💎", "🥇", "✨"]
                 rain_html = "".join([f'<div class="gold-item" style="left:{random.randint(0,95)}%; animation-delay:{random.uniform(0,2.5)}s; font-size:{random.randint(25,45)}px;">{random.choice(icons)}</div>' for i in range(70)])
                 st.markdown(rain_html, unsafe_allow_html=True)
@@ -232,7 +231,6 @@ else:
 if st.session_state.get('garimpo_ok'):
     st.divider()
     df_res = pd.DataFrame(st.session_state['relatorio'])
-    
     col1, col2, col3 = st.columns(3)
     col1.metric("📦 VOLUME MINERADO", f"{len(df_res)}")
     emitidas = len(df_res[df_res['Pasta'].str.contains("EMITIDOS")])
@@ -247,7 +245,7 @@ if st.session_state.get('garimpo_ok'):
     if df_f is not None and not df_f.empty:
         st.dataframe(df_f, use_container_width=True, hide_index=True)
     else:
-        st.success("Mina íntegra! Sequência 100% completa.")
+        st.success("Mina íntegra! Sequência completa.")
 
     st.divider()
-    st.download_button("📥 BAIXAR TESOURO (.ZIP)", st.session_state['zip_completo'], "garimpo_v12.zip", use_container_width=True)
+    st.download_button("📥 BAIXAR TESOURO (.ZIP)", st.session_state['zip_completo'], "garimpo_final.zip", use_container_width=True)
