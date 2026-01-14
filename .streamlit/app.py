@@ -90,60 +90,71 @@ def format_cnpj(cnpj):
     if len(cnpj) <= 12: return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:]}"
     return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
 
-# --- DESIGN LÚDICO PREMIUM ---
-st.set_page_config(page_title="Garimpeiro Gold", layout="wide", page_icon="⛏️")
+# --- DESIGN LÚDICO PREMIUM AJUSTADO ---
+st.set_page_config(page_title="Garimpeiro Gold v12", layout="wide", page_icon="⛏️")
 
 st.markdown("""
     <style>
-    /* Fundo Champagne Suave */
+    /* Fundo Champagne */
     .stApp { background-color: #f7f3f0; }
     
-    /* Sidebar Café Profundo */
+    /* Sidebar Café Profundo com Texto Dourado Legível */
     [data-testid="stSidebar"] {
         background-color: #2b1e16 !important;
-        border-right: 2px solid #d4af37;
+        border-right: 3px solid #d4af37;
     }
-    [data-testid="stSidebar"] * { color: #d4af37 !important; font-weight: bold !important; }
+    [data-testid="stSidebar"] * { color: #f4e4bc !important; font-weight: 800 !important; }
 
-    /* Tipografia em Negrito e Marrom Café */
+    /* Estilo dos Botões do SIDEBAR (Correção de Leitura) */
+    [data-testid="stSidebar"] div.stButton > button {
+        background: #d4af37 !important;
+        color: #2b1e16 !important; /* Texto escuro no botão claro para ler melhor */
+        border: 2px solid #f4e4bc !important;
+        font-weight: 900 !important;
+        text-transform: uppercase;
+    }
+
+    /* Títulos e Tipografia Geral */
     h1, h2, h3, h4, p, label, .stMetric label { 
         color: #2b1e16 !important; 
         font-family: 'Playfair Display', serif;
         font-weight: 800 !important;
     }
     
-    h1 { font-size: 3rem !important; text-shadow: 1px 1px 0px #fff; }
+    h1 { font-size: 3.5rem !important; text-shadow: 2px 2px 0px #fff; letter-spacing: -1px; }
 
-    /* Cards de Métricas Estilizados */
+    /* Cards de Métricas Estilizados (Efeito Ouro) */
     [data-testid="stMetric"] {
-        background: linear-gradient(135deg, #ffffff 0%, #fcf6ba 100%);
+        background: linear-gradient(135deg, #ffffff 0%, #fff9e6 100%);
         border: 2px solid #d4af37;
         border-radius: 20px;
-        padding: 20px;
-        box-shadow: 5px 5px 15px rgba(0,0,0,0.1);
+        padding: 25px;
+        box-shadow: 8px 8px 20px rgba(0,0,0,0.12);
     }
-    [data-testid="stMetricValue"] { color: #8a6d3b !important; font-weight: 900 !important; }
+    [data-testid="stMetricValue"] { color: #a67c00 !important; font-weight: 900 !important; font-size: 2.5rem !important; }
 
-    /* Botão Dourado Metálico */
-    div.stButton > button {
+    /* Botão Principal da Área de Trabalho */
+    div.stButton > button:first-child {
         background: linear-gradient(180deg, #fcf6ba 0%, #d4af37 40%, #aa771c 100%);
         color: #2b1e16 !important;
-        border: 1px solid #8a6d3b;
-        padding: 15px 40px;
-        font-size: 20px;
+        border: 2px solid #8a6d3b;
+        padding: 20px 40px;
+        font-size: 22px;
         font-weight: 900 !important;
         border-radius: 50px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+        box-shadow: 0 6px 20px rgba(0,0,0,0.25);
         width: 100%;
         text-transform: uppercase;
+        letter-spacing: 1px;
     }
+    
     div.stButton > button:hover {
-        transform: scale(1.02);
-        box-shadow: 0 6px 20px rgba(212, 175, 55, 0.4);
+        transform: scale(1.02) translateY(-2px);
+        box-shadow: 0 10px 25px rgba(212, 175, 55, 0.5);
     }
 
-    /* Chuva de Ouro Lúdica */
-    .gold-item { position: fixed; top: -50px; z-index: 9999; pointer-events: none; animation: drop 3s linear forwards; }
+    /* Chuva de Ouro Aleatória */
+    .gold-item { position: fixed; top: -50px; z-index: 9999; pointer-events: none; animation: drop 3.5s linear forwards; }
     @keyframes drop { 0% { transform: translateY(0) rotate(0deg); opacity: 1; } 100% { transform: translateY(110vh) rotate(720deg); opacity: 0; } }
     </style>
     """, unsafe_allow_html=True)
@@ -155,32 +166,32 @@ if 'confirmado' not in st.session_state: st.session_state['confirmado'] = False
 
 # --- SIDEBAR ---
 with st.sidebar:
-    st.markdown("### 🏆 MINA DE OURO")
-    raw_cnpj = st.text_input("CNPJ DO CLIENTE", placeholder="Apenas números")
+    st.markdown("### 🏆 CONTROLE DA MINA")
+    raw_cnpj = st.text_input("CNPJ DO CLIENTE", placeholder="Digite os números")
     cnpj_limpo = "".join(filter(str.isdigit, raw_cnpj))
     if len(cnpj_limpo) == 14:
-        st.markdown(f"**CLIENTE:**\n`{format_cnpj(raw_cnpj)}`")
-        if st.button("✅ LIBERAR MAQUINÁRIO"):
+        st.markdown(f"**CLIENTE ATIVO:**\n`{format_cnpj(raw_cnpj)}`")
+        if st.button("✅ LIBERAR OPERAÇÃO"):
             st.session_state['confirmado'] = True
             st.rerun()
     st.divider()
-    if st.button("🗑️ RESETAR JAZIDA"):
+    if st.button("🗑️ RESETAR SISTEMA"):
         for key in list(st.session_state.keys()): del st.session_state[key]
         st.rerun()
 
 # --- ÁREA DE TRABALHO ---
 if not st.session_state['confirmado']:
-    st.info("💰 Identifique o CNPJ completo no menu lateral e clique em **LIBERAR MAQUINÁRIO**.")
+    st.info("💰 Para iniciar, identifique o CNPJ no menu lateral e clique em **LIBERAR OPERAÇÃO**.")
 else:
-    st.markdown(f"### 📦 DEPÓSITO DE ARQUIVOS: {format_cnpj(raw_cnpj)}")
-    uploaded_files = st.file_uploader("Suba seus XMLs ou arquivos ZIP aqui:", accept_multiple_files=True)
+    st.markdown(f"### 📦 JAZIDA DE ARQUIVOS: {format_cnpj(raw_cnpj)}")
+    uploaded_files = st.file_uploader("Arraste seus XMLs ou ZIPs para processamento:", accept_multiple_files=True)
 
     if uploaded_files:
         if st.button("🚀 INICIAR GRANDE GARIMPO"):
             processed_keys, sequencias, relatorio_lista = set(), {}, []
             zip_buffer = io.BytesIO()
             
-            with st.status("⛏️ Lavando o cascalho...", expanded=True) as status:
+            with st.status("⛏️ Minerando dados...", expanded=True) as status:
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf_final:
                     for i, file in enumerate(uploaded_files):
                         f_bytes = file.read()
@@ -199,7 +210,6 @@ else:
                                         if s_key not in sequencias: sequencias[s_key] = set()
                                         sequencias[s_key].add(resumo["Número"])
                 
-                # CÁLCULO DE BURACOS
                 faltantes_data = []
                 for (tipo, serie), numeros in sequencias.items():
                     if len(numeros) > 1:
@@ -209,13 +219,13 @@ else:
                             faltantes_data.append({"Documento": tipo, "Série": serie, "Nº Faltante": b})
                 
                 st.session_state['df_faltantes'] = pd.DataFrame(faltantes_data) if faltantes_data else pd.DataFrame()
-                status.update(label="💰 Garimpo finalizado!", state="complete")
+                status.update(label="💰 Garimpo Concluído!", state="complete")
 
             if relatorio_lista:
                 st.session_state.update({'relatorio': relatorio_lista, 'zip_completo': zip_buffer.getvalue(), 'garimpo_ok': True})
-                # CHUVA DE OURO REALISTA
+                # CHUVA DE OURO ESPAÇADA
                 icons = ["💰", "🪙", "💎", "🥇", "✨"]
-                rain_html = "".join([f'<div class="gold-item" style="left:{random.randint(0,95)}%; animation-delay:{random.uniform(0,2)}s; font-size:{random.randint(20,40)}px;">{random.choice(icons)}</div>' for i in range(60)])
+                rain_html = "".join([f'<div class="gold-item" style="left:{random.randint(0,95)}%; animation-delay:{random.uniform(0,2.5)}s; font-size:{random.randint(25,45)}px;">{random.choice(icons)}</div>' for i in range(70)])
                 st.markdown(rain_html, unsafe_allow_html=True)
 
 # --- RESULTADOS ---
@@ -224,20 +234,20 @@ if st.session_state.get('garimpo_ok'):
     df_res = pd.DataFrame(st.session_state['relatorio'])
     
     col1, col2, col3 = st.columns(3)
-    col1.metric("📦 TOTAL MINERADO", f"{len(df_res)}")
+    col1.metric("📦 VOLUME MINERADO", f"{len(df_res)}")
     emitidas = len(df_res[df_res['Pasta'].str.contains("EMITIDOS")])
     col2.metric("✨ NOTAS DO CLIENTE", f"{emitidas}")
     
     df_f = st.session_state.get('df_faltantes')
     buracos_qtd = len(df_f) if df_f is not None and not df_f.empty else 0
-    col3.metric("⚠️ BURACOS ENCONTRADOS", f"{buracos_qtd}")
+    col3.metric("⚠️ BURACOS NA MINA", f"{buracos_qtd}")
 
     st.markdown("---")
     st.markdown("### ⚠️ RELATÓRIO DE NOTAS FALTANTES")
     if df_f is not None and not df_f.empty:
         st.dataframe(df_f, use_container_width=True, hide_index=True)
     else:
-        st.success("Mina íntegra! Sequência completa.")
+        st.success("Mina íntegra! Sequência 100% completa.")
 
     st.divider()
-    st.download_button("📥 BAIXAR TESOURO COMPLETO (.ZIP)", st.session_state['zip_completo'], "garimpo_v11.zip", use_container_width=True)
+    st.download_button("📥 BAIXAR TESOURO (.ZIP)", st.session_state['zip_completo'], "garimpo_v12.zip", use_container_width=True)
