@@ -7,7 +7,7 @@ import re
 import pandas as pd
 import random
 
-# --- MOTOR DE IDENTIFICAÇÃO (MANTIDO) ---
+# --- MOTOR DE IDENTIFICAÇÃO ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     resumo_nota = {
@@ -82,50 +82,24 @@ def format_cnpj(cnpj):
     if len(cnpj) <= 12: return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:]}"
     return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
 
-# --- DESIGN PREMIUM REFINADO E BLINDAGEM RADICAL ---
+# --- DESIGN PREMIUM E BLINDAGEM AGRESSIVA ---
 st.set_page_config(page_title="O Garimpeiro", layout="wide", page_icon="⛏️")
 
 st.markdown("""
     <style>
-    /* 1. BLINDAGEM RADICAL: ESCONDE TUDO MESMO */
     #MainMenu {visibility: hidden !important;}
     footer {visibility: hidden !important;}
     header {visibility: hidden !important;}
-    
-    /* Esconde especificamente o botão de Deploy/GitHub no canto superior */
-    .stAppDeployButton {
-        display: none !important;
-    }
-    
-    /* Remove o ícone do GitHub que aparece em apps públicos/privados */
-    .st-emotion-cache-zq5wmm, .st-emotion-cache-15ec60f, .st-emotion-cache-1ky8h65 {
-        display: none !important;
-    }
-
-    /* 2. DESIGN ESTÉTICO MANTIDO */
+    .stDeployButton, .stAppDeployButton { display: none !important; visibility: hidden !important; }
     .stApp { background-color: #f7f3f0; }
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #EADBC8 0%, #D2B48C 100%) !important;
-        border-right: 3px solid #b8860b;
-    }
+    [data-testid="stSidebar"] { background: linear-gradient(180deg, #EADBC8 0%, #D2B48C 100%) !important; border-right: 3px solid #b8860b; }
     [data-testid="stSidebar"] * { color: #2b1e16 !important; font-weight: 800 !important; }
-    [data-testid="stSidebar"] div.stButton > button {
-        background: linear-gradient(180deg, #fcf6ba 0%, #d4af37 100%) !important;
-        color: #2b1e16 !important; border: 2px solid #8a6d3b !important; font-weight: 900 !important;
-    }
+    [data-testid="stSidebar"] div.stButton > button { background: linear-gradient(180deg, #fcf6ba 0%, #d4af37 100%) !important; color: #2b1e16 !important; border: 2px solid #8a6d3b !important; font-weight: 900 !important; }
     h1, h2, h3, h4, p, label, .stMetric label { color: #2b1e16 !important; font-family: 'Playfair Display', serif; font-weight: 800 !important; }
     h1 { font-size: 3.5rem !important; text-shadow: 2px 2px 0px #fff; }
-    [data-testid="stMetric"] {
-        background: linear-gradient(135deg, #ffffff 0%, #fff9e6 100%);
-        border: 2px solid #d4af37; border-radius: 20px; padding: 25px; box-shadow: 8px 8px 20px rgba(0,0,0,0.12);
-    }
+    [data-testid="stMetric"] { background: linear-gradient(135deg, #ffffff 0%, #fff9e6 100%); border: 2px solid #d4af37; border-radius: 20px; padding: 25px; box-shadow: 8px 8px 20px rgba(0,0,0,0.12); }
     [data-testid="stMetricValue"] { color: #a67c00 !important; font-weight: 900 !important; font-size: 2.5rem !important; }
-    div.stButton > button:first-child {
-        background: linear-gradient(180deg, #fcf6ba 0%, #d4af37 40%, #aa771c 100%);
-        color: #2b1e16 !important; border: 2px solid #8a6d3b; padding: 20px 40px;
-        font-size: 22px; font-weight: 900 !important; border-radius: 50px; box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-        width: 100%; text-transform: uppercase;
-    }
+    div.stButton > button:first-child { background: linear-gradient(180deg, #fcf6ba 0%, #d4af37 40%, #aa771c 100%); color: #2b1e16 !important; border: 2px solid #8a6d3b; padding: 20px 40px; font-size: 22px; font-weight: 900 !important; border-radius: 50px; box-shadow: 0 6px 20px rgba(0,0,0,0.25); width: 100%; text-transform: uppercase; }
     .gold-item { position: fixed; top: -50px; z-index: 9999; pointer-events: none; animation: drop 3.5s linear forwards; }
     @keyframes drop { 0% { transform: translateY(0) rotate(0deg); opacity: 1; } 100% { transform: translateY(110vh) rotate(720deg); opacity: 0; } }
     </style>
@@ -159,10 +133,9 @@ else:
     uploaded_files = st.file_uploader("Arraste seus XMLs ou ZIPs aqui:", accept_multiple_files=True)
 
     if uploaded_files:
-        if st.button("🚀 INICIAR GARIMPO"):
+        if st.button("🚀 INICIAR GRANDE GARIMPO"):
             processed_keys, sequencias, relatorio_lista = set(), {}, []
             zip_buffer = io.BytesIO()
-            
             with st.status("⛏️ Minerando...", expanded=True) as status:
                 with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf_final:
                     for i, file in enumerate(uploaded_files):
@@ -182,6 +155,9 @@ else:
                                         if s_key not in sequencias: sequencias[s_key] = set()
                                         sequencias[s_key].add(resumo["Número"])
                 
+                status.update(label="💰 Garimpo Concluído!", state="complete")
+                
+                # Relatório de Faltantes
                 faltantes_data = []
                 for (tipo, serie), numeros in sequencias.items():
                     if len(numeros) > 1:
@@ -189,12 +165,21 @@ else:
                         buracos = sorted(list(ideal - numeros))
                         for b in buracos:
                             faltantes_data.append({"Documento": tipo, "Série": serie, "Nº Faltante": b})
-                
                 st.session_state['df_faltantes'] = pd.DataFrame(faltantes_data) if faltantes_data else pd.DataFrame()
-                status.update(label="💰 Garimpo Concluído!", state="complete")
 
             if relatorio_lista:
-                st.session_state.update({'relatorio': relatorio_lista, 'zip_completo': zip_buffer.getvalue(), 'garimpo_ok': True})
+                # Criar também a Extração Bruta (Tudo em uma pasta só)
+                bruto_buffer = io.BytesIO()
+                with zipfile.ZipFile(bruto_buffer, "w", zipfile.ZIP_DEFLATED) as zf_bruto:
+                    for item in relatorio_lista:
+                        zf_bruto.writestr(f"COLECAO_TOTAL/{item['Arquivo']}", item['Conteúdo'])
+                
+                st.session_state.update({
+                    'relatorio': relatorio_lista, 
+                    'zip_completo': zip_buffer.getvalue(), 
+                    'zip_bruto': bruto_buffer.getvalue(),
+                    'garimpo_ok': True
+                })
                 icons = ["💰", "🪙", "💎", "🥇", "✨"]
                 rain_html = "".join([f'<div class="gold-item" style="left:{random.randint(0,95)}%; animation-delay:{random.uniform(0,2.5)}s; font-size:{random.randint(25,45)}px;">{random.choice(icons)}</div>' for i in range(70)])
                 st.markdown(rain_html, unsafe_allow_html=True)
@@ -210,14 +195,14 @@ if st.session_state.get('garimpo_ok'):
     df_f = st.session_state.get('df_faltantes')
     col3.metric("⚠️ BURACOS NA MINA", f"{len(df_f) if df_f is not None else 0}")
 
-    st.markdown("### 🔍 Peneira de Notas (Busca Individual)")
-    busca = st.text_input("Digite o Número da Nota ou a Chave:", placeholder="Ex: 1234")
+    st.markdown("### 🔍 Peneira de Notas")
+    busca = st.text_input("Número ou Chave:", placeholder="Ex: 1234")
     if busca:
         filtro = df_res[df_res['Número'].astype(str).str.contains(busca) | df_res['Chave'].str.contains(busca)]
         if not filtro.empty:
             for _, row in filtro.iterrows():
                 st.download_button(f"📥 Baixar XML: {row['Tipo']} - Nº {row['Número']}", row['Conteúdo'], file_name=row['Arquivo'])
-        else: st.warning("Nenhuma pepita encontrada.")
+        else: st.warning("Não encontrado.")
 
     st.markdown("---")
     st.markdown("### ⚠️ RELATÓRIO DE NOTAS FALTANTES")
@@ -225,4 +210,15 @@ if st.session_state.get('garimpo_ok'):
     else: st.success("Mina íntegra! Sequência completa.")
 
     st.divider()
-    st.download_button("📥 BAIXAR TESOURO COMPLETO (.ZIP)", st.session_state['zip_completo'], "garimpo_final.zip", use_container_width=True)
+    
+    # --- OPÇÕES DE DOWNLOAD ---
+    col_down1, col_down2 = st.columns(2)
+    with col_down1:
+        st.markdown("#### 🏛️ EXTRAÇÃO ORGANIZADA")
+        st.info("Pastas divididas por: Emitidas/Recebidas, Tipo e Status.")
+        st.download_button("📥 BAIXAR TESOURO ESTRUTURADO", st.session_state['zip_completo'], "garimpo_organizado.zip", use_container_width=True)
+    
+    with col_down2:
+        st.markdown("#### 📦 EXTRAÇÃO BRUTA (TUDO JUNTO)")
+        st.warning("Sem divisões. Todos os XMLs únicos em uma pasta só.")
+        st.download_button("📥 BAIXAR COLEÇÃO TOTAL", st.session_state['zip_bruto'], "garimpo_bruto.zip", use_container_width=True)
