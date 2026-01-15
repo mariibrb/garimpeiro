@@ -39,7 +39,6 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         resumo["Número"] = int(n_match.group(1)) if n_match else 0
         
         cnpj_emit = re.search(r'<cnpj>(\d+)</cnpj>', tag_l).group(1) if re.search(r'<cnpj>(\d+)</cnpj>', tag_l) else ""
-        
         is_p = (cnpj_emit == client_cnpj_clean) or (resumo["Chave"] and client_cnpj_clean in resumo["Chave"][6:20])
         resumo["Pasta"] = f"EMITIDOS_CLIENTE/{tipo}/{status}/Serie_{resumo['Série']}" if is_p else f"RECEBIDOS_TERCEIROS/{tipo}"
         return resumo, is_p
@@ -62,15 +61,12 @@ st.markdown("""
 
 st.markdown("<h1 style='text-align: center;'>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 
-# Inicialização segura do estado
 if 'garimpo_ok' not in st.session_state: st.session_state['garimpo_ok'] = False
 if 'confirmado' not in st.session_state: st.session_state['confirmado'] = False
-if 'relatorio' not in st.session_state: st.session_state['relatorio'] = []
 
-# --- SIDEBAR ---
 with st.sidebar:
     st.markdown("### ⛏️ Painel de Extração")
-    cnpj_input = st.text_input("CNPJ DO CLIENTE (apenas números)")
+    cnpj_input = st.text_input("CNPJ DO CLIENTE")
     cnpj_limpo = "".join(filter(str.isdigit, cnpj_input))
     if len(cnpj_limpo) == 14:
         if st.button("✅ LIBERAR OPERAÇÃO"):
@@ -81,49 +77,45 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-# --- ÁREA DE TRABALHO ---
 if st.session_state['confirmado']:
     if not st.session_state['garimpo_ok']:
-        files = st.file_uploader("Suba seus arquivos:", accept_multiple_files=True)
+        files = st.file_uploader("Suba seus arquivos (ZIP ou XML):", accept_multiple_files=True)
         if files and st.button("🚀 INICIAR GRANDE GARIMPO"):
             keys, rel_lista, seq = set(), [], {}
-            buf = io.BytesIO()
+            buf_org = io.BytesIO()
+            buf_todos = io.BytesIO()
             
-            with st.status("⛏️ Minerando jazida profunda...", expanded=True) as status:
-                with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+            with st.status("⛏️ Processando jazidas separadas...", expanded=True) as status:
+                with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
+                     zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
+                    
                     for f in files:
                         f_bytes = f.read()
-                        # Lida com ZIPs dentro do upload
+                        temp_contents = []
                         if f.name.lower().endswith('.zip'):
                             with zipfile.ZipFile(io.BytesIO(f_bytes)) as z_in:
                                 for name in z_in.namelist():
                                     if name.lower().endswith('.xml'):
-                                        data = z_in.read(name)
-                                        res, is_p = identify_xml_info(data, cnpj_limpo, name)
-                                        k = res["Chave"] if res["Chave"] else name
-                                        if k not in keys:
-                                            keys.add(k)
-                                            zf.writestr(f"{res['Pasta']}/{res['Arquivo']}", data)
-                                            zf.writestr(f"TODOS/{res['Arquivo']}", data)
-                                            rel_lista.append(res)
-                                            if is_p and res["Número"] > 0:
-                                                sk = (res["Tipo"], res["Série"])
-                                                if sk not in seq: seq[sk] = set()
-                                                seq[sk].add(res["Número"])
+                                        temp_contents.append((os.path.basename(name), z_in.read(name)))
                         else:
-                            res, is_p = identify_xml_info(f_bytes, cnpj_limpo, f.name)
-                            k = res["Chave"] if res["Chave"] else f.name
+                            temp_contents.append((os.path.basename(f.name), f_bytes))
+
+                        for name, xml_data in temp_contents:
+                            res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
+                            k = res["Chave"] if res["Chave"] else name
                             if k not in keys:
                                 keys.add(k)
-                                zf.writestr(f"{res['Pasta']}/{res['Arquivo']}", f_bytes)
-                                zf.writestr(f"TODOS/{res['Arquivo']}", f_bytes)
+                                # Grava no ZIP de Pastas
+                                z_org.writestr(f"{res['Pasta']}/{res['Arquivo']}", xml_data)
+                                # Grava no ZIP TODOS (apenas arquivos soltos)
+                                z_todos.writestr(res['Arquivo'], xml_data)
                                 rel_lista.append(res)
                                 if is_p and res["Número"] > 0:
                                     sk = (res["Tipo"], res["Série"])
                                     if sk not in seq: seq[sk] = set()
                                     seq[sk].add(res["Número"])
+                        del temp_contents
 
-            # Auditoria
             faltantes = []
             for (t, s), nums in seq.items():
                 if len(nums) > 1:
@@ -132,31 +124,47 @@ if st.session_state['confirmado']:
                         faltantes.append({"Documento": t, "Série": s, "Nº Faltante": b})
 
             st.session_state.update({
-                'zip_final': buf.getvalue(),
+                'zip_org': buf_org.getvalue(),
+                'zip_todos': buf_todos.getvalue(),
                 'relatorio': rel_lista,
                 'df_faltantes': pd.DataFrame(faltantes),
                 'garimpo_ok': True
             })
             st.rerun()
     else:
-        # --- EXIBIÇÃO SEGURA ---
         st.success(f"⛏️ Garimpo Concluído! {len(st.session_state.get('relatorio', []))} pepitas encontradas.")
         
-        df_res = pd.DataFrame(st.session_state.get('relatorio', []))
-        if not df_res.empty:
-            c1, c2, c3 = st.columns(3)
-            c1.metric("📦 VOLUME", len(df_res))
-            emitidas = len(df_res[df_res['Pasta'].str.contains("EMITIDOS")]) if 'Pasta' in df_res.columns else 0
-            c2.metric("✨ CLIENTE", emitidas)
-            c3.metric("⚠️ BURACOS", len(st.session_state.get('df_faltantes', [])))
+        c1, c2, c3 = st.columns(3)
+        c1.metric("📦 VOLUME", len(st.session_state.get('relatorio', [])))
+        c2.metric("✨ CLIENTE", len([x for x in st.session_state.get('relatorio', []) if "EMITIDOS" in x['Pasta']]))
+        c3.metric("⚠️ BURACOS", len(st.session_state.get('df_faltantes', [])))
 
         st.divider()
-        if 'zip_final' in st.session_state:
-            st.download_button("📂 BAIXAR GARIMPO COMPLETO (Com pasta TODOS)", st.session_state['zip_final'], "garimpo.zip", use_container_width=True)
+        st.markdown("### 📥 ESCOLHA SUA EXTRAÇÃO")
+        col_btn1, col_btn2 = st.columns(2)
+        
+        with col_btn1:
+            st.download_button(
+                label="📂 BAIXAR ORGANIZADO (POR PASTAS)",
+                data=st.session_state['zip_org'],
+                file_name="garimpo_estruturado.zip",
+                use_container_width=True
+            )
+            st.caption("Ideal para contabilidade (separado por série e tipo).")
+
+        with col_btn2:
+            st.download_button(
+                label="📦 BAIXAR TODOS (ARQUIVOS SOLTOS)",
+                data=st.session_state['zip_todos'],
+                file_name="todos_xml_brutos.zip",
+                use_container_width=True
+            )
+            st.caption("Ideal para importação em massa (sem subpastas).")
 
         st.divider()
         st.markdown("### 🔍 PENEIRA INDIVIDUAL")
         busca = st.text_input("Número ou Chave:")
+        df_res = pd.DataFrame(st.session_state.get('relatorio', []))
         if busca and not df_res.empty:
             filtro = df_res[df_res['Número'].astype(str).contains(busca) | df_res['Chave'].contains(busca)]
             st.dataframe(filtro[["Arquivo", "Tipo", "Série", "Número"]], use_container_width=True, hide_index=True)
