@@ -103,7 +103,6 @@ if st.session_state['confirmado']:
                             with zipfile.ZipFile(io.BytesIO(f_bytes)) as z_in:
                                 for name in z_in.namelist():
                                     b_name = os.path.basename(name)
-                                    # SÓ ENTRA SE TERMINAR EM .XML E NÃO FOR ARQUIVO OCULTO
                                     if b_name.lower().endswith('.xml') and not b_name.startswith(('.', '~')):
                                         temp.append((b_name, z_in.read(name)))
                         elif f.name.lower().endswith('.xml') and not os.path.basename(f.name).startswith(('.', '~')):
@@ -116,25 +115,43 @@ if st.session_state['confirmado']:
                                 if k not in keys:
                                     keys.add(k)
                                     z_org.writestr(f"{res['Pasta']}/{name}", xml_data)
-                                    z_todos.writestr(name, xml_data) # GRAVAÇÃO LIMPA NA RAIZ
+                                    z_todos.writestr(name, xml_data)
                                     rel.append(res)
                                     if is_p and res["Número"] > 0:
+                                        # Armazena por (Tipo, Série) para o resumo e buracos
                                         sk = (res["Tipo"], res["Série"])
                                         if sk not in seq: seq[sk] = set()
                                         seq[sk].add(res["Número"])
                         del temp
 
+            # Relatório de Séries e Buracos
+            resumo_series = []
             faltantes = []
-            for (t, s), nums in seq.items():
+            for (tipo_doc, serie_doc), nums in seq.items():
+                min_n, max_n = min(nums), max(nums)
+                resumo_series.append({
+                    "Documento": tipo_doc,
+                    "Série": serie_doc,
+                    "Início": min_n,
+                    "Fim": max_n,
+                    "Qtd Encontrada": len(nums)
+                })
+                
                 if len(nums) > 1:
-                    ideal = set(range(min(nums), max(nums) + 1))
-                    for b in sorted(list(ideal - nums)):
-                        faltantes.append({"Documento": t, "Série": s, "Nº Faltante": b})
+                    ideal = set(range(min_n, max_n + 1))
+                    buracos = sorted(list(ideal - nums))
+                    for b in buracos:
+                        faltantes.append({
+                            "Documento": tipo_doc, 
+                            "Série": serie_doc, 
+                            "Nº Faltante": b
+                        })
 
             st.session_state.update({
                 'zip_org': buf_org.getvalue(),
                 'zip_todos': buf_todos.getvalue(),
                 'relatorio': rel,
+                'df_resumo': pd.DataFrame(resumo_series),
                 'df_faltantes': pd.DataFrame(faltantes),
                 'garimpo_ok': True
             })
@@ -150,6 +167,21 @@ if st.session_state['confirmado']:
             c2.metric("✨ CLIENTE", emitidas)
             c3.metric("⚠️ BURACOS", len(st.session_state.get('df_faltantes', [])))
 
+        # --- NOVAS TABELAS DE RESUMO E AUDITORIA ---
+        st.divider()
+        st.markdown("### 📊 RESUMO DE SÉRIES (EMITIDAS)")
+        st.dataframe(st.session_state.get('df_resumo', pd.DataFrame()), use_container_width=True, hide_index=True)
+
+        st.divider()
+        st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (BURACOS)")
+        df_fal = st.session_state.get('df_faltantes', pd.DataFrame())
+        if not df_fal.empty:
+            # Destaque visual para indicar a série onde está o buraco
+            st.warning("Foram localizados saltos na numeração das séries abaixo:")
+            st.dataframe(df_fal, use_container_width=True, hide_index=True)
+        else:
+            st.success("Nenhum buraco localizado nas sequências das séries.")
+
         st.divider()
         st.markdown("### 📥 ESCOLHA SUA EXTRAÇÃO")
         col1, col2 = st.columns(2)
@@ -161,10 +193,6 @@ if st.session_state['confirmado']:
         with col2:
             if 'zip_todos' in st.session_state:
                 st.download_button("📦 BAIXAR TODOS (SÓ XML SOLTO)", st.session_state['zip_todos'], "todos_xml.zip", use_container_width=True)
-
-        st.divider()
-        st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA")
-        st.dataframe(st.session_state.get('df_faltantes', pd.DataFrame()), use_container_width=True, hide_index=True)
 
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear()
