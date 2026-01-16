@@ -19,7 +19,8 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         "Valor": 0.0
     }
     try:
-        content_str = content_bytes[:15000].decode('utf-8', errors='ignore')
+        # Lemos um pouco mais do arquivo para garantir a captura do valor
+        content_str = content_bytes[:20000].decode('utf-8', errors='ignore')
         if '<?xml' not in content_str and '<inf' not in content_str:
             return None, False
 
@@ -46,7 +47,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         n_match = re.search(r'<(?:nnf|nct|nmdf|nnfini)>(\d+)</', tag_l)
         resumo["Número"] = int(n_match.group(1)) if n_match else 0
         
-        # Captura financeira (vNF ou vTPrest)
+        # Captura de Valor Total (vNF ou vTPrest)
         if status == "NORMAIS":
             v_match = re.search(r'<(?:vnf|vtprest)>([\d.]+)</', tag_l)
             resumo["Valor"] = float(v_match.group(1)) if v_match else 0.0
@@ -92,7 +93,7 @@ with st.sidebar:
 
 if st.session_state['confirmado']:
     if not st.session_state['garimpo_ok']:
-        uploaded_files = st.file_uploader("Suba seus arquivos:", accept_multiple_files=True)
+        uploaded_files = st.file_uploader("Suba seus arquivos (ZIP ou XML):", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
             keys, rel, seq, status_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
@@ -139,7 +140,7 @@ if st.session_state['confirmado']:
                     "Série": serie_doc, 
                     "Início": min_n, 
                     "Fim": max_n, 
-                    "Qtd Encontrada": len(nums), 
+                    "Qtd Encontrada": len(nums),
                     "Valor Total (R$)": round(dados["valor"], 2)
                 })
                 if len(nums) > 1:
@@ -161,8 +162,9 @@ if st.session_state['confirmado']:
         c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
 
         st.markdown("### 📊 RESUMO POR SÉRIE (VALORES E SEQUÊNCIA)")
-        # Garantindo a exibição da coluna de Valor
-        st.dataframe(st.session_state.get('df_resumo', pd.DataFrame()), use_container_width=True, hide_index=True)
+        # Exibe a tabela com todas as colunas, incluindo o Valor Total
+        if not st.session_state.get('df_resumo', pd.DataFrame()).empty:
+            st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
 
         st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (BURACOS)")
         st.dataframe(st.session_state.get('df_faltantes', pd.DataFrame()), use_container_width=True, hide_index=True)
@@ -171,7 +173,7 @@ if st.session_state['confirmado']:
         st.markdown("### 📥 ESCOLHA SUA EXTRAÇÃO")
         col1, col2 = st.columns(2)
         with col1: st.download_button("📂 BAIXAR ORGANIZADO", st.session_state['zip_org'], "garimpo_pastas.zip", use_container_width=True)
-        with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['zip_todos'], "todos_xml.zip", use_container_width=True)
+        with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML SOLTO)", st.session_state['zip_todos'], "todos_xml.zip", use_container_width=True)
 
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear()
