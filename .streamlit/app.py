@@ -16,11 +16,10 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
     resumo = {
         "Arquivo": nome_puro, "Chave": "", "Tipo": "Outros", "Série": "0",
         "Número": 0, "Status": "NORMAIS", "Pasta": "RECEBIDOS_TERCEIROS/OUTROS",
-        "Valor": 0.0
+        "Valor_Contabil": 0.0
     }
     try:
-        # Lemos um pouco mais do arquivo para garantir a captura do valor
-        content_str = content_bytes[:20000].decode('utf-8', errors='ignore')
+        content_str = content_bytes[:25000].decode('utf-8', errors='ignore')
         if '<?xml' not in content_str and '<inf' not in content_str:
             return None, False
 
@@ -47,10 +46,11 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         n_match = re.search(r'<(?:nnf|nct|nmdf|nnfini)>(\d+)</', tag_l)
         resumo["Número"] = int(n_match.group(1)) if n_match else 0
         
-        # Captura de Valor Total (vNF ou vTPrest)
+        # CAPTURA DO VALOR (vNF para notas ou vTPrest para fretes)
         if status == "NORMAIS":
             v_match = re.search(r'<(?:vnf|vtprest)>([\d.]+)</', tag_l)
-            resumo["Valor"] = float(v_match.group(1)) if v_match else 0.0
+            if v_match:
+                resumo["Valor_Contabil"] = float(v_match.group(1))
 
         cnpj_emit = re.search(r'<cnpj>(\d+)</cnpj>', tag_l).group(1) if re.search(r'<cnpj>(\d+)</cnpj>', tag_l) else ""
         is_p = (cnpj_emit == client_cnpj_clean) or (resumo["Chave"] and client_cnpj_clean in resumo["Chave"][6:20])
@@ -93,9 +93,9 @@ with st.sidebar:
 
 if st.session_state['confirmado']:
     if not st.session_state['garimpo_ok']:
-        uploaded_files = st.file_uploader("Suba seus arquivos (ZIP ou XML):", accept_multiple_files=True)
+        uploaded_files = st.file_uploader("Suba seus arquivos:", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
-            keys, rel, seq, status_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
+            keys, rel, seq, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
             
             with st.status("⛏️ Minerando jazida profunda...", expanded=True) as status:
@@ -124,56 +124,60 @@ if st.session_state['confirmado']:
                                     z_todos.writestr(name, xml_data)
                                     rel.append(res)
                                     if is_p:
-                                        if res["Status"] in status_counts: status_counts[res["Status"]] += 1
+                                        if res["Status"] in st_counts: st_counts[res["Status"]] += 1
                                         sk = (res["Tipo"], res["Série"])
                                         if sk not in seq: seq[sk] = {"nums": set(), "valor": 0.0}
                                         seq[sk]["nums"].add(res["Número"])
-                                        seq[sk]["valor"] += res["Valor"]
+                                        seq[sk]["valor"] += res["Valor_Contabil"]
                         del temp_list
 
-            resumo_series, faltantes = [], []
-            for (tipo_doc, serie_doc), dados in seq.items():
-                nums = dados["nums"]
-                min_n, max_n = min(nums), max(nums)
-                resumo_series.append({
-                    "Documento": tipo_doc, 
-                    "Série": serie_doc, 
-                    "Início": min_n, 
-                    "Fim": max_n, 
-                    "Qtd Encontrada": len(nums),
-                    "Valor Total (R$)": round(dados["valor"], 2)
+            # CRIANDO O RESUMO COM A COLUNA DE VALOR EXPLÍCITA
+            res_list = []
+            faltantes = []
+            for (t, s), dados in seq.items():
+                ns = dados["nums"]
+                res_list.append({
+                    "Documento": t,
+                    "Série": s,
+                    "Início": min(ns),
+                    "Fim": max(ns),
+                    "Qtd Encontrada": len(ns),
+                    "Valor Total (R$)": round(dados["valor"], 2) # ELA ESTÁ AQUI AGORA!
                 })
-                if len(nums) > 1:
-                    for b in sorted(list(set(range(min_n, max_n + 1)) - nums)):
-                        faltantes.append({"Documento": tipo_doc, "Série": serie_doc, "Nº Faltante": b})
+                if len(ns) > 1:
+                    for b in sorted(list(set(range(min(ns), max(ns) + 1)) - ns)):
+                        faltantes.append({"Documento": t, "Série": s, "Nº Faltante": b})
 
             st.session_state.update({
-                'zip_org': buf_org.getvalue(), 'zip_todos': buf_todos.getvalue(), 'relatorio': rel,
-                'df_resumo': pd.DataFrame(resumo_series), 'df_faltantes': pd.DataFrame(faltantes),
-                'status_counts': status_counts, 'garimpo_ok': True
+                'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'rel': rel,
+                'df_resumo': pd.DataFrame(res_list), 'df_fal': pd.DataFrame(faltantes),
+                'st_counts': st_counts, 'garimpo_ok': True
             })
             st.rerun()
     else:
         st.success(f"⛏️ Garimpo Concluído!")
-        sc = st.session_state.get('status_counts', {})
+        sc = st.session_state.get('st_counts', {})
         c1, c2, c3 = st.columns(3)
-        c1.metric("📦 VOLUME ÚNICO", len(st.session_state.get('relatorio', [])))
+        c1.metric("📦 VOLUME ÚNICO", len(st.session_state.get('rel', [])))
         c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
         c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
 
         st.markdown("### 📊 RESUMO POR SÉRIE (VALORES E SEQUÊNCIA)")
-        # Exibe a tabela com todas as colunas, incluindo o Valor Total
-        if not st.session_state.get('df_resumo', pd.DataFrame()).empty:
-            st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
+        # MOSTRANDO A TABELA CORRETA
+        st.dataframe(st.session_state.get('df_resumo', pd.DataFrame()), use_container_width=True, hide_index=True)
 
         st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (BURACOS)")
-        st.dataframe(st.session_state.get('df_faltantes', pd.DataFrame()), use_container_width=True, hide_index=True)
+        st.dataframe(st.session_state.get('df_fal', pd.DataFrame()), use_container_width=True, hide_index=True)
 
         st.divider()
         st.markdown("### 📥 ESCOLHA SUA EXTRAÇÃO")
         col1, col2 = st.columns(2)
-        with col1: st.download_button("📂 BAIXAR ORGANIZADO", st.session_state['zip_org'], "garimpo_pastas.zip", use_container_width=True)
-        with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML SOLTO)", st.session_state['zip_todos'], "todos_xml.zip", use_container_width=True)
+        with col1:
+            if 'z_org' in st.session_state:
+                st.download_button("📂 BAIXAR ORGANIZADO", st.session_state['z_org'], "garimpo_pastas.zip", use_container_width=True)
+        with col2:
+            if 'z_todos' in st.session_state:
+                st.download_button("📦 BAIXAR TODOS (SÓ XML SOLTO)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
 
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear()
