@@ -5,12 +5,12 @@ import os
 import re
 import pandas as pd
 
-# --- MOTOR DE IDENTIFICAÇÃO (INTELIGÊNCIA INTEGRAL) ---
+# --- MOTOR DE IDENTIFICAÇÃO ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
     
-    # Filtro rígido contra arquivos ocultos ou temporários do Excel
+    # Filtro contra arquivos ocultos ou temporários do Excel
     if nome_puro.startswith('.') or nome_puro.startswith('~') or not nome_puro.lower().endswith('.xml'):
         return None, False
 
@@ -21,7 +21,6 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
     }
     try:
         content_str = content_bytes[:15000].decode('utf-8', errors='ignore')
-        # Validação de conteúdo XML legítimo
         if '<?xml' not in content_str and '<inf' not in content_str:
             return None, False
 
@@ -48,7 +47,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         n_match = re.search(r'<(?:nnf|nct|nmdf|nnfini)>(\d+)</', tag_l)
         resumo["Número"] = int(n_match.group(1)) if n_match else 0
         
-        # Captura financeira (vNF para notas ou vTPrest para CT-e)
+        # Captura financeira apenas para notas normais
         if status == "NORMAIS":
             v_match = re.search(r'<(?:vnf|vtprest)>([\d.]+)</', tag_l)
             resumo["Valor"] = float(v_match.group(1)) if v_match else 0.0
@@ -96,7 +95,7 @@ if st.session_state['confirmado']:
     if not st.session_state['garimpo_ok']:
         uploaded_files = st.file_uploader("Suba seus arquivos (ZIP ou XML):", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
-            keys, rel, seq, status_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0, "TOTAL_REAIS": 0.0}
+            keys, rel, seq, status_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
             
             with st.status("⛏️ Minerando jazida profunda...", expanded=True) as status:
@@ -125,7 +124,6 @@ if st.session_state['confirmado']:
                                     z_todos.writestr(name, xml_data)
                                     rel.append(res)
                                     if is_p:
-                                        status_counts["TOTAL_REAIS"] += res["Valor"]
                                         if res["Status"] in status_counts: status_counts[res["Status"]] += 1
                                         sk = (res["Tipo"], res["Série"])
                                         if sk not in seq: seq[sk] = {"nums": set(), "valor": 0.0}
@@ -154,13 +152,12 @@ if st.session_state['confirmado']:
     else:
         st.success(f"⛏️ Garimpo Concluído!")
         sc = st.session_state.get('status_counts', {})
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3 = st.columns(3)
         c1.metric("📦 VOLUME ÚNICO", len(st.session_state.get('relatorio', [])))
         c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
         c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
-        c4.metric("💰 VALOR TOTAL", f"R$ {sc.get('TOTAL_REAIS', 0.0):,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.'))
 
-        st.markdown("### 📊 RESUMO DE SÉRIES E VALORES (EMITIDAS)")
+        st.markdown("### 📊 RESUMO POR SÉRIE (VALORES E SEQUÊNCIA)")
         st.dataframe(st.session_state.get('df_resumo', pd.DataFrame()), use_container_width=True, hide_index=True)
 
         st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (BURACOS)")
@@ -169,10 +166,8 @@ if st.session_state['confirmado']:
         st.divider()
         st.markdown("### 📥 ESCOLHA SUA EXTRAÇÃO")
         col1, col2 = st.columns(2)
-        with col1:
-            st.download_button("📂 BAIXAR ORGANIZADO (POR PASTAS)", st.session_state['zip_org'], "garimpo_pastas.zip", use_container_width=True)
-        with col2:
-            st.download_button("📦 BAIXAR TODOS (SÓ XML SOLTO)", st.session_state['zip_todos'], "todos_xml.zip", use_container_width=True)
+        with col1: st.download_button("📂 BAIXAR ORGANIZADO (POR PASTAS)", st.session_state['zip_org'], "garimpo_pastas.zip", use_container_width=True)
+        with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML SOLTO)", st.session_state['zip_todos'], "todos_xml.zip", use_container_width=True)
 
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear()
