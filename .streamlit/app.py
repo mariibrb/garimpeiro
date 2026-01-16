@@ -6,7 +6,7 @@ import re
 import pandas as pd
 import random
 
-# --- MOTOR DE IDENTIFICAÇÃO (MANTENDO HIERARQUIA FISCAL) ---
+# --- MOTOR DE IDENTIFICAÇÃO (MANTENDO HIERARQUIA FISCAL ORIGINAL) ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
@@ -44,7 +44,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         resumo["Status"] = status
         resumo["Série"] = re.search(r'<(?:serie)>(\d+)</', tag_l).group(1) if re.search(r'<(?:serie)>(\d+)</', tag_l) else "0"
         
-        # Captura de número ampla (nnf ou nnfini para inutilizações)
+        # Captura de número
         n_match = re.search(r'<(?:nnf|nct|nmdf|nnfini)>(\d+)</', tag_l)
         resumo["Número"] = int(n_match.group(1)) if n_match else 0
         
@@ -114,9 +114,9 @@ if st.session_state['confirmado']:
                         if f.name.lower().endswith('.zip'):
                             with zipfile.ZipFile(io.BytesIO(f_bytes)) as z_in:
                                 for n in z_in.namelist():
-                                    b_n = os.path.basename(n)
-                                    if b_n.lower().endswith('.xml') and not b_n.startswith(('.', '~')):
-                                        items.append((b_n, z_in.read(n)))
+                                    b_name = os.path.basename(n)
+                                    if b_name.lower().endswith('.xml') and not b_name.startswith(('.', '~')):
+                                        items.append((b_name, z_in.read(n)))
                         else:
                             items.append((os.path.basename(f.name), f_bytes))
 
@@ -132,25 +132,34 @@ if st.session_state['confirmado']:
                                     
                                     if is_p:
                                         if res["Status"] in st_counts: st_counts[res["Status"]] += 1
-                                        # LÓGICA DE AUDITORIA: Inutilização ou Nota NORMAL preenchem a sequência
-                                        # Definimos o "Modelo" real (ex: se for Inutilização de NF-e, tratar como NF-e para o buraco)
-                                        mod_real = "NF-e" if "nfe" in res["Arquivo"].lower() or res["Tipo"] == "Inutilizacoes" else res["Tipo"]
-                                        sk = (mod_real, res["Série"])
+                                        
+                                        # SEQ_MAP para Resumo e Buracos
+                                        sk = (res["Tipo"], res["Série"])
                                         if sk not in seq_map: seq_map[sk] = {"nums": set(), "valor": 0.0}
                                         seq_map[sk]["nums"].add(res["Número"])
                                         seq_map[sk]["valor"] += res["Valor"]
 
-            res_final, fal_final = [], []
+            # Montagem dos relatórios
+            res_final = []
+            nums_encontrados_por_serie = {} # Para unificar notas + inutilizações na auditoria de buraco
+
             for (t, s), dados in seq_map.items():
                 ns = dados["nums"]
                 res_final.append({
                     "Documento": t, "Série": s, "Início": min(ns), "Fim": max(ns),
                     "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)
                 })
-                if len(ns) > 1:
-                    buracos = sorted(list(set(range(min(ns), max(ns) + 1)) - ns))
+                # Agrupa números por série para checar buraco real (ignora se é nota ou inutilização)
+                if s not in nums_encontrados_por_serie: nums_encontrados_por_serie[s] = set()
+                nums_encontrados_por_serie[s].update(ns)
+
+            fal_final = []
+            for s, todos_nums in nums_encontrados_por_serie.items():
+                if len(todos_nums) > 1:
+                    ideal = set(range(min(todos_nums), max(todos_nums) + 1))
+                    buracos = sorted(list(ideal - todos_nums))
                     for b in buracos:
-                        fal_final.append({"Documento": t, "Série": s, "Nº Faltante": b})
+                        fal_final.append({"Série": s, "Nº Faltante": b})
 
             st.session_state.update({
                 'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(),
