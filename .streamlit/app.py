@@ -44,7 +44,6 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         resumo["Status"] = status
         resumo["Série"] = re.search(r'<(?:serie)>(\d+)</', tag_l).group(1) if re.search(r'<(?:serie)>(\d+)</', tag_l) else "0"
         
-        # Captura de número
         n_match = re.search(r'<(?:nnf|nct|nmdf|nnfini)>(\d+)</', tag_l)
         resumo["Número"] = int(n_match.group(1)) if n_match else 0
         
@@ -91,7 +90,7 @@ def aplicar_estilo_sentinela():
         div.stButton > button:hover {
             transform: translateY(-5px) !important;
             opacity: 1 !important;
-            box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important;
+            box-shadow: 0 10px 20px rgba(255,105,180,0.2) !important;
             border-color: #FF69B4 !important;
             color: #FF69B4 !important;
         }
@@ -108,10 +107,10 @@ def aplicar_estilo_sentinela():
         div.stDownloadButton > button {
             background-color: #FF69B4 !important; 
             color: white !important; 
-            border: 3px solid #FFFFFF !important;
+            border: 2px solid #FFFFFF !important;
             font-weight: 700 !important;
             border-radius: 15px !important;
-            box-shadow: 0 0 15px rgba(255, 105, 180, 0.4) !important;
+            box-shadow: 0 0 15px rgba(255, 105, 180, 0.3) !important;
         }
 
         /* 4. TEXTOS E TÍTULOS */
@@ -128,7 +127,6 @@ def aplicar_estilo_sentinela():
             border-radius: 20px !important;
             border: 1px solid #FFDEEF !important;
             padding: 15px !important;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.02) !important;
         }
 
         [data-testid="stSidebar"] {
@@ -136,9 +134,10 @@ def aplicar_estilo_sentinela():
             border-right: 1px solid #FFDEEF !important;
         }
         
+        /* DATA TABLES */
         .stDataFrame {
+            border: 1px solid #FFDEEF !important;
             border-radius: 15px !important;
-            overflow: hidden !important;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -239,34 +238,45 @@ if st.session_state['confirmado']:
             })
             st.rerun()
     else:
+        # EXIBIÇÃO DOS RESULTADOS (ESTILO SENTINELA)
         st.success(f"⛏️ Garimpo Concluído com Sucesso!")
+        
         sc = st.session_state['st_counts']
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 VOLUME", len(st.session_state['relatorio']))
         c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
         c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
 
-        st.markdown("### 📊 RESUMO POR SÉRIE")
-        st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
+        st.markdown("### 📊 RESUMO POR SÉRIE E VALOR CONTÁBIL")
+        if not st.session_state['df_resumo'].empty:
+            st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
+        else:
+            st.info("Nenhum dado emitido pelo cliente foi encontrado para o resumo.")
 
-        st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA")
-        st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
+        st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (BURACOS REAIS)")
+        if not st.session_state['df_faltantes'].empty:
+            st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
+        else:
+            st.success("Sequência perfeita! Nenhum buraco encontrado.")
 
         st.divider()
-        st.markdown("### 🔍 PENEIRA INDIVIDUAL")
-        busca = st.text_input("Buscar por Número ou Chave:")
+        st.markdown("### 🔍 PENEIRA INDIVIDUAL (BUSCA)")
+        busca = st.text_input("Pesquisar Número ou Chave:")
         if busca:
             df_full = pd.DataFrame(st.session_state['relatorio'])
-            filtro = df_full[df_full['Número'].astype(str).contains(busca) | df_full['Chave'].contains(busca)]
-            for _, row in filtro.iterrows():
-                st.download_button(f"📥 XML Nº {row['Número']} ({row['Status']})", row['Conteúdo'], row['Arquivo'], key=f"dl_{row['Chave']}_{random.random()}")
+            filtro = df_full[df_full['Número'].astype(str).str.contains(busca) | df_full['Chave'].str.contains(busca)]
+            if not filtro.empty:
+                for _, row in filtro.iterrows():
+                    st.download_button(f"📥 XML Nº {row['Número']} ({row['Status']})", row['Conteúdo'], row['Arquivo'], key=f"dl_{row['Chave']}_{random.random()}")
+            else:
+                st.warning("Nenhum arquivo encontrado com esse critério.")
 
         st.divider()
         st.markdown("### 📥 EXTRAÇÃO FINAL")
         col1, col2 = st.columns(2)
         with col1:
             if st.session_state['z_org']:
-                st.download_button("📂 BAIXAR ORGANIZADO", st.session_state['z_org'], "garimpo_pastas.zip", use_container_width=True)
+                st.download_button("📂 BAIXAR ORGANIZADO (PASTAS)", st.session_state['z_org'], "garimpo_pastas.zip", use_container_width=True)
         with col2:
             if st.session_state['z_todos']:
                 st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
