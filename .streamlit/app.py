@@ -59,20 +59,93 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
     except:
         return None, False
 
-# --- DESIGN ---
+# --- CONFIGURAÇÃO E ESTILO SENTINELA ---
 st.set_page_config(page_title="O Garimpeiro", layout="wide", page_icon="⛏️")
-st.markdown("""
-    <style>
-    #MainMenu, footer, header, .stAppDeployButton {visibility: hidden !important;}
-    .stApp { background-color: #f7f3f0; }
-    [data-testid="stSidebar"] { background: linear-gradient(180deg, #EADBC8 0%, #D2B48C 100%) !important; border-right: 3px solid #b8860b; }
-    h1, h2, h3, h4, p, label, .stMetric label { color: #2b1e16 !important; font-family: 'Playfair Display', serif; font-weight: 900 !important;}
-    [data-testid="stMetric"] { background: linear-gradient(135deg, #ffffff 0%, #fff9e6 100%); border: 2px solid #d4af37; border-radius: 20px; padding: 20px; }
-    div.stButton > button { background: linear-gradient(180deg, #fcf6ba 0%, #d4af37 40%, #aa771c 100%) !important; color: #2b1e16 !important; border: 2px solid #8a6d3b; padding: 20px !important; border-radius: 50px !important; width: 100% !important; text-transform: uppercase !important; font-weight: 900 !important;}
-    </style>
+
+def aplicar_estilo_sentinela():
+    st.markdown("""
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;800&family=Plus+Jakarta+Sans:wght@400;700&display=swap');
+
+        /* 1. FUNDAÇÃO */
+        header, [data-testid="stHeader"] { display: none !important; }
+        .stApp { 
+            background: radial-gradient(circle at top right, #FFDEEF 0%, #F8F9FA 100%) !important; 
+        }
+
+        /* 2. BOTÕES ESTILO SENTINELA */
+        div.stButton > button {
+            color: #6C757D !important; 
+            background-color: #FFFFFF !important; 
+            border: 1px solid #DEE2E6 !important;
+            border-radius: 15px !important;
+            font-family: 'Montserrat', sans-serif !important;
+            font-weight: 800 !important;
+            height: 60px !important;
+            text-transform: uppercase;
+            opacity: 0.9;
+            transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
+            width: 100% !important;
+        }
+
+        div.stButton > button:hover {
+            transform: translateY(-5px) !important;
+            opacity: 1 !important;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1) !important;
+            border-color: #FF69B4 !important;
+            color: #FF69B4 !important;
+        }
+
+        /* 3. UPLOADER E DOWNLOAD ESTILIZADOS */
+        [data-testid="stFileUploader"] { 
+            border: 2px dashed #FF69B4 !important; 
+            border-radius: 20px !important;
+            background: #FFFFFF !important;
+            padding: 20px !important;
+        }
+
+        [data-testid="stFileUploader"] section button, 
+        div.stDownloadButton > button {
+            background-color: #FF69B4 !important; 
+            color: white !important; 
+            border: 3px solid #FFFFFF !important;
+            font-weight: 700 !important;
+            border-radius: 15px !important;
+            box-shadow: 0 0 15px rgba(255, 105, 180, 0.4) !important;
+        }
+
+        /* 4. TEXTOS E TÍTULOS */
+        h1, h2, h3 {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 800;
+            color: #FF69B4 !important;
+            text-align: center;
+        }
+
+        /* 5. MÉTRICAS E SIDEBAR */
+        [data-testid="stMetric"] {
+            background: white !important;
+            border-radius: 20px !important;
+            border: 1px solid #FFDEEF !important;
+            padding: 15px !important;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02) !important;
+        }
+
+        [data-testid="stSidebar"] {
+            background-color: #FFFFFF !important;
+            border-right: 1px solid #FFDEEF !important;
+        }
+        
+        .stDataFrame {
+            border-radius: 15px !important;
+            overflow: hidden !important;
+        }
+        </style>
     """, unsafe_allow_html=True)
 
-st.markdown("<h1 style='text-align: center;'>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
+aplicar_estilo_sentinela()
+
+st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 
 # INICIALIZAÇÃO SEGURA
 keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'st_counts']
@@ -85,7 +158,7 @@ for k in keys_to_init:
         else: st.session_state[k] = False
 
 with st.sidebar:
-    st.markdown("### ⛏️ Painel de Extração")
+    st.markdown("### 🔍 Configuração")
     cnpj_input = st.text_input("CNPJ DO CLIENTE")
     cnpj_limpo = "".join(filter(str.isdigit, cnpj_input))
     if len(cnpj_limpo) == 14:
@@ -99,12 +172,12 @@ with st.sidebar:
 
 if st.session_state['confirmado']:
     if not st.session_state['garimpo_ok']:
-        uploaded_files = st.file_uploader("Suba seus arquivos:", accept_multiple_files=True)
+        uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
             p_keys, rel_list, seq_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
             
-            with st.status("⛏️ Processando...", expanded=True):
+            with st.status("⛏️ Garimpando dados...", expanded=True):
                 with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
                      zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
                     
@@ -133,7 +206,6 @@ if st.session_state['confirmado']:
                                     if is_p:
                                         if res["Status"] in st_counts: st_counts[res["Status"]] += 1
                                         
-                                        # SEQ_MAP para Resumo e Buracos
                                         sk = (res["Tipo"], res["Série"])
                                         if sk not in seq_map: seq_map[sk] = {"nums": set(), "valor": 0.0}
                                         seq_map[sk]["nums"].add(res["Número"])
@@ -141,7 +213,7 @@ if st.session_state['confirmado']:
 
             # Montagem dos relatórios
             res_final = []
-            nums_encontrados_por_serie = {} # Para unificar notas + inutilizações na auditoria de buraco
+            nums_encontrados_por_serie = {}
 
             for (t, s), dados in seq_map.items():
                 ns = dados["nums"]
@@ -149,7 +221,6 @@ if st.session_state['confirmado']:
                     "Documento": t, "Série": s, "Início": min(ns), "Fim": max(ns),
                     "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)
                 })
-                # Agrupa números por série para checar buraco real (ignora se é nota ou inutilização)
                 if s not in nums_encontrados_por_serie: nums_encontrados_por_serie[s] = set()
                 nums_encontrados_por_serie[s].update(ns)
 
@@ -168,22 +239,22 @@ if st.session_state['confirmado']:
             })
             st.rerun()
     else:
-        st.success(f"⛏️ Garimpo Concluído!")
+        st.success(f"⛏️ Garimpo Concluído com Sucesso!")
         sc = st.session_state['st_counts']
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 VOLUME", len(st.session_state['relatorio']))
         c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
         c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
 
-        st.markdown("### 📊 RESUMO POR SÉRIE E VALOR CONTÁBIL")
+        st.markdown("### 📊 RESUMO POR SÉRIE")
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
 
-        st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (BURACOS REAIS)")
+        st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA")
         st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
 
         st.divider()
-        st.markdown("### 🔍 PENEIRA INDIVIDUAL (BUSCA)")
-        busca = st.text_input("Número ou Chave:")
+        st.markdown("### 🔍 PENEIRA INDIVIDUAL")
+        busca = st.text_input("Buscar por Número ou Chave:")
         if busca:
             df_full = pd.DataFrame(st.session_state['relatorio'])
             filtro = df_full[df_full['Número'].astype(str).contains(busca) | df_full['Chave'].contains(busca)]
