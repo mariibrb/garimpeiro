@@ -196,14 +196,15 @@ with st.container():
 
 st.markdown("---")
 
-keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'st_counts', 'arquivos_brutos']
+# ADICIONADO AO KEYS_TO_INIT: arquivos_em_cache
+keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'st_counts', 'arquivos_em_cache']
 for k in keys_to_init:
     if k not in st.session_state:
         if 'df' in k: st.session_state[k] = pd.DataFrame()
         elif 'z_' in k: st.session_state[k] = None
         elif k == 'relatorio': st.session_state[k] = []
         elif k == 'st_counts': st.session_state[k] = {"CANCELADOS": 0, "INUTILIZADOS": 0}
-        elif k == 'arquivos_brutos': st.session_state[k] = None
+        elif k == 'arquivos_em_cache': st.session_state[k] = None
         else: st.session_state[k] = False
 
 with st.sidebar:
@@ -219,32 +220,35 @@ with st.sidebar:
         st.rerun()
 
 if st.session_state['confirmado']:
-    # Bloco de processamento central (repetível)
-    arquivos_para_processar = []
-    acionar_garimpo = False
+    # LÓGICA DE PROCESSAMENTO CENTRALIZADA PARA REUSO
+    arquivos_prontos = None
+    acionar_analise = False
 
     if not st.session_state['garimpo_ok']:
         uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
-            st.session_state['arquivos_brutos'] = [{"name": f.name, "content": f.read()} for f in uploaded_files]
-            arquivos_para_processar = st.session_state['arquivos_brutos']
-            acionar_garimpo = True
+            # Salva na memória
+            st.session_state['arquivos_em_cache'] = [{"name": f.name, "content": f.read()} for f in uploaded_files]
+            arquivos_prontos = st.session_state['arquivos_em_cache']
+            acionar_analise = True
     else:
-        st.success(f"⛏️ Garimpo Concluído! {len(st.session_state['relatorio'])} notas processadas.")
-        # BOTÃO PARA REPROCESSAR
-        if st.button("🔄 REPROCESSAR DADOS ATUAIS (SEM NOVO UPLOAD)"):
-            arquivos_para_processar = st.session_state['arquivos_brutos']
-            acionar_garimpo = True
+        st.success(f"⛏️ Garimpo Concluído! {len(st.session_state['relatorio'])} arquivos processados.")
+        # O BOTÃO SOLICITADO: Refaz a análise sem novo upload
+        if st.button("🔄 REPROCESSAR DADOS ATUAIS"):
+            arquivos_prontos = st.session_state['arquivos_em_cache']
+            acionar_analise = True
 
-    if acionar_garimpo and arquivos_para_processar:
+    if acionar_analise and arquivos_prontos:
         p_keys, rel_list, audit_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
         buf_org, buf_todos = io.BytesIO(), io.BytesIO()
+        
         with st.status("⛏️ Garimpando dados...", expanded=True):
             with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
                  zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
-                for f in arquivos_para_processar:
-                    f_bytes = f["content"]
-                    f_name = f["name"]
+                
+                for f_data in arquivos_prontos:
+                    f_bytes = f_data["content"]
+                    f_name = f_data["name"]
                     items = []
                     if f_name.lower().endswith('.zip'):
                         with zipfile.ZipFile(io.BytesIO(f_bytes)) as z_in:
@@ -294,7 +298,7 @@ if st.session_state['confirmado']:
         })
         st.rerun()
 
-    # Exibição dos resultados (após o processamento)
+    # EXIBIÇÃO DE RESULTADOS
     if st.session_state['garimpo_ok']:
         sc = st.session_state['st_counts']
         c1, c2, c3 = st.columns(3)
@@ -308,8 +312,6 @@ if st.session_state['confirmado']:
         if not st.session_state['df_faltantes'].empty:
             st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (BURACOS NO LOTE)")
             st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
-        else:
-            st.info("✅ Nenhuma quebra de sequência detectada no lote enviado.")
 
         st.divider()
         col1, col2 = st.columns(2)
