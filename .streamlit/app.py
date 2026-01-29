@@ -107,7 +107,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
     resumo = {
         "Arquivo": nome_puro, "Chave": "", "Tipo": "Outros", "Série": "0",
         "Número": 0, "Status": "NORMAIS", "Pasta": "RECEBIDOS_TERCEIROS/OUTROS",
-        "Valor": 0.0, "Conteúdo": content_bytes
+        "Valor": 0.0, "Conteúdo": content_bytes, "Ano": "S-A", "Mes": "S-M"
     }
     try:
         content_str = content_bytes[:20000].decode('utf-8', errors='ignore')
@@ -115,26 +115,44 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         match_ch = re.search(r'\d{44}', content_str)
         resumo["Chave"] = match_ch.group(0) if match_ch else ""
         tag_l = content_str.lower()
+        
+        # Identificação de Data (Ano/Mês)
+        data_match = re.search(r'<(?:dhemi|dhregevento|dhemi)>(\d{4})-(\d{2})', tag_l)
+        if data_match:
+            resumo["Ano"], resumo["Mes"] = data_match.group(1), data_match.group(2)
+        elif resumo["Chave"]:
+            resumo["Ano"] = "20" + resumo["Chave"][2:4]
+            resumo["Mes"] = resumo["Chave"][4:6]
+
         tipo = "NF-e"
         if '<mod>65</mod>' in tag_l: tipo = "NFC-e"
         elif '<infcte' in tag_l: tipo = "CT-e"
         elif '<infmdfe' in tag_l: tipo = "MDF-e"
+        
         status = "NORMAIS"
         if '110111' in tag_l: status = "CANCELADOS"
         elif '110110' in tag_l: status = "CARTA_CORRECAO"
         elif '<inutnfe' in tag_l or '<procinut' in tag_l:
             status = "INUTILIZADOS"
             tipo = "Inutilizacoes"
+            
         resumo["Tipo"], resumo["Status"] = tipo, status
         resumo["Série"] = re.search(r'<(?:serie)>(\d+)</', tag_l).group(1) if re.search(r'<(?:serie)>(\d+)</', tag_l) else "0"
         n_match = re.search(r'<(?:nnf|nct|nmdf|nnfini)>(\d+)</', tag_l)
         resumo["Número"] = int(n_match.group(1)) if n_match else 0
+        
         if status == "NORMAIS":
             v_match = re.search(r'<(?:vnf|vtprest)>([\d.]+)</', tag_l)
             resumo["Valor"] = float(v_match.group(1)) if v_match else 0.0
+            
         cnpj_emit = re.search(r'<cnpj>(\d+)</cnpj>', tag_l).group(1) if re.search(r'<cnpj>(\d+)</cnpj>', tag_l) else ""
         is_p = (cnpj_emit == client_cnpj_clean) or (resumo["Chave"] and client_cnpj_clean in resumo["Chave"][6:20])
-        resumo["Pasta"] = f"EMITIDOS_CLIENTE/{tipo}/{status}/Serie_{resumo['Série']}" if is_p else f"RECEBIDOS_TERCEIROS/{tipo}"
+        
+        if is_p:
+            resumo["Pasta"] = f"EMITIDOS_CLIENTE/{tipo}/{status}/{resumo['Ano']}/{resumo['Mes']}/Serie_{resumo['Série']}"
+        else:
+            resumo["Pasta"] = f"RECEBIDOS_TERCEIROS/{tipo}/{resumo['Ano']}/{resumo['Mes']}"
+            
         return resumo, is_p
     except: return None, False
 
@@ -152,7 +170,7 @@ with st.container():
                 <li><b>Arquivos:</b> Arraste seus arquivos XML avulsos ou pastas ZIP contendo as notas.</li>
                 <li><b>Processamento:</b> Clique no botão <b>"🚀 INICIAR GRANDE GARIMPO"</b> para minerar os dados.</li>
                 <li><b>Conferência:</b> Verifique o resumo de volumes e a auditoria de sequência numérica.</li>
-                <li><b>Download:</b> Baixe o ZIP organizado por pastas fiscais ou a extração total.</li>
+                <li><b>Download:</b> Baixe o ZIP organizado por pastas fiscais e período (Ano/Mês).</li>
             </ol>
         </div>
         """, unsafe_allow_html=True)
@@ -161,7 +179,7 @@ with st.container():
         <div class="instrucoes-card">
             <h3>📊 O que será obtido?</h3>
             <ul>
-                <li><b>Organização Inteligente:</b> Separação automática entre notas do Cliente e de Terceiros.</li>
+                <li><b>Organização Temporal:</b> Separação automática por Ano e Mês de emissão.</li>
                 <li><b>Hierarquia de Pastas:</b> Arquivos divididos por Modelo (NF-e/CT-e/MDF-e), Status e Série.</li>
                 <li><b>Peneira de Sequência:</b> Identificação exata de números faltantes na cronologia das notas.</li>
                 <li><b>Relatório de Valor:</b> Soma do Valor Contábil por série para conferência rápida.</li>
@@ -214,19 +232,22 @@ if st.session_state['confirmado']:
                                     if b_name.lower().endswith('.xml') and not b_name.startswith(('.', '~')):
                                         items.append((b_name, z_in.read(n)))
                         else: items.append((os.path.basename(f.name), f_bytes))
+                        
                         for name, xml_data in items:
                             res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
                             if res:
                                 key = res["Chave"] if res["Chave"] else name
                                 if key not in p_keys:
                                     p_keys.add(key)
-                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
+                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data)
+                                    z_todos.writestr(name, xml_data)
                                     rel_list.append(res)
                                     if is_p:
                                         if res["Status"] in st_counts: st_counts[res["Status"]] += 1
                                         sk = (res["Tipo"], res["Série"])
                                         if sk not in seq_map: seq_map[sk] = {"nums": set(), "valor": 0.0}
-                                        seq_map[sk]["nums"].add(res["Número"]); seq_map[sk]["valor"] += res["Valor"]
+                                        seq_map[sk]["nums"].add(res["Número"])
+                                        seq_map[sk]["valor"] += res["Valor"]
 
             res_final, nums_encontrados_por_serie = [], {}
             for (t, s), dados in seq_map.items():
@@ -234,13 +255,22 @@ if st.session_state['confirmado']:
                 res_final.append({"Documento": t, "Série": s, "Início": min(ns), "Fim": max(ns), "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)})
                 if s not in nums_encontrados_por_serie: nums_encontrados_por_serie[s] = set()
                 nums_encontrados_por_serie[s].update(ns)
+            
             fal_final = []
             for s, todos_nums in nums_encontrados_por_serie.items():
                 if len(todos_nums) > 1:
                     buracos = sorted(list(set(range(min(todos_nums), max(todos_nums) + 1)) - todos_nums))
                     for b in buracos: fal_final.append({"Série": s, "Nº Faltante": b})
 
-            st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'st_counts': st_counts, 'garimpo_ok': True})
+            st.session_state.update({
+                'z_org': buf_org.getvalue(), 
+                'z_todos': buf_todos.getvalue(), 
+                'relatorio': rel_list, 
+                'df_resumo': pd.DataFrame(res_final), 
+                'df_faltantes': pd.DataFrame(fal_final), 
+                'st_counts': st_counts, 
+                'garimpo_ok': True
+            })
             st.rerun()
     else:
         st.success(f"⛏️ Garimpo Concluído!")
@@ -258,7 +288,7 @@ if st.session_state['confirmado']:
 
         st.divider()
         col1, col2 = st.columns(2)
-        with col1: st.download_button("📂 BAIXAR ORGANIZADO (ZIP)", st.session_state['z_org'], "garimpo_pastas.zip", use_container_width=True)
+        with col1: st.download_button("📂 BAIXAR ORGANIZADO POR DATA (ZIP)", st.session_state['z_org'], "garimpo_organizado.zip", use_container_width=True)
         with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear(); st.rerun()
