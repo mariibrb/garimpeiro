@@ -196,13 +196,14 @@ with st.container():
 
 st.markdown("---")
 
-keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'st_counts']
+keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'st_counts', 'arquivos_brutos']
 for k in keys_to_init:
     if k not in st.session_state:
         if 'df' in k: st.session_state[k] = pd.DataFrame()
         elif 'z_' in k: st.session_state[k] = None
         elif k == 'relatorio': st.session_state[k] = []
         elif k == 'st_counts': st.session_state[k] = {"CANCELADOS": 0, "INUTILIZADOS": 0}
+        elif k == 'arquivos_brutos': st.session_state[k] = None
         else: st.session_state[k] = False
 
 with st.sidebar:
@@ -218,67 +219,83 @@ with st.sidebar:
         st.rerun()
 
 if st.session_state['confirmado']:
+    # Bloco de processamento central (repetível)
+    arquivos_para_processar = []
+    acionar_garimpo = False
+
     if not st.session_state['garimpo_ok']:
         uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
-            p_keys, rel_list, audit_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
-            buf_org, buf_todos = io.BytesIO(), io.BytesIO()
-            with st.status("⛏️ Garimpando dados...", expanded=True):
-                with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
-                     zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
-                    for f in uploaded_files:
-                        f_bytes = f.read()
-                        items = []
-                        if f.name.lower().endswith('.zip'):
-                            with zipfile.ZipFile(io.BytesIO(f_bytes)) as z_in:
-                                for n in z_in.namelist():
-                                    b_name = os.path.basename(n)
-                                    if b_name.lower().endswith('.xml') and not b_name.startswith(('.', '~')):
-                                        items.append((b_name, z_in.read(n)))
-                        else: items.append((os.path.basename(f.name), f_bytes))
-                        
-                        for name, xml_data in items:
-                            res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
-                            if res and res["Número"] > 0:
-                                key = res["Chave"] if res["Chave"] else name
-                                if key not in p_keys:
-                                    p_keys.add(key)
-                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data)
-                                    z_todos.writestr(name, xml_data)
-                                    rel_list.append(res)
-                                    if is_p:
-                                        if res["Status"] in st_counts: st_counts[res["Status"]] += 1
-                                        # Agrupamento para auditoria (Modelo + Série)
-                                        mod_seq = "NF-e" if "NF-e" in res["Tipo"] or "Inutilizacoes" in res["Tipo"] else res["Tipo"]
-                                        if "NFC-e" in res["Tipo"]: mod_seq = "NFC-e"
-                                        
-                                        grupo = (mod_seq, res["Série"])
-                                        if grupo not in audit_map:
-                                            audit_map[grupo] = {"nums": set(), "valor": 0.0}
-                                        audit_map[grupo]["nums"].add(res["Número"])
-                                        audit_map[grupo]["valor"] += res["Valor"]
-
-            res_final, fal_final = [], []
-            for (t, s), dados in audit_map.items():
-                ns = dados["nums"]
-                if ns:
-                    n_min, n_max = min(ns), max(ns) # CAPTURA O INÍCIO E FIM REAIS
-                    res_final.append({
-                        "Documento": t, "Série": s, "Início": n_min, "Fim": n_max, 
-                        "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)
-                    })
-                    buracos = sorted(list(set(range(n_min, n_max + 1)) - ns))
-                    for b in buracos:
-                        fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
-
-            st.session_state.update({
-                'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 
-                'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 
-                'df_faltantes': pd.DataFrame(fal_final), 'st_counts': st_counts, 'garimpo_ok': True
-            })
-            st.rerun()
+            st.session_state['arquivos_brutos'] = [{"name": f.name, "content": f.read()} for f in uploaded_files]
+            arquivos_para_processar = st.session_state['arquivos_brutos']
+            acionar_garimpo = True
     else:
-        st.success(f"⛏️ Garimpo Concluído!")
+        st.success(f"⛏️ Garimpo Concluído! {len(st.session_state['relatorio'])} notas processadas.")
+        # BOTÃO PARA REPROCESSAR
+        if st.button("🔄 REPROCESSAR DADOS ATUAIS (SEM NOVO UPLOAD)"):
+            arquivos_para_processar = st.session_state['arquivos_brutos']
+            acionar_garimpo = True
+
+    if acionar_garimpo and arquivos_para_processar:
+        p_keys, rel_list, audit_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
+        buf_org, buf_todos = io.BytesIO(), io.BytesIO()
+        with st.status("⛏️ Garimpando dados...", expanded=True):
+            with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
+                 zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
+                for f in arquivos_para_processar:
+                    f_bytes = f["content"]
+                    f_name = f["name"]
+                    items = []
+                    if f_name.lower().endswith('.zip'):
+                        with zipfile.ZipFile(io.BytesIO(f_bytes)) as z_in:
+                            for n in z_in.namelist():
+                                b_name = os.path.basename(n)
+                                if b_name.lower().endswith('.xml') and not b_name.startswith(('.', '~')):
+                                    items.append((b_name, z_in.read(n)))
+                    else: items.append((f_name, f_bytes))
+                    
+                    for name, xml_data in items:
+                        res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
+                        if res and res["Número"] > 0:
+                            key = res["Chave"] if res["Chave"] else name
+                            if key not in p_keys:
+                                p_keys.add(key)
+                                z_org.writestr(f"{res['Pasta']}/{name}", xml_data)
+                                z_todos.writestr(name, xml_data)
+                                rel_list.append(res)
+                                if is_p:
+                                    if res["Status"] in st_counts: st_counts[res["Status"]] += 1
+                                    mod_seq = "NF-e" if "NF-e" in res["Tipo"] or "Inutilizacoes" in res["Tipo"] else res["Tipo"]
+                                    if "NFC-e" in res["Tipo"]: mod_seq = "NFC-e"
+                                    
+                                    grupo = (mod_seq, res["Série"])
+                                    if grupo not in audit_map:
+                                        audit_map[grupo] = {"nums": set(), "valor": 0.0}
+                                    audit_map[grupo]["nums"].add(res["Número"])
+                                    audit_map[grupo]["valor"] += res["Valor"]
+
+        res_final, fal_final = [], []
+        for (t, s), dados in audit_map.items():
+            ns = dados["nums"]
+            if ns:
+                n_min, n_max = min(ns), max(ns)
+                res_final.append({
+                    "Documento": t, "Série": s, "Início": n_min, "Fim": n_max, 
+                    "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)
+                })
+                buracos = sorted(list(set(range(n_min, n_max + 1)) - ns))
+                for b in buracos:
+                    fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
+
+        st.session_state.update({
+            'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 
+            'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 
+            'df_faltantes': pd.DataFrame(fal_final), 'st_counts': st_counts, 'garimpo_ok': True
+        })
+        st.rerun()
+
+    # Exibição dos resultados (após o processamento)
+    if st.session_state['garimpo_ok']:
         sc = st.session_state['st_counts']
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 VOLUME TOTAL", len(st.session_state['relatorio']))
