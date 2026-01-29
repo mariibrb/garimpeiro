@@ -34,7 +34,6 @@ def aplicar_estilo_rihanna_original():
 
         div.stButton > button:hover {
             transform: translateY(-5px) !important;
-            opacity: 1 !important;
             box-shadow: 0 10px 20px rgba(255,105,180,0.2) !important;
             border-color: #FF69B4 !important;
             color: #FF69B4 !important;
@@ -65,23 +64,33 @@ def aplicar_estilo_rihanna_original():
             text-align: center;
         }
 
+        /* AJUSTE MESTRE: Sidebar com largura fixa e idêntica */
         [data-testid="stSidebar"] {
             background-color: #FFFFFF !important;
             border-right: 1px solid #FFDEEF !important;
+            min-width: 400px !important;
+            max-width: 400px !important;
         }
 
-        /* Estilo destacado para o campo de CNPJ */
+        /* Estilo destacado para o campo de CNPJ (A Caixinha Rosa) */
         .stTextInput>div>div>input {
             border: 2px solid #FFDEEF !important;
             border-radius: 10px !important;
             padding: 10px !important;
+        }
+        
+        /* Corrigindo a cor dos labels da sidebar para Montserrat Rosa */
+        [data-testid="stSidebar"] .stMarkdown p {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 800;
+            color: #FF69B4;
         }
         </style>
     """, unsafe_allow_html=True)
 
 aplicar_estilo_rihanna_original()
 
-# --- LÓGICA DE IDENTIFICAÇÃO (MOTOR DO GARIMPEIRO) ---
+# --- MOTOR DE IDENTIFICAÇÃO (LÓGICA GARIMPEIRO) ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
@@ -129,7 +138,7 @@ if 'confirmado' not in st.session_state: st.session_state['confirmado'] = False
 with st.sidebar:
     st.markdown("### 🔍 Configuração")
     
-    # Campo EXATAMENTE igual ao Diamond Tax
+    # Input idêntico ao Diamond Tax
     cnpj_input = st.text_input(
         "CNPJ DO CLIENTE", 
         placeholder="00.000.000/0001-00",
@@ -151,11 +160,13 @@ with st.sidebar:
         st.rerun()
 
 if st.session_state['confirmado']:
+    # Mensagem de liberação cinza/preta para bater com o st.info do Diamond
     st.info(f"🏢 Operação liberada para o CNPJ: {cnpj_limpo}")
     
     if 'garimpo_ok' not in st.session_state or not st.session_state['garimpo_ok']:
         uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
+            # Lógica de processamento...
             p_keys, rel_list, seq_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
             with st.status("⛏️ Garimpando dados...", expanded=True):
@@ -194,8 +205,7 @@ if st.session_state['confirmado']:
             fal_final = []
             for s, todos_nums in nums_encontrados_por_serie.items():
                 if len(todos_nums) > 1:
-                    ideal = set(range(min(todos_nums), max(todos_nums) + 1))
-                    buracos = sorted(list(ideal - todos_nums))
+                    buracos = sorted(list(set(range(min(todos_nums), max(todos_nums) + 1)) - todos_nums))
                     for b in buracos: fal_final.append({"Série": s, "Nº Faltante": b})
 
             st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'st_counts': st_counts, 'garimpo_ok': True})
