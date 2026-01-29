@@ -6,7 +6,7 @@ import re
 import pandas as pd
 import random
 
-# --- ESTILO CLONADO E TRAVADO (DNA IDENTICO AO DIAMOND TAX) ---
+# --- CONFIGURAÇÃO E ESTILO (CLONE 1:1 DO DIAMOND TAX) ---
 st.set_page_config(page_title="DIAMOND TAX | O Garimpeiro", layout="wide", page_icon="⛏️")
 
 def aplicar_estilo_diamond_tax_perfeito():
@@ -20,15 +20,7 @@ def aplicar_estilo_diamond_tax_perfeito():
             background: radial-gradient(circle at top right, #FFDEEF 0%, #F8F9FA 100%) !important; 
         }
 
-        /* 2. SIDEBAR TRAVADA - O SEGREDO DA IGUALDADE */
-        [data-testid="stSidebar"] {
-            background-color: #FFFFFF !important;
-            border-right: 1px solid #FFDEEF !important;
-            min-width: 400px !important;
-            max-width: 400px !important;
-        }
-
-        /* 3. BOTÕES (BRANCO GORDINHO IDENTICO) */
+        /* 2. BOTÕES ESTILO DIAMOND (BRANCO GORDINHO) */
         div.stButton > button {
             color: #6C757D !important; 
             background-color: #FFFFFF !important; 
@@ -45,37 +37,13 @@ def aplicar_estilo_diamond_tax_perfeito():
 
         div.stButton > button:hover {
             transform: translateY(-5px) !important;
+            opacity: 1 !important;
             box-shadow: 0 10px 20px rgba(255,105,180,0.2) !important;
             border-color: #FF69B4 !important;
             color: #FF69B4 !important;
         }
 
-        /* 4. CAMPO DE CNPJ (MESMA FONTE E MOLDURA) */
-        .stTextInput>div>div>input {
-            border: 2px solid #FFDEEF !important;
-            border-radius: 10px !important;
-            padding: 10px !important;
-            background-color: white !important;
-            color: #6C757D !important;
-            font-size: 16px !important;
-            font-family: 'Montserrat', sans-serif !important;
-        }
-        
-        .stTextInput label p {
-            font-size: 14px !important;
-            font-weight: 800 !important;
-            color: #6C757D !important;
-        }
-
-        /* 5. TEXTOS E TITULOS */
-        h1, h2, h3 {
-            font-family: 'Montserrat', sans-serif;
-            font-weight: 800;
-            color: #FF69B4 !important;
-            text-align: center;
-        }
-
-        /* 6. UPLOADER E DOWNLOAD */
+        /* 3. UPLOADER E DOWNLOAD ESTILIZADOS */
         [data-testid="stFileUploader"] { 
             border: 2px dashed #FF69B4 !important; 
             border-radius: 20px !important;
@@ -83,6 +51,7 @@ def aplicar_estilo_diamond_tax_perfeito():
             padding: 20px !important;
         }
 
+        [data-testid="stFileUploader"] section button, 
         div.stDownloadButton > button {
             background-color: #FF69B4 !important; 
             color: white !important; 
@@ -92,12 +61,50 @@ def aplicar_estilo_diamond_tax_perfeito():
             box-shadow: 0 0 15px rgba(255, 105, 180, 0.3) !important;
             text-transform: uppercase;
         }
+
+        /* 4. TEXTOS E TÍTULOS */
+        h1, h2, h3 {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 800;
+            color: #FF69B4 !important;
+            text-align: center;
+        }
+
+        /* 5. SIDEBAR CLONE 1:1 (LARGURA FIXA 400PX) */
+        [data-testid="stSidebar"] {
+            background-color: #FFFFFF !important;
+            border-right: 1px solid #FFDEEF !important;
+            min-width: 400px !important;
+            max-width: 400px !important;
+        }
+
+        /* CAMPO DE CNPJ (IDENTICO AO TAX) */
+        .stTextInput>div>div>input {
+            border: 2px solid #FFDEEF !important;
+            border-radius: 10px !important;
+            padding: 10px !important;
+            background-color: white !important;
+            color: #6C757D !important;
+        }
+        
+        /* 6. MÉTRICAS E TABELAS COM DESIGN DIAMOND */
+        [data-testid="stMetric"] {
+            background: white !important;
+            border-radius: 20px !important;
+            border: 1px solid #FFDEEF !important;
+            padding: 15px !important;
+        }
+
+        .stDataFrame {
+            border: 1px solid #FFDEEF !important;
+            border-radius: 15px !important;
+        }
         </style>
     """, unsafe_allow_html=True)
 
 aplicar_estilo_diamond_tax_perfeito()
 
-# --- LÓGICA DE MINERAÇÃO (MOTOR MANTIDO) ---
+# --- MOTOR DE IDENTIFICAÇÃO (LÓGICA ORIGINAL GARIMPEIRO) ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
@@ -137,66 +144,112 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         return resumo, is_p
     except: return None, False
 
-# --- INTERFACE (IGUALZINHA AO TAX) ---
-st.markdown("<h1>💎 DIAMOND TAX</h1>", unsafe_allow_html=True)
+# --- INTERFACE ---
+st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 
-if 'confirmado' not in st.session_state: st.session_state['confirmado'] = False
+# INICIALIZAÇÃO SEGURA
+keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'st_counts']
+for k in keys_to_init:
+    if k not in st.session_state:
+        if 'df' in k: st.session_state[k] = pd.DataFrame()
+        elif 'z_' in k: st.session_state[k] = None
+        elif k == 'relatorio': st.session_state[k] = []
+        elif k == 'st_counts': st.session_state[k] = {"CANCELADOS": 0, "INUTILIZADOS": 0}
+        else: st.session_state[k] = False
 
 with st.sidebar:
     st.markdown("### 🔍 Configuração")
     cnpj_input = st.text_input(
         "CNPJ DO CLIENTE", 
         placeholder="00.000.000/0001-00",
-        help="Digite o CNPJ da empresa que está sendo auditada. Pode conter pontos, barras ou apenas números."
+        help="Digite o CNPJ da empresa para o grande garimpo."
     )
     cnpj_limpo = "".join(filter(str.isdigit, cnpj_input))
-    
-    if cnpj_input and len(cnpj_limpo) != 14:
-        st.error("⚠️ O CNPJ deve ter 14 números.")
-    
     if len(cnpj_limpo) == 14:
         if st.button("✅ LIBERAR OPERAÇÃO"):
             st.session_state['confirmado'] = True
             st.rerun()
-            
+    elif cnpj_input:
+        st.error("⚠️ O CNPJ deve ter 14 números.")
+    
     st.divider()
     if st.button("🗑️ RESETAR SISTEMA"):
         st.session_state.clear()
         st.rerun()
 
 if st.session_state['confirmado']:
-    st.info(f"🏢 Operação liberada para o CNPJ: {cnpj_limpo}")
-    
-    uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
-    
-    if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
-        p_keys, buf_org, buf_todos = set(), io.BytesIO(), io.BytesIO()
-        with st.status("⛏️ Garimpando dados...", expanded=True):
-            with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
-                 zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
-                for f in uploaded_files:
-                    f_bytes = f.read()
-                    items = []
-                    if f.name.lower().endswith('.zip'):
-                        with zipfile.ZipFile(io.BytesIO(f_bytes)) as z_in:
-                            for n in z_in.namelist():
-                                b_name = os.path.basename(n)
-                                if b_name.lower().endswith('.xml') and not b_name.startswith(('.', '~')):
-                                    items.append((b_name, z_in.read(n)))
-                    else: items.append((os.path.basename(f.name), f_bytes))
-                    for name, xml_data in items:
-                        res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
-                        if res:
-                            key = res["Chave"] if res["Chave"] else name
-                            if key not in p_keys:
-                                p_keys.add(key)
-                                z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
+    if not st.session_state['garimpo_ok']:
+        st.info(f"🏢 Operação liberada para o CNPJ: {cnpj_limpo}")
+        uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
+        if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
+            p_keys, rel_list, seq_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
+            buf_org, buf_todos = io.BytesIO(), io.BytesIO()
+            
+            with st.status("⛏️ Garimpando dados...", expanded=True):
+                with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
+                     zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
+                    for f in uploaded_files:
+                        f_bytes = f.read()
+                        items = []
+                        if f.name.lower().endswith('.zip'):
+                            with zipfile.ZipFile(io.BytesIO(f_bytes)) as z_in:
+                                for n in z_in.namelist():
+                                    b_name = os.path.basename(n)
+                                    if b_name.lower().endswith('.xml') and not b_name.startswith(('.', '~')):
+                                        items.append((b_name, z_in.read(n)))
+                        else: items.append((os.path.basename(f.name), f_bytes))
+                        
+                        for name, xml_data in items:
+                            res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
+                            if res:
+                                key = res["Chave"] if res["Chave"] else name
+                                if key not in p_keys:
+                                    p_keys.add(key)
+                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
+                                    rel_list.append(res)
+                                    if is_p:
+                                        if res["Status"] in st_counts: st_counts[res["Status"]] += 1
+                                        sk = (res["Tipo"], res["Série"])
+                                        if sk not in seq_map: seq_map[sk] = {"nums": set(), "valor": 0.0}
+                                        seq_map[sk]["nums"].add(res["Número"]); seq_map[sk]["valor"] += res["Valor"]
+
+            # Montagem dos relatórios (O Garimpeiro raiz!)
+            res_final, nums_encontrados_por_serie = [], {}
+            for (t, s), dados in seq_map.items():
+                ns = dados["nums"]
+                res_final.append({"Documento": t, "Série": s, "Início": min(ns), "Fim": max(ns), "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)})
+                if s not in nums_encontrados_por_serie: nums_encontrados_por_serie[s] = set()
+                nums_encontrados_por_serie[s].update(ns)
+            fal_final = []
+            for s, todos_nums in nums_encontrados_por_serie.items():
+                if len(todos_nums) > 1:
+                    buracos = sorted(list(set(range(min(todos_nums), max(todos_nums) + 1)) - todos_nums))
+                    for b in buracos: fal_final.append({"Série": s, "Nº Faltante": b})
+
+            st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'st_counts': st_counts, 'garimpo_ok': True})
+            st.rerun()
+    else:
+        st.success(f"⛏️ Garimpo Concluído com Sucesso!")
         
-        st.success("💎 Garimpo Concluído!")
+        # Métricas e Tabelas do Garimpeiro voltaram!
+        sc = st.session_state['st_counts']
+        c1, c2, c3 = st.columns(3)
+        c1.metric("📦 VOLUME", len(st.session_state['relatorio']))
+        c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
+        c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
+
+        st.markdown("### 📊 RESUMO POR SÉRIE E VALOR CONTÁBIL")
+        st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
+
+        if not st.session_state['df_faltantes'].empty:
+            st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (BURACOS REAIS)")
+            st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
+
         st.divider()
         col1, col2 = st.columns(2)
-        with col1: st.download_button("📂 BAIXAR ORGANIZADO", buf_org.getvalue(), "garimpo_pastas.zip", use_container_width=True)
-        with col2: st.download_button("📦 BAIXAR TODOS", buf_todos.getvalue(), "todos_xml.zip", use_container_width=True)
+        with col1: st.download_button("📂 BAIXAR ORGANIZADO (PASTAS)", st.session_state['z_org'], "garimpo_pastas.zip", use_container_width=True)
+        with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
+        
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear(); st.rerun()
 else:
