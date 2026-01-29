@@ -6,7 +6,7 @@ import re
 import pandas as pd
 import random
 
-# --- CONFIGURAÇÃO E ESTILO (COPIADO LITERALMENTE DO SEU DIAMOND TAX) ---
+# --- ESTILO CLONADO DIRETAMENTE DO DIAMOND TAX ---
 st.set_page_config(page_title="DIAMOND TAX | O Garimpeiro", layout="wide", page_icon="⛏️")
 
 def aplicar_estilo_rihanna_original():
@@ -68,8 +68,6 @@ def aplicar_estilo_rihanna_original():
         [data-testid="stSidebar"] {
             background-color: #FFFFFF !important;
             border-right: 1px solid #FFDEEF !important;
-            min-width: 400px !important;
-            max-width: 400px !important;
         }
 
         /* Estilo destacado para o campo de CNPJ */
@@ -83,7 +81,7 @@ def aplicar_estilo_rihanna_original():
 
 aplicar_estilo_rihanna_original()
 
-# --- MOTOR DE IDENTIFICAÇÃO (LÓGICA DO GARIMPEIRO) ---
+# --- LÓGICA DE IDENTIFICAÇÃO (MOTOR DO GARIMPEIRO) ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
@@ -130,6 +128,8 @@ if 'confirmado' not in st.session_state: st.session_state['confirmado'] = False
 
 with st.sidebar:
     st.markdown("### 🔍 Configuração")
+    
+    # Campo EXATAMENTE igual ao Diamond Tax
     cnpj_input = st.text_input(
         "CNPJ DO CLIENTE", 
         placeholder="00.000.000/0001-00",
@@ -144,7 +144,7 @@ with st.sidebar:
         if st.button("✅ LIBERAR OPERAÇÃO"):
             st.session_state['confirmado'] = True
             st.rerun()
-            
+    
     st.divider()
     if st.button("🗑️ RESETAR SISTEMA"):
         st.session_state.clear()
@@ -185,7 +185,6 @@ if st.session_state['confirmado']:
                                         if sk not in seq_map: seq_map[sk] = {"nums": set(), "valor": 0.0}
                                         seq_map[sk]["nums"].add(res["Número"]); seq_map[sk]["valor"] += res["Valor"]
 
-            # Lógica de relatórios mantida
             res_final, nums_encontrados_por_serie = [], {}
             for (t, s), dados in seq_map.items():
                 ns = dados["nums"]
@@ -195,13 +194,14 @@ if st.session_state['confirmado']:
             fal_final = []
             for s, todos_nums in nums_encontrados_por_serie.items():
                 if len(todos_nums) > 1:
-                    buracos = sorted(list(set(range(min(todos_nums), max(todos_nums) + 1)) - todos_nums))
+                    ideal = set(range(min(todos_nums), max(todos_nums) + 1))
+                    buracos = sorted(list(ideal - todos_nums))
                     for b in buracos: fal_final.append({"Série": s, "Nº Faltante": b})
 
             st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'st_counts': st_counts, 'garimpo_ok': True})
             st.rerun()
     else:
-        st.success(f"⛏️ Garimpo Concluído com Sucesso!")
+        st.success("✨ Garimpo Concluído!")
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
         st.divider()
         col1, col2 = st.columns(2)
