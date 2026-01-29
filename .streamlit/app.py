@@ -6,7 +6,7 @@ import re
 import pandas as pd
 import random
 
-# --- CONFIGURAÇÃO E ESTILO ---
+# --- CONFIGURAÇÃO E ESTILO (CLONE ABSOLUTO DO DIAMOND TAX) ---
 st.set_page_config(page_title="O GARIMPEIRO | Premium Edition", layout="wide", page_icon="⛏️")
 
 def aplicar_estilo_premium():
@@ -106,39 +106,43 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
     }
     
     try:
-        content_str = content_bytes[:20000].decode('utf-8', errors='ignore')
+        content_str = content_bytes[:30000].decode('utf-8', errors='ignore')
         if '<?xml' not in content_str and '<inf' not in content_str: return None, False
         
         match_ch = re.search(r'\d{44}', content_str)
         resumo["Chave"] = match_ch.group(0) if match_ch else ""
+        tag_l = content_str.lower()
         
-        # Extração de Data para Organização de Pastas
-        data_match = re.search(r'<(?:dhemi|dhregevento)>(\d{4})-(\d{2})', content_str.lower())
+        # Extração de Data (Ano/Mês) para pastas
+        data_match = re.search(r'<(?:dhemi|dhregevento)>(\d{4})-(\d{2})', tag_l)
         if data_match:
             resumo["Ano"], resumo["Mes"] = data_match.group(1), data_match.group(2)
         elif resumo["Chave"]:
             resumo["Ano"] = "20" + resumo["Chave"][2:4]
             resumo["Mes"] = resumo["Chave"][4:6]
 
-        tag_l = content_str.lower()
+        # Identificação Precisa de Modelos (55, 65, 57)
         tipo = "NF-e"
         if '<mod>65</mod>' in tag_l: tipo = "NFC-e"
-        elif '<infcte' in tag_l: tipo = "CT-e"
+        elif '<infcte' in tag_l or '<mod>57</mod>' in tag_l: tipo = "CT-e"
         elif '<infmdfe' in tag_l: tipo = "MDF-e"
         
         status = "NORMAIS"
+        tipo_pasta = tipo
         if '110111' in tag_l: status = "CANCELADOS"
         elif '110110' in tag_l: status = "CARTA_CORRECAO"
-        elif '<inutnfe' in tag_l or '<procinut' in tag_l:
+        elif '<inutnfe' in tag_l or '<procinut' in tag_l or '<inutcte' in tag_l:
             status = "INUTILIZADOS"
-            tipo = "Inutilizacoes"
+            tipo_pasta = "Inutilizacoes"
             
         resumo["Tipo"], resumo["Status"] = tipo, status
         resumo["Série"] = re.search(r'<(?:serie)>(\d+)</', tag_l).group(1) if re.search(r'<(?:serie)>(\d+)</', tag_l) else "0"
         
-        n_match = re.search(r'<(?:nnf|nct|nmdf|nnfini)>(\d+)</', tag_l)
+        # Numeração
+        n_match = re.search(r'<(?:nnf|nct|nmdf|nnfini|ninfini)>(\d+)</', tag_l)
         resumo["Número"] = int(n_match.group(1)) if n_match else 0
         
+        # Valor Contábil
         if status == "NORMAIS":
             v_match = re.search(r'<(?:vnf|vtprest)>([\d.]+)</', tag_l)
             resumo["Valor"] = float(v_match.group(1)) if v_match else 0.0
@@ -146,9 +150,9 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         cnpj_emit = re.search(r'<cnpj>(\d+)</cnpj>', tag_l).group(1) if re.search(r'<cnpj>(\d+)</cnpj>', tag_l) else ""
         is_p = (cnpj_emit == client_cnpj_clean) or (resumo["Chave"] and client_cnpj_clean in resumo["Chave"][6:20])
         
-        # Hierarquia de Pastas Atualizada: Cliente/Tipo/Status/Ano/Mes/Serie
+        # Organização Hierárquica Solicitada
         if is_p:
-            resumo["Pasta"] = f"EMITIDOS_CLIENTE/{tipo}/{status}/{resumo['Ano']}/{resumo['Mes']}/Serie_{resumo['Série']}"
+            resumo["Pasta"] = f"EMITIDOS_CLIENTE/{tipo_pasta}/{status}/{resumo['Ano']}/{resumo['Mes']}/Serie_{resumo['Série']}"
         else:
             resumo["Pasta"] = f"RECEBIDOS_TERCEIROS/{tipo}/{resumo['Ano']}/{resumo['Mes']}"
             
@@ -167,8 +171,8 @@ with st.container():
             <ol>
                 <li><b>Arquivos:</b> Arraste seus arquivos XML ou pastas ZIP.</li>
                 <li><b>Processamento:</b> Clique em <b>"🚀 INICIAR GRANDE GARIMPO"</b>.</li>
-                <li><b>Auditoria:</b> O sistema checa buracos na numeração do início ao fim do lote.</li>
-                <li><b>Download:</b> Baixe o ZIP organizado por <b>Ano e Mês</b>.</li>
+                <li><b>Auditoria:</b> O sistema checa buracos na numeração entre o menor e maior número.</li>
+                <li><b>Download:</b> Baixe o ZIP organizado por <b>Emitido/Recebido</b> e <b>Ano/Mês</b>.</li>
             </ol>
         </div>
         """, unsafe_allow_html=True)
@@ -177,10 +181,10 @@ with st.container():
         <div class="instrucoes-card">
             <h3>📊 O que será obtido?</h3>
             <ul>
-                <li><b>Organização Temporal:</b> Pastas separadas por Ano e Mês de emissão.</li>
-                <li><b>Hierarquia Fiscal:</b> Separação por Modelo, Status e Série.</li>
-                <li><b>Peneira de Sequência:</b> Auditoria completa do menor ao maior número enviado.</li>
-                <li><b>Relatório de Valor:</b> Soma total por série.</li>
+                <li><b>Divisão Cronológica:</b> Pastas separadas por Ano e Mês de emissão.</li>
+                <li><b>Hierarquia Fiscal:</b> Separação por Emitente, Modelo, Status e Série.</li>
+                <li><b>Peneira de Sequência:</b> Auditoria completa do lote (Início ao Fim).</li>
+                <li><b>Relatório de Valor:</b> Soma do Valor Contábil exibido por série.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -212,7 +216,7 @@ if st.session_state['confirmado']:
     if not st.session_state['garimpo_ok']:
         uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
-            p_keys, rel_list, seq_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
+            p_keys, rel_list, audit_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
             with st.status("⛏️ Garimpando dados...", expanded=True):
                 with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
@@ -239,23 +243,28 @@ if st.session_state['confirmado']:
                                     rel_list.append(res)
                                     if is_p:
                                         if res["Status"] in st_counts: st_counts[res["Status"]] += 1
-                                        sk = (res["Tipo"], res["Série"])
-                                        if sk not in seq_map: seq_map[sk] = {"nums": set(), "valor": 0.0}
-                                        seq_map[sk]["nums"].add(res["Número"])
-                                        seq_map[sk]["valor"] += res["Valor"]
+                                        # Agrupamento para auditoria (Modelo + Série)
+                                        # Unifica Notas e Inutilizações na mesma sequência para evitar buracos falsos
+                                        mod_seq = "NF-e" if "NF-e" in res["Tipo"] or "Inutilizacoes" in res["Tipo"] else res["Tipo"]
+                                        if "NFC-e" in res["Tipo"]: mod_seq = "NFC-e"
+                                        
+                                        grupo = (mod_seq, res["Série"])
+                                        if grupo not in audit_map:
+                                            audit_map[grupo] = {"nums": set(), "valor": 0.0}
+                                        audit_map[grupo]["nums"].add(res["Número"])
+                                        audit_map[grupo]["valor"] += res["Valor"]
 
             res_final, fal_final = [], []
-            for (t, s), dados in seq_map.items():
-                ns = sorted(list(dados["nums"]))
+            for (t, s), dados in audit_map.items():
+                ns = dados["nums"]
                 if ns:
                     n_min, n_max = min(ns), max(ns)
                     res_final.append({
                         "Documento": t, "Série": s, "Início": n_min, "Fim": n_max, 
                         "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)
                     })
-                    # Lógica de Auditoria: Verifica todos os números entre o inicial e o final do lote
-                    sequencia_esperada = set(range(n_min, n_max + 1))
-                    buracos = sorted(list(sequencia_esperada - dados["nums"]))
+                    # Auditoria Real: Salto na numeração que não possui XML (Nota ou Inutilização)
+                    buracos = sorted(list(set(range(n_min, n_max + 1)) - ns))
                     for b in buracos:
                         fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
 
@@ -273,17 +282,19 @@ if st.session_state['confirmado']:
         c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
         c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
 
-        st.markdown("### 📊 RESUMO POR SÉRIE E VALOR")
+        st.markdown("### 📊 RESUMO POR SÉRIE E VALOR CONTÁBIL")
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
         
         if not st.session_state['df_faltantes'].empty:
             st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (BURACOS NO LOTE)")
             st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
+        else:
+            st.info("✅ Nenhuma quebra de sequência detectada no lote enviado.")
 
         st.divider()
         col1, col2 = st.columns(2)
-        with col1: st.download_button("📂 BAIXAR ORGANIZADO (ZIP)", st.session_state['z_org'], "garimpo_organizado.zip", use_container_width=True)
-        with col2: st.download_button("📦 BAIXAR TODOS (XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
+        with col1: st.download_button("📂 BAIXAR ORGANIZADO (ANO/MÊS)", st.session_state['z_org'], "garimpo_organizado.zip", use_container_width=True)
+        with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear(); st.rerun()
 else:
