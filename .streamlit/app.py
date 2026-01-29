@@ -6,21 +6,19 @@ import re
 import pandas as pd
 import random
 
-# --- CONFIGURAÇÃO E ESTILO DIAMOND TAX (DNA IDENTICO) ---
+# --- CONFIGURAÇÃO E ESTILO (COPIADO LITERALMENTE DO SEU DIAMOND TAX) ---
 st.set_page_config(page_title="DIAMOND TAX | O Garimpeiro", layout="wide", page_icon="⛏️")
 
-def aplicar_estilo_diamond_tax_real():
+def aplicar_estilo_rihanna_original():
     st.markdown("""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;800&family=Plus+Jakarta+Sans:wght@400;700&display=swap');
 
-        /* 1. FUNDAÇÃO GRADIENTE PINK/SOFT */
         header, [data-testid="stHeader"] { display: none !important; }
         .stApp { 
             background: radial-gradient(circle at top right, #FFDEEF 0%, #F8F9FA 100%) !important; 
         }
 
-        /* 2. BOTÕES ESTILO DIAMOND TAX (BRANCO GORDINHO) */
         div.stButton > button {
             color: #6C757D !important; 
             background-color: #FFFFFF !important; 
@@ -36,12 +34,12 @@ def aplicar_estilo_diamond_tax_real():
 
         div.stButton > button:hover {
             transform: translateY(-5px) !important;
+            opacity: 1 !important;
             box-shadow: 0 10px 20px rgba(255,105,180,0.2) !important;
             border-color: #FF69B4 !important;
             color: #FF69B4 !important;
         }
 
-        /* 3. UPLOADER E DOWNLOAD ESTILIZADOS EM ROSA */
         [data-testid="stFileUploader"] { 
             border: 2px dashed #FF69B4 !important; 
             border-radius: 20px !important;
@@ -60,7 +58,6 @@ def aplicar_estilo_diamond_tax_real():
             text-transform: uppercase;
         }
 
-        /* 4. TEXTOS E TÍTULOS */
         h1, h2, h3 {
             font-family: 'Montserrat', sans-serif;
             font-weight: 800;
@@ -68,27 +65,25 @@ def aplicar_estilo_diamond_tax_real():
             text-align: center;
         }
 
-        /* 5. SIDEBAR CLONE 1:1 (LARGURA FIXA E COR) */
         [data-testid="stSidebar"] {
             background-color: #FFFFFF !important;
             border-right: 1px solid #FFDEEF !important;
-            min-width: 450px !important; /* FORÇA A LARGURA IGUAL DO DIAMOND TAX */
-            max-width: 450px !important;
+            min-width: 400px !important;
+            max-width: 400px !important;
         }
 
-        /* CAMPO DE CNPJ (IDENTICO AO DIAMOND TAX) */
+        /* Estilo destacado para o campo de CNPJ */
         .stTextInput>div>div>input {
             border: 2px solid #FFDEEF !important;
             border-radius: 10px !important;
             padding: 10px !important;
-            background-color: white !important;
         }
         </style>
     """, unsafe_allow_html=True)
 
-aplicar_estilo_diamond_tax_real()
+aplicar_estilo_rihanna_original()
 
-# --- MOTOR DE IDENTIFICAÇÃO ---
+# --- MOTOR DE IDENTIFICAÇÃO (LÓGICA DO GARIMPEIRO) ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
@@ -131,19 +126,10 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
 # --- INTERFACE ---
 st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 
-# INICIALIZAÇÃO DE ESTADO
-keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'st_counts']
-for k in keys_to_init:
-    if k not in st.session_state:
-        if 'df' in k: st.session_state[k] = pd.DataFrame()
-        elif 'z_' in k: st.session_state[k] = None
-        elif k == 'relatorio': st.session_state[k] = []
-        elif k == 'st_counts': st.session_state[k] = {"CANCELADOS": 0, "INUTILIZADOS": 0}
-        else: st.session_state[k] = False
+if 'confirmado' not in st.session_state: st.session_state['confirmado'] = False
 
 with st.sidebar:
     st.markdown("### 🔍 Configuração")
-    # CAMPO IDÊNTICO AO DIAMOND TAX
     cnpj_input = st.text_input(
         "CNPJ DO CLIENTE", 
         placeholder="00.000.000/0001-00",
@@ -167,10 +153,9 @@ with st.sidebar:
 if st.session_state['confirmado']:
     st.info(f"🏢 Operação liberada para o CNPJ: {cnpj_limpo}")
     
-    if not st.session_state['garimpo_ok']:
+    if 'garimpo_ok' not in st.session_state or not st.session_state['garimpo_ok']:
         uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
-            # Lógica original do garimpeiro...
             p_keys, rel_list, seq_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
             with st.status("⛏️ Garimpando dados...", expanded=True):
@@ -200,6 +185,7 @@ if st.session_state['confirmado']:
                                         if sk not in seq_map: seq_map[sk] = {"nums": set(), "valor": 0.0}
                                         seq_map[sk]["nums"].add(res["Número"]); seq_map[sk]["valor"] += res["Valor"]
 
+            # Lógica de relatórios mantida
             res_final, nums_encontrados_por_serie = [], {}
             for (t, s), dados in seq_map.items():
                 ns = dados["nums"]
@@ -215,16 +201,8 @@ if st.session_state['confirmado']:
             st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'st_counts': st_counts, 'garimpo_ok': True})
             st.rerun()
     else:
-        st.success("⛏️ Garimpo Concluído!")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("📦 VOLUME", len(st.session_state['relatorio']))
-        c2.metric("❌ CANCELADAS", st.session_state['st_counts'].get("CANCELADOS", 0))
-        c3.metric("🚫 INUTILIZADAS", st.session_state['st_counts'].get("INUTILIZADOS", 0))
-        st.markdown("### 📊 RESUMO POR SÉRIE")
+        st.success(f"⛏️ Garimpo Concluído com Sucesso!")
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
-        if not st.session_state['df_faltantes'].empty:
-            st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA")
-            st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
         st.divider()
         col1, col2 = st.columns(2)
         with col1: st.download_button("📂 BAIXAR ORGANIZADO", st.session_state['z_org'], "garimpo_pastas.zip", use_container_width=True)
@@ -232,4 +210,4 @@ if st.session_state['confirmado']:
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear(); st.rerun()
 else:
-    st.markdown("<h3 style='font-size:16px; color:#6C757D !important; text-align:center;'>👈 Insira o CNPJ na barra lateral para começar.</h3>", unsafe_allow_html=True)
+    st.warning("👈 Insira o CNPJ na barra lateral para começar.")
