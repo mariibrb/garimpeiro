@@ -163,6 +163,34 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         return resumo, is_p
     except: return None, False
 
+# --- FUNÇÃO RECURSIVA PARA MERGULHAR EM PASTAS E ZIPS (O AJUSTE) ---
+def extrair_recursivo(conteudo_zip_ou_xml, nome_arquivo):
+    itens_encontrados = []
+    
+    # Se for um ZIP, mergulha
+    if nome_arquivo.lower().endswith('.zip'):
+        try:
+            with zipfile.ZipFile(io.BytesIO(conteudo_zip_ou_xml)) as z:
+                for sub_nome in z.namelist():
+                    # Ignora lixo de sistema
+                    if sub_nome.startswith('__MACOSX') or os.path.basename(sub_nome).startswith('.'):
+                        continue
+                    
+                    sub_conteudo = z.read(sub_nome)
+                    # RECURSÃO: Se achar outro ZIP lá dentro, chama a função de novo
+                    if sub_nome.lower().endswith('.zip'):
+                        itens_encontrados.extend(extrair_recursivo(sub_conteudo, sub_nome))
+                    # Se for XML, guarda
+                    elif sub_nome.lower().endswith('.xml'):
+                        itens_encontrados.append((os.path.basename(sub_nome), sub_conteudo))
+        except Exception:
+            pass
+    # Se for XML direto no upload
+    elif nome_arquivo.lower().endswith('.xml'):
+        itens_encontrados.append((os.path.basename(nome_arquivo), conteudo_zip_ou_xml))
+        
+    return itens_encontrados
+
 # --- INTERFACE ---
 st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 
@@ -173,7 +201,7 @@ with st.container():
         <div class="instrucoes-card">
             <h3>📖 Passo a Passo</h3>
             <ol>
-                <li><b>Arquivos:</b> Arraste seus arquivos XML ou pastas ZIP.</li>
+                <li><b>Arquivos:</b> Arraste seus arquivos XML ou pastas ZIP (mesmo com ZIPS internos).</li>
                 <li><b>Processamento:</b> Clique em <b>"🚀 INICIAR GRANDE GARIMPO"</b>.</li>
                 <li><b>Auditoria:</b> O sistema checa buracos na numeração entre o menor e maior número.</li>
                 <li><b>Download:</b> Baixe o ZIP organizado por <b>Emitido/Recebido</b> e <b>Ano/Mês</b>.</li>
@@ -185,10 +213,10 @@ with st.container():
         <div class="instrucoes-card">
             <h3>📊 O que será obtido?</h3>
             <ul>
+                <li><b>Garimpo Profundo:</b> Abertura de pastas e ZIPS dentro de outros ZIPS.</li>
                 <li><b>Divisão Cronológica:</b> Pastas separadas por Ano e Mês de emissão.</li>
                 <li><b>Hierarquia Fiscal:</b> Separação por Emitente, Modelo, Status e Série.</li>
                 <li><b>Peneira de Sequência:</b> Auditoria completa do lote (Início ao Fim).</li>
-                <li><b>Relatório de Valor:</b> Soma do Valor Contábil exibido por série.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -222,21 +250,16 @@ if st.session_state['confirmado']:
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
             p_keys, rel_list, audit_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
-            with st.status("⛏️ Garimpando dados...", expanded=True):
+            with st.status("⛏️ Mergulhando nas profundezas das pastas...", expanded=True):
                 with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
                      zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
+                    
                     for f in uploaded_files:
                         f_bytes = f.read()
-                        items = []
-                        if f.name.lower().endswith('.zip'):
-                            with zipfile.ZipFile(io.BytesIO(f_bytes)) as z_in:
-                                for n in z_in.namelist():
-                                    b_name = os.path.basename(n)
-                                    if b_name.lower().endswith('.xml') and not b_name.startswith(('.', '~')):
-                                        items.append((b_name, z_in.read(n)))
-                        else: items.append((os.path.basename(f.name), f_bytes))
+                        # CHAMADA RECURSIVA: Abre ZIPS dentro de ZIPS
+                        todos_xmls = extrair_recursivo(f_bytes, f.name)
                         
-                        for name, xml_data in items:
+                        for name, xml_data in todos_xmls:
                             res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
                             if res and res["Número"] > 0:
                                 key = res["Chave"] if res["Chave"] else name
