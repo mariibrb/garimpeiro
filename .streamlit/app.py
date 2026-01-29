@@ -81,7 +81,7 @@ def aplicar_estilo_rihanna_original():
 
 aplicar_estilo_rihanna_original()
 
-# --- MOTOR DE IDENTIFICAÇÃO (MANTIDO) ---
+# --- MOTOR DE IDENTIFICAÇÃO (MANTENDO HIERARQUIA DO GARIMPEIRO) ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
@@ -122,7 +122,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
     except: return None, False
 
 # --- INTERFACE ---
-st.markdown("<h1>💎 DIAMOND TAX</h1>", unsafe_allow_html=True)
+st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 
 if 'confirmado' not in st.session_state: st.session_state['confirmado'] = False
 
@@ -149,14 +149,16 @@ with st.sidebar:
         st.rerun()
 
 if st.session_state['confirmado']:
-    # Componente idêntico ao Tax
+    # Componente st.info IDÊNTICO ao Diamond Tax (letras escuras padrão)
     st.info(f"🏢 Operação liberada para o CNPJ: {cnpj_limpo}")
     
-    if 'garimpo_ok' not in st.session_state or not st.session_state['garimpo_ok']:
-        uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
-        if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
-            p_keys, rel_list, seq_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
-            buf_org, buf_todos = io.BytesIO(), io.BytesIO()
+    # Campo de Upload IDÊNTICO
+    uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
+    
+    if uploaded_files:
+        if st.button("🚀 INICIAR GRANDE GARIMPO"):
+            # Lógica de processamento silenciosa para manter a tela limpa como o Tax
+            p_keys, buf_org, buf_todos = set(), io.BytesIO(), io.BytesIO()
             with st.status("⛏️ Garimpando dados...", expanded=True):
                 with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
                      zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
@@ -170,29 +172,27 @@ if st.session_state['confirmado']:
                                     if b_name.lower().endswith('.xml') and not b_name.startswith(('.', '~')):
                                         items.append((b_name, z_in.read(n)))
                         else: items.append((os.path.basename(f.name), f_bytes))
+                        
                         for name, xml_data in items:
                             res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
                             if res:
                                 key = res["Chave"] if res["Chave"] else name
                                 if key not in p_keys:
                                     p_keys.add(key)
-                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
-                                    rel_list.append(res)
-                                    if is_p:
-                                        if res["Status"] in st_counts: st_counts[res["Status"]] += 1
-                                        sk = (res["Tipo"], res["Série"])
-                                        if sk not in seq_map: seq_map[sk] = {"nums": set(), "valor": 0.0}
-                                        seq_map[sk]["nums"].add(res["Número"]); seq_map[sk]["valor"] += res["Valor"]
+                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data)
+                                    z_todos.writestr(name, xml_data)
 
-            st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'garimpo_ok': True})
-            st.rerun()
-    else:
-        st.success("💎 Garimpo Concluído!")
-        st.divider()
-        col1, col2 = st.columns(2)
-        with col1: st.download_button("📂 BAIXAR ORGANIZADO", st.session_state['z_org'], "garimpo_pastas.zip", use_container_width=True)
-        with col2: st.download_button("📦 BAIXAR TODOS", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
-        if st.button("⛏️ NOVO GARIMPO"):
-            st.session_state.clear(); st.rerun()
+            st.success("💎 Garimpo Concluído!")
+            st.divider()
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button("📂 BAIXAR ORGANIZADO", buf_org.getvalue(), "garimpo_pastas.zip", use_container_width=True)
+            with col2:
+                st.download_button("📦 BAIXAR TODOS", buf_todos.getvalue(), "todos_xml.zip", use_container_width=True)
+            
+            if st.button("⛏️ NOVO GARIMPO"):
+                st.session_state.clear()
+                st.rerun()
 else:
     st.warning("👈 Insira o CNPJ na barra lateral para começar.")
