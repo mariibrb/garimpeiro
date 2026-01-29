@@ -9,16 +9,18 @@ import random
 # --- CONFIGURAÇÃO E ESTILO (CLONE ABSOLUTO DO DIAMOND TAX) ---
 st.set_page_config(page_title="DIAMOND TAX | O Garimpeiro", layout="wide", page_icon="⛏️")
 
-def aplicar_estilo_rihanna_original():
+def aplicar_estilo_diamond_tax_real():
     st.markdown("""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;800&family=Plus+Jakarta+Sans:wght@400;700&display=swap');
 
+        /* 1. FUNDAÇÃO E CABEÇALHO */
         header, [data-testid="stHeader"] { display: none !important; }
         .stApp { 
             background: radial-gradient(circle at top right, #FFDEEF 0%, #F8F9FA 100%) !important; 
         }
 
+        /* 2. BOTÕES ESTILO DIAMOND (BRANCO GORDINHO) */
         div.stButton > button {
             color: #6C757D !important; 
             background-color: #FFFFFF !important; 
@@ -30,6 +32,7 @@ def aplicar_estilo_rihanna_original():
             text-transform: uppercase;
             transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important;
             width: 100% !important;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05) !important;
         }
 
         div.stButton > button:hover {
@@ -40,6 +43,7 @@ def aplicar_estilo_rihanna_original():
             color: #FF69B4 !important;
         }
 
+        /* 3. UPLOADER E DOWNLOAD ESTILIZADOS */
         [data-testid="stFileUploader"] { 
             border: 2px dashed #FF69B4 !important; 
             border-radius: 20px !important;
@@ -58,6 +62,7 @@ def aplicar_estilo_rihanna_original():
             text-transform: uppercase;
         }
 
+        /* 4. TEXTOS E TÍTULOS */
         h1, h2, h3 {
             font-family: 'Montserrat', sans-serif;
             font-weight: 800;
@@ -65,23 +70,37 @@ def aplicar_estilo_rihanna_original():
             text-align: center;
         }
 
+        /* 5. SIDEBAR CLONE 1:1 (LARGURA E ESPAÇAMENTO DO TAX) */
         [data-testid="stSidebar"] {
             background-color: #FFFFFF !important;
             border-right: 1px solid #FFDEEF !important;
         }
+        
+        /* Força a largura do conteúdo da sidebar para ser igual ao Tax */
+        [data-testid="stSidebar"] > div:first-child {
+            width: 350px !important;
+        }
 
-        /* Estilo destacado para o campo de CNPJ */
+        /* Estilo destacado para o campo de CNPJ (Moldura Rosa do Tax) */
         .stTextInput>div>div>input {
             border: 2px solid #FFDEEF !important;
             border-radius: 10px !important;
             padding: 10px !important;
+            background-color: white !important;
+            color: #6C757D !important;
+        }
+        
+        .stTextInput>label {
+            color: #FF69B4 !important;
+            font-weight: 800 !important;
+            font-family: 'Montserrat', sans-serif !important;
         }
         </style>
     """, unsafe_allow_html=True)
 
-aplicar_estilo_rihanna_original()
+aplicar_estilo_diamond_tax_real()
 
-# --- MOTOR DE IDENTIFICAÇÃO (MANTENDO HIERARQUIA DO GARIMPEIRO) ---
+# --- MOTOR DE IDENTIFICAÇÃO (LÓGICA ORIGINAL MANTIDA) ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
@@ -122,12 +141,14 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
     except: return None, False
 
 # --- INTERFACE ---
-st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
+st.markdown("<h1>💎 DIAMOND TAX</h1>", unsafe_allow_html=True)
 
 if 'confirmado' not in st.session_state: st.session_state['confirmado'] = False
 
 with st.sidebar:
     st.markdown("### 🔍 Configuração")
+    
+    # Campo idêntico ao Diamond Tax (Placeholders e Cores)
     cnpj_input = st.text_input(
         "CNPJ DO CLIENTE", 
         placeholder="00.000.000/0001-00",
@@ -142,22 +163,18 @@ with st.sidebar:
         if st.button("✅ LIBERAR OPERAÇÃO"):
             st.session_state['confirmado'] = True
             st.rerun()
-    
+            
     st.divider()
     if st.button("🗑️ RESETAR SISTEMA"):
         st.session_state.clear()
         st.rerun()
 
 if st.session_state['confirmado']:
-    # Componente st.info IDÊNTICO ao Diamond Tax (letras escuras padrão)
     st.info(f"🏢 Operação liberada para o CNPJ: {cnpj_limpo}")
     
-    # Campo de Upload IDÊNTICO
-    uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
-    
-    if uploaded_files:
-        if st.button("🚀 INICIAR GRANDE GARIMPO"):
-            # Lógica de processamento silenciosa para manter a tela limpa como o Tax
+    if 'garimpo_ok' not in st.session_state or not st.session_state['garimpo_ok']:
+        uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
+        if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
             p_keys, buf_org, buf_todos = set(), io.BytesIO(), io.BytesIO()
             with st.status("⛏️ Garimpando dados...", expanded=True):
                 with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
@@ -172,27 +189,23 @@ if st.session_state['confirmado']:
                                     if b_name.lower().endswith('.xml') and not b_name.startswith(('.', '~')):
                                         items.append((b_name, z_in.read(n)))
                         else: items.append((os.path.basename(f.name), f_bytes))
-                        
                         for name, xml_data in items:
                             res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
                             if res:
                                 key = res["Chave"] if res["Chave"] else name
                                 if key not in p_keys:
                                     p_keys.add(key)
-                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data)
-                                    z_todos.writestr(name, xml_data)
-
-            st.success("💎 Garimpo Concluído!")
-            st.divider()
+                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
             
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button("📂 BAIXAR ORGANIZADO", buf_org.getvalue(), "garimpo_pastas.zip", use_container_width=True)
-            with col2:
-                st.download_button("📦 BAIXAR TODOS", buf_todos.getvalue(), "todos_xml.zip", use_container_width=True)
-            
-            if st.button("⛏️ NOVO GARIMPO"):
-                st.session_state.clear()
-                st.rerun()
+            st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'garimpo_ok': True})
+            st.rerun()
+    else:
+        st.success("💎 Garimpo Concluído!")
+        st.divider()
+        col1, col2 = st.columns(2)
+        with col1: st.download_button("📂 BAIXAR ORGANIZADO", st.session_state['z_org'], "garimpo_pastas.zip", use_container_width=True)
+        with col2: st.download_button("📦 BAIXAR TODOS", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
+        if st.button("⛏️ NOVO GARIMPO"):
+            st.session_state.clear(); st.rerun()
 else:
     st.warning("👈 Insira o CNPJ na barra lateral para começar.")
