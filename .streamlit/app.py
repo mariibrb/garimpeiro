@@ -61,7 +61,7 @@ def aplicar_estilo_diamond_perfeito():
             text-transform: uppercase;
         }
 
-        /* 4. TEXTOS E TÍTULOS */
+        /* 4. TEXTOS E TÍTULOS (Sempre em Rosa Diamond) */
         h1, h2, h3 {
             font-family: 'Montserrat', sans-serif;
             font-weight: 800;
@@ -69,10 +69,10 @@ def aplicar_estilo_diamond_perfeito():
             text-align: center;
         }
 
-        /* 5. SIDEBAR CLONE (LARGURA FIXA E DESIGN DIAMOND) */
+        /* 5. SIDEBAR CLONE (LARGURA FIXA 400PX E DESIGN DIAMOND) */
         [data-testid="stSidebar"] {
             background-color: #FFFFFF !important;
-            border-right: 1px solid #FFDEEF !important;
+            border-right: 2px solid #FFDEEF !important;
             min-width: 400px !important;
             max-width: 400px !important;
         }
@@ -107,14 +107,12 @@ def aplicar_estilo_diamond_perfeito():
 
 aplicar_estilo_diamond_perfeito()
 
-# --- MOTOR DE IDENTIFICAÇÃO ORIGINAL ---
+# --- MOTOR DE IDENTIFICAÇÃO ORIGINAL (SEM ALTERAÇÃO DE LÓGICA) ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
-    
     if nome_puro.startswith('.') or nome_puro.startswith('~') or not nome_puro.lower().endswith('.xml'):
         return None, False
-
     resumo = {
         "Arquivo": nome_puro, "Chave": "", "Tipo": "Outros", "Série": "0",
         "Número": 0, "Status": "NORMAIS", "Pasta": "RECEBIDOS_TERCEIROS/OUTROS",
@@ -122,43 +120,34 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
     }
     try:
         content_str = content_bytes[:20000].decode('utf-8', errors='ignore')
-        if '<?xml' not in content_str and '<inf' not in content_str:
-            return None, False
-
+        if '<?xml' not in content_str and '<inf' not in content_str: return None, False
         match_ch = re.search(r'\d{44}', content_str)
         resumo["Chave"] = match_ch.group(0) if match_ch else ""
         tag_l = content_str.lower()
-        
         tipo = "NF-e"
         if '<mod>65</mod>' in tag_l: tipo = "NFC-e"
         elif '<infcte' in tag_l: tipo = "CT-e"
         elif '<infmdfe' in tag_l: tipo = "MDF-e"
-        
         status = "NORMAIS"
         if '110111' in tag_l: status = "CANCELADOS"
         elif '110110' in tag_l: status = "CARTA_CORRECAO"
         elif '<inutnfe' in tag_l or '<procinut' in tag_l:
             status = "INUTILIZADOS"
             tipo = "Inutilizacoes"
-            
-        resumo["Tipo"] = tipo
-        resumo["Status"] = status
+        resumo["Tipo"], resumo["Status"] = tipo, status
         resumo["Série"] = re.search(r'<(?:serie)>(\d+)</', tag_l).group(1) if re.search(r'<(?:serie)>(\d+)</', tag_l) else "0"
-        
         n_match = re.search(r'<(?:nnf|nct|nmdf|nnfini)>(\d+)</', tag_l)
         resumo["Número"] = int(n_match.group(1)) if n_match else 0
-        
         if status == "NORMAIS":
             v_match = re.search(r'<(?:vnf|vtprest)>([\d.]+)</', tag_l)
             resumo["Valor"] = float(v_match.group(1)) if v_match else 0.0
-
         cnpj_emit = re.search(r'<cnpj>(\d+)</cnpj>', tag_l).group(1) if re.search(r'<cnpj>(\d+)</cnpj>', tag_l) else ""
         is_p = (cnpj_emit == client_cnpj_clean) or (resumo["Chave"] and client_cnpj_clean in resumo["Chave"][6:20])
         resumo["Pasta"] = f"EMITIDOS_CLIENTE/{tipo}/{status}/Serie_{resumo['Série']}" if is_p else f"RECEBIDOS_TERCEIROS/{tipo}"
         return resumo, is_p
-    except:
-        return None, False
+    except: return None, False
 
+# --- INTERFACE ---
 st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 
 # INICIALIZAÇÃO DE ESTADO
@@ -173,11 +162,10 @@ for k in keys_to_init:
 
 with st.sidebar:
     st.markdown("### 🔍 Configuração")
-    # CAMPO CNPJ SEMPRE VISÍVEL COM DESIGN DIAMOND TAX
     cnpj_input = st.text_input(
         "CNPJ DO CLIENTE", 
         placeholder="00.000.000/0001-00",
-        help="Digite o CNPJ da empresa que está sendo auditada. Pode conter pontos, barras ou apenas números."
+        help="Digite o CNPJ da empresa que está sendo auditada."
     )
     cnpj_limpo = "".join(filter(str.isdigit, cnpj_input))
     
@@ -186,7 +174,7 @@ with st.sidebar:
             st.session_state['confirmado'] = True
             st.rerun()
     elif cnpj_input:
-        st.error("⚠️ O CNPJ deve ter 14 números.")
+        st.markdown("<p style='color:red; font-size:12px;'>⚠️ CNPJ deve ter 14 números.</p>", unsafe_allow_html=True)
         
     st.divider()
     if st.button("🗑️ RESETAR SISTEMA"):
@@ -194,8 +182,9 @@ with st.sidebar:
         st.rerun()
 
 if st.session_state['confirmado']:
+    st.markdown(f"<h3>Operação Liberada: {cnpj_limpo}</h3>", unsafe_allow_html=True)
+    
     if not st.session_state['garimpo_ok']:
-        st.info(f"🏢 Operação liberada para o CNPJ: {cnpj_limpo}")
         uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
             p_keys, rel_list, seq_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
@@ -242,17 +231,19 @@ if st.session_state['confirmado']:
             st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'st_counts': st_counts, 'garimpo_ok': True})
             st.rerun()
     else:
-        st.success(f"⛏️ Garimpo Concluído para o CNPJ {cnpj_limpo}!")
-        sc = st.session_state['st_counts']
+        st.markdown("<h3>✨ Garimpo Concluído!</h3>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 VOLUME", len(st.session_state['relatorio']))
-        c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
-        c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
-        st.markdown("### 📊 RESUMO")
+        c2.metric("❌ CANCELADAS", st.session_state['st_counts'].get("CANCELADOS", 0))
+        c3.metric("🚫 INUTILIZADAS", st.session_state['st_counts'].get("INUTILIZADOS", 0))
+        
+        st.markdown("<h3>📊 Resumo das Séries</h3>", unsafe_allow_html=True)
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
+        
         if not st.session_state['df_faltantes'].empty:
-            st.markdown("### ⚠️ BURACOS NA SEQUÊNCIA")
+            st.markdown("<h3>⚠️ Buracos na Sequência</h3>", unsafe_allow_html=True)
             st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
+            
         st.divider()
         col1, col2 = st.columns(2)
         with col1: st.download_button("📂 BAIXAR ORGANIZADO", st.session_state['z_org'], "garimpo_pastas.zip", use_container_width=True)
@@ -260,4 +251,4 @@ if st.session_state['confirmado']:
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear(); st.rerun()
 else:
-    st.warning("👈 Insira o CNPJ na barra lateral para liberar as ferramentas.")
+    st.markdown("<h3 style='font-size:16px; color:#6C757D !important; text-align:center;'>Aguardando validação do CNPJ na barra lateral...</h3>", unsafe_allow_html=True)
