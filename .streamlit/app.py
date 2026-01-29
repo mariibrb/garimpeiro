@@ -6,7 +6,7 @@ import re
 import pandas as pd
 import random
 
-# --- CONFIGURAÇÃO E ESTILO (CLONE VISUAL DO DIAMOND TAX, MAS COM IDENTIDADE GARIMPEIRO) ---
+# --- CONFIGURAÇÃO E ESTILO (CLONE ABSOLUTO DO DIAMOND TAX) ---
 st.set_page_config(page_title="O GARIMPEIRO | Premium Edition", layout="wide", page_icon="⛏️")
 
 def aplicar_estilo_premium():
@@ -14,13 +14,18 @@ def aplicar_estilo_premium():
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;800&family=Plus+Jakarta+Sans:wght@400;700&display=swap');
 
-        /* 1. FUNDAÇÃO GRADIENTE PINK/SOFT */
         header, [data-testid="stHeader"] { display: none !important; }
         .stApp { 
             background: radial-gradient(circle at top right, #FFDEEF 0%, #F8F9FA 100%) !important; 
         }
 
-        /* 2. BOTÕES ESTILO DIAMOND (BRANCO GORDINHO) */
+        [data-testid="stSidebar"] {
+            background-color: #FFFFFF !important;
+            border-right: 1px solid #FFDEEF !important;
+            min-width: 400px !important;
+            max-width: 400px !important;
+        }
+
         div.stButton > button {
             color: #6C757D !important; 
             background-color: #FFFFFF !important; 
@@ -37,13 +42,11 @@ def aplicar_estilo_premium():
 
         div.stButton > button:hover {
             transform: translateY(-5px) !important;
-            opacity: 1 !important;
             box-shadow: 0 10px 20px rgba(255,105,180,0.2) !important;
             border-color: #FF69B4 !important;
             color: #FF69B4 !important;
         }
 
-        /* 3. UPLOADER E DOWNLOAD ESTILIZADOS EM ROSA */
         [data-testid="stFileUploader"] { 
             border: 2px dashed #FF69B4 !important; 
             border-radius: 20px !important;
@@ -51,7 +54,6 @@ def aplicar_estilo_premium():
             padding: 20px !important;
         }
 
-        [data-testid="stFileUploader"] section button, 
         div.stDownloadButton > button {
             background-color: #FF69B4 !important; 
             color: white !important; 
@@ -60,9 +62,9 @@ def aplicar_estilo_premium():
             border-radius: 15px !important;
             box-shadow: 0 0 15px rgba(255, 105, 180, 0.3) !important;
             text-transform: uppercase;
+            width: 100% !important;
         }
 
-        /* 4. TEXTOS E TÍTULOS */
         h1, h2, h3 {
             font-family: 'Montserrat', sans-serif;
             font-weight: 800;
@@ -70,41 +72,33 @@ def aplicar_estilo_premium():
             text-align: center;
         }
 
-        /* 5. SIDEBAR CLONE 1:1 (LARGURA FIXA 400PX E FUNDO BRANCO) */
-        [data-testid="stSidebar"] {
-            background-color: #FFFFFF !important;
-            border-right: 1px solid #FFDEEF !important;
-            min-width: 400px !important;
-            max-width: 400px !important;
-        }
-
-        /* CAMPO DE CNPJ (IDENTICO AO DIAMOND TAX) */
         .stTextInput>div>div>input {
             border: 2px solid #FFDEEF !important;
             border-radius: 10px !important;
             padding: 10px !important;
-            background-color: white !important;
-            color: #6C757D !important;
         }
 
-        /* 6. MÉTRICAS E TABELAS COM DESIGN PREMIUM */
+        .instrucoes-card {
+            background-color: rgba(255, 255, 255, 0.7);
+            border-radius: 15px;
+            padding: 20px;
+            border-left: 5px solid #FF69B4;
+            margin-bottom: 20px;
+            min-height: 280px;
+        }
+
         [data-testid="stMetric"] {
             background: white !important;
             border-radius: 20px !important;
             border: 1px solid #FFDEEF !important;
             padding: 15px !important;
         }
-
-        .stDataFrame {
-            border: 1px solid #FFDEEF !important;
-            border-radius: 15px !important;
-        }
         </style>
     """, unsafe_allow_html=True)
 
 aplicar_estilo_premium()
 
-# --- MOTOR DE IDENTIFICAÇÃO (MANTIDO 100%) ---
+# --- MOTOR DE IDENTIFICAÇÃO ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
@@ -159,27 +153,46 @@ for k in keys_to_init:
 
 with st.sidebar:
     st.markdown("### 🔍 Configuração")
-    cnpj_input = st.text_input(
-        "CNPJ DO CLIENTE", 
-        placeholder="00.000.000/0001-00",
-        help="Digite o CNPJ da empresa que está sendo auditada. Pode conter pontos, barras ou apenas números."
-    )
+    cnpj_input = st.text_input("CNPJ DO CLIENTE", placeholder="00.000.000/0001-00")
     cnpj_limpo = "".join(filter(str.isdigit, cnpj_input))
-    
-    if cnpj_input and len(cnpj_limpo) != 14:
-        st.error("⚠️ O CNPJ deve ter 14 números.")
-    
+    if cnpj_input and len(cnpj_limpo) != 14: st.error("⚠️ O CNPJ deve ter 14 números.")
     if len(cnpj_limpo) == 14:
-        if st.button("✅ LIBERAR OPERAÇÃO"):
-            st.session_state['confirmado'] = True
-            st.rerun()
-            
+        if st.button("✅ LIBERAR OPERAÇÃO"): st.session_state['confirmado'] = True
     st.divider()
     if st.button("🗑️ RESETAR SISTEMA"):
         st.session_state.clear()
         st.rerun()
 
 if st.session_state['confirmado']:
+    # --- MANUAL E RESULTADOS ---
+    with st.container():
+        m_col1, m_col2 = st.columns(2)
+        with m_col1:
+            st.markdown("""
+            <div class="instrucoes-card">
+                <h3>📖 Passo a Passo</h3>
+                <ol>
+                    <li><b>Arquivos:</b> Arraste seus arquivos XML avulsos ou pastas ZIP contendo as notas.</li>
+                    <li><b>Processamento:</b> Clique no botão <b>"🚀 INICIAR GRANDE GARIMPO"</b> para minerar os dados.</li>
+                    <li><b>Conferência:</b> Verifique o resumo de volumes e a auditoria de sequência numérica.</li>
+                    <li><b>Download:</b> Baixe o ZIP organizado por pastas fiscais ou a extração total.</li>
+                </ol>
+            </div>
+            """, unsafe_allow_html=True)
+        with m_col2:
+            st.markdown("""
+            <div class="instrucoes-card">
+                <h3>📊 O que será obtido?</h3>
+                <ul>
+                    <li><b>Organização Inteligente:</b> Separação automática entre notas do Cliente e de Terceiros.</li>
+                    <li><b>Hierarquia de Pastas:</b> Arquivos divididos por Modelo (NF-e/CT-e/MDF-e), Status e Série.</li>
+                    <li><b>Peneira de Sequência:</b> Identificação exata de números faltantes na cronologia das notas.</li>
+                    <li><b>Relatório de Valor:</b> Soma do Valor Contábil por série para conferência rápida.</li>
+                </ul>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("---")
     st.info(f"🏢 Operação liberada para o CNPJ: {cnpj_limpo}")
     
     if not st.session_state['garimpo_ok']:
@@ -229,24 +242,24 @@ if st.session_state['confirmado']:
             st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'st_counts': st_counts, 'garimpo_ok': True})
             st.rerun()
     else:
-        st.success(f"⛏️ Garimpo Concluído com Sucesso!")
+        st.success(f"⛏️ Garimpo Concluído!")
         sc = st.session_state['st_counts']
         c1, c2, c3 = st.columns(3)
-        c1.metric("📦 VOLUME", len(st.session_state['relatorio']))
+        c1.metric("📦 VOLUME TOTAL", len(st.session_state['relatorio']))
         c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
         c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
 
         st.markdown("### 📊 RESUMO POR SÉRIE E VALOR CONTÁBIL")
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
         if not st.session_state['df_faltantes'].empty:
-            st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA")
+            st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (Nº FALTANTES)")
             st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
 
         st.divider()
         col1, col2 = st.columns(2)
-        with col1: st.download_button("📂 BAIXAR ORGANIZADO", st.session_state['z_org'], "garimpo_pastas.zip", use_container_width=True)
-        with col2: st.download_button("📦 BAIXAR TODOS", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
+        with col1: st.download_button("📂 BAIXAR ORGANIZADO (ZIP)", st.session_state['z_org'], "garimpo_pastas.zip", use_container_width=True)
+        with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear(); st.rerun()
 else:
-    st.warning("👈 Insira o CNPJ da empresa na barra lateral para começar.")
+    st.warning("👈 Insira o CNPJ na barra lateral para começar.")
