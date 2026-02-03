@@ -110,11 +110,9 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         tag_l = content_str.lower()
         if '<?xml' not in tag_l and '<inf' not in tag_l: return None, False
         
-        # BUSCA DA CHAVE DE REFERÊNCIA (Essencial para Cancelamentos)
-        # Procuramos primeiro a tag <chNFe>, <chCTe> etc, que indica a nota real do evento
+        # AJUSTE PARA PEGAR A CHAVE DA NOTA DE REFERÊNCIA (Evita o Id do evento)
         match_ch = re.search(r'<(?:chNFe|chCTe|chMDFe)>(\d{44})</', content_str, re.IGNORECASE)
         if not match_ch:
-            # Se não for evento, busca o Id padrão da nota
             match_ch = re.search(r'Id=["\'](?:NFe|CTe|MDFe)?(\d{44})["\']', content_str, re.IGNORECASE)
             resumo["Chave"] = match_ch.group(1) if match_ch else ""
         else:
@@ -135,8 +133,10 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         elif '<mod>58</mod>' in tag_l or '<infmdfe' in tag_l: tipo = "MDF-e"
         
         status = "NORMAIS"
-        if '110111' in tag_l or '<cstat>101</cstat>' in tag_l or 'cancelamento' in tag_l: status = "CANCELADOS"
-        elif '110110' in tag_l: status = "CARTA_CORRECAO"
+        if '110111' in tag_l or '<cstat>101</cstat>' in tag_l or 'cancelamento' in tag_l: 
+            status = "CANCELADOS"
+        elif '110110' in tag_l: 
+            status = "CARTA_CORRECAO"
         elif '<inutnfe' in tag_l or '<procinut' in tag_l:
             status, tipo = "INUTILIZADOS", "Inutilizacoes"
             
@@ -159,7 +159,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         return resumo, is_p
     except: return None, False
 
-# --- FUNÇÃO RECURSIVA ---
+# --- FUNÇÃO RECURSIVA PARA MERGULHAR EM PASTAS E ZIPS ---
 def extrair_recursivo(conteudo_bytes, nome_arquivo):
     itens = []
     if nome_arquivo.lower().endswith('.zip'):
@@ -180,7 +180,6 @@ def extrair_recursivo(conteudo_bytes, nome_arquivo):
 # --- INTERFACE ---
 st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 
-# BLOCO DO MANUAL DE INSTRUÇÕES (REINTEGRADO)
 with st.container():
     m_col1, m_col2 = st.columns(2)
     with m_col1:
@@ -234,31 +233,42 @@ if st.session_state['confirmado']:
     if not st.session_state['garimpo_ok']:
         uploaded_files = st.file_uploader("Arraste seus arquivos aqui:", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
-            p_keys, rel_list, audit_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
-            canc_list = []
+            p_keys, lote_dict, st_counts = set(), {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
-            with st.status("⛏️ Minerando...", expanded=True):
+            
+            with st.status("⛏️ Minerando jazida profunda...", expanded=True):
                 with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
                      zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
+                    
                     for f in uploaded_files:
                         todos_xmls = extrair_recursivo(f.read(), f.name)
                         for name, xml_data in todos_xmls:
                             res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
                             if res:
                                 key = res["Chave"] if res["Chave"] else name
-                                if key not in p_keys:
-                                    p_keys.add(key)
-                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
-                                    rel_list.append(res)
-                                    if is_p:
-                                        if res["Status"] in st_counts: st_counts[res["Status"]] += 1
-                                        if res["Número"] > 0:
-                                            if res["Status"] == "CANCELADOS":
-                                                canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Número NF-e": res["Número"]})
-                                            sk = (res["Tipo"], res["Série"])
-                                            if sk not in audit_map: audit_map[sk] = {"nums": set(), "valor": 0.0}
-                                            audit_map[sk]["nums"].add(res["Número"])
-                                            audit_map[sk]["valor"] += res["Valor"]
+                                # Se encontrar um Cancelamento para uma nota já lida, ele atualiza
+                                if key in lote_dict:
+                                    if res["Status"] == "CANCELADOS":
+                                        lote_dict[key] = (res, is_p)
+                                else:
+                                    lote_dict[key] = (res, is_p)
+                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data)
+                                    z_todos.writestr(name, xml_data)
+
+            # Processamento final do lote unificado
+            rel_list, audit_map, canc_list = [], {}, []
+            for k, (res, is_p) in lote_dict.items():
+                rel_list.append(res)
+                if is_p:
+                    if res["Status"] in st_counts: st_counts[res["Status"]] += 1
+                    if res["Número"] > 0:
+                        if res["Status"] == "CANCELADOS":
+                            canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Número NF-e": res["Número"]})
+                        
+                        sk = (res["Tipo"], res["Série"])
+                        if sk not in audit_map: audit_map[sk] = {"nums": set(), "valor": 0.0}
+                        audit_map[sk]["nums"].add(res["Número"])
+                        audit_map[sk]["valor"] += res["Valor"]
 
             res_final, fal_final = [], []
             for (t, s), dados in audit_map.items():
@@ -272,7 +282,7 @@ if st.session_state['confirmado']:
             st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'df_canceladas': pd.DataFrame(canc_list), 'st_counts': st_counts, 'garimpo_ok': True})
             st.rerun()
     else:
-        st.success(f"⛏️ Garimpo Concluído! {len(st.session_state['relatorio'])} arquivos analisados.")
+        st.success(f"⛏️ Garimpo Concluído! {len(st.session_state['relatorio'])} arquivos únicos analisados.")
         sc = st.session_state['st_counts']
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 VOLUME TOTAL", len(st.session_state['relatorio']))
