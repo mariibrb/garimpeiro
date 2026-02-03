@@ -134,11 +134,11 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             
         resumo["Tipo"], resumo["Status"] = tipo, status
 
-        # AJUSTE FINÍSSIMO: Extração via Chave para todos os modelos com fatiamento corrigido
+        # AJUSTE FINÍSSIMO: Extração via Chave corrigida (Série pos 23-25, Número pos 26-34)
         if resumo["Chave"]:
-            # Posição 23-25 (index 22:25) -> Série
+            # Posição fiscal 23-25 -> Index Python [22:25]
             resumo["Série"] = str(int(resumo["Chave"][22:25]))
-            # Posição 26-34 (index 25:34) -> Número da Nota
+            # Posição fiscal 26-34 -> Index Python [25:34]
             resumo["Número"] = int(resumo["Chave"][25:34])
         else:
             resumo["Série"] = re.search(r'<(?:serie)>(\d+)</', tag_l).group(1) if re.search(r'<(?:serie)>(\d+)</', tag_l) else "0"
@@ -182,6 +182,15 @@ def extrair_recursivo(conteudo_bytes, nome_arquivo):
 # --- INTERFACE ---
 st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 
+with st.container():
+    m_col1, m_col2 = st.columns(2)
+    with m_col1:
+        st.markdown("""<div class="instrucoes-card"><h3>📖 Passo a Passo</h3><ol><li><b>Arquivos:</b> Arraste XMLs ou ZIPs (com subpastas).</li><li><b>Processamento:</b> Clique em <b>"🚀 INICIAR GRANDE GARIMPO"</b>.</li><li><b>Auditoria:</b> Sistema identifica números reais de canceladas.</li><li><b>Download:</b> Baixe o ZIP organizado.</li></ol></div>""", unsafe_allow_html=True)
+    with m_col2:
+        st.markdown("""<div class="instrucoes-card"><h3>📊 O que será obtido?</h3><ul><li><b>Extração Total:</b> Mergulha em todos os níveis de ZIP.</li><li><b>Canceladas:</b> Tabela com o número da nota original.</li><li><b>Fiscal:</b> Separação Saída/Entrada por CNPJ.</li><li><b>Relatório:</b> Buracos de sequência por série.</li></ul></div>""", unsafe_allow_html=True)
+
+st.markdown("---")
+
 keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'df_canceladas', 'df_inutilizadas', 'st_counts']
 for k in keys_to_init:
     if k not in st.session_state:
@@ -195,7 +204,7 @@ with st.sidebar:
     st.markdown("### 🔍 Configuração")
     cnpj_input = st.text_input("CNPJ DO CLIENTE", placeholder="00.000.000/0001-00")
     cnpj_limpo = "".join(filter(str.isdigit, cnpj_input))
-    if cnpj_input and len(cnpj_limpo) != 14: st.error("⚠️ O CNPJ deve ter 14 números.")
+    if cnpj_input and len(cnpj_limpo) != 14: st.error("⚠️ CNPJ inválido.")
     if len(cnpj_limpo) == 14:
         if st.button("✅ LIBERAR OPERAÇÃO"): st.session_state['confirmado'] = True
     st.divider()
@@ -209,9 +218,11 @@ if st.session_state['confirmado']:
             p_keys, rel_list, audit_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
             canc_list, inut_list = [], []
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
+            
             with st.status("⛏️ Minerando jazida profunda...", expanded=True):
                 with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
                      zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
+                    
                     for f in uploaded_files:
                         todos_xmls = extrair_recursivo(f.read(), f.name)
                         for name, xml_data in todos_xmls:
@@ -220,8 +231,7 @@ if st.session_state['confirmado']:
                                 key = res["Chave"] if res["Chave"] else name
                                 if key not in p_keys:
                                     p_keys.add(key)
-                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data)
-                                    z_todos.writestr(name, xml_data)
+                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
                                     rel_list.append(res)
                                     if is_p:
                                         if res["Status"] in st_counts: st_counts[res["Status"]] += 1
@@ -254,18 +264,19 @@ if st.session_state['confirmado']:
         c1.metric("📦 VOLUME TOTAL", len(st.session_state['relatorio']))
         c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
         c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
+
         st.markdown("### 📊 RESUMO POR SÉRIE")
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
         if not st.session_state['df_faltantes'].empty:
-            st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA")
+            st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (BURACOS)")
             st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
         
-        c_canc, c_inut = st.columns(2)
-        with c_canc:
+        col_r1, col_r2 = st.columns(2)
+        with col_r1:
             if not st.session_state['df_canceladas'].empty:
                 st.markdown("### ❌ NOTAS CANCELADAS")
                 st.dataframe(st.session_state['df_canceladas'], use_container_width=True, hide_index=True)
-        with c_inut:
+        with col_r2:
             if not st.session_state['df_inutilizadas'].empty:
                 st.markdown("### 🚫 NOTAS INUTILIZADAS")
                 st.dataframe(st.session_state['df_inutilizadas'], use_container_width=True, hide_index=True)
