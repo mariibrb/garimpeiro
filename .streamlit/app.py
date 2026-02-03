@@ -5,7 +5,7 @@ import os
 import re
 import pandas as pd
 import random
-import gc # Importante para limpar memória
+import gc
 
 # --- CONFIGURAÇÃO E ESTILO (CLONE ABSOLUTO DO DIAMOND TAX) ---
 st.set_page_config(page_title="O GARIMPEIRO | Premium Edition", layout="wide", page_icon="⛏️")
@@ -93,7 +93,7 @@ def aplicar_estilo_premium():
 
 aplicar_estilo_premium()
 
-# --- MOTOR DE IDENTIFICAÇÃO (MANTIDO ÍNTEGRO) ---
+# --- MOTOR DE IDENTIFICAÇÃO (CORRIGIDO E OTIMIZADO) ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
@@ -111,7 +111,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         tag_l = content_str.lower()
         if '<?xml' not in tag_l and '<inf' not in tag_l and '<inut' not in tag_l and '<retinut' not in tag_l: return None, False
         
-        # 1. IDENTIFICAÇÃO DE INUTILIZADAS
+        # 1. IDENTIFICAÇÃO DE INUTILIZADAS (Prioridade e leitura correta do XML de pedido)
         if '<inutnfe' in tag_l or '<retinutnfe' in tag_l or '<procinut' in tag_l:
             resumo["Status"], resumo["Tipo"] = "INUTILIZADOS", "NF-e"
             if '<mod>65</mod>' in tag_l: resumo["Tipo"] = "NFC-e"
@@ -127,6 +127,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             resumo["Chave"] = f"INUT_{resumo['Série']}_{ini}"
 
         else:
+            # 2. BUSCA DA CHAVE DE REFERÊNCIA (Notas e Eventos)
             match_ch = re.search(r'<(?:chNFe|chCTe|chMDFe)>(\d{44})</', content_str, re.IGNORECASE)
             if not match_ch:
                 match_ch = re.search(r'Id=["\'](?:NFe|CTe|MDFe)?(\d{44})["\']', content_str, re.IGNORECASE)
@@ -147,6 +148,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             elif '<mod>57</mod>' in tag_l or '<infcte' in tag_l: tipo = "CT-e"
             elif '<mod>58</mod>' in tag_l or '<infmdfe' in tag_l: tipo = "MDF-e"
             
+            # 3. IDENTIFICAÇÃO DE CANCELADAS (Só conta se tiver código específico 110111)
             status = "NORMAIS"
             if '110111' in tag_l or '<cstat>101</cstat>' in tag_l: 
                 status = "CANCELADOS"
@@ -250,7 +252,7 @@ if st.session_state['confirmado']:
             lote_dict = {}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
             
-            # --- STATUS VISUAL E OTIMIZAÇÃO ---
+            # --- STATUS VISUAL E OTIMIZAÇÃO (SEM TRAVAMENTO) ---
             progresso_bar = st.progress(0)
             status_text = st.empty()
             total_arquivos = len(uploaded_files)
@@ -260,20 +262,21 @@ if st.session_state['confirmado']:
                      zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
                     
                     for i, f in enumerate(uploaded_files):
-                        # Limpeza de Memória a cada 100 arquivos (Evita travamento por RAM)
-                        if i % 100 == 0:
+                        # Limpeza de Memória a cada 50 arquivos (EVITA O TRAVAMENTO)
+                        if i % 50 == 0:
                             gc.collect()
                         
-                        # Atualiza barra apenas a cada 1% (Evita travamento do navegador)
-                        if total_arquivos > 0 and i % max(1, int(total_arquivos * 0.01)) == 0:
+                        # Atualiza barra apenas a cada 2% para não travar a tela
+                        if total_arquivos > 0 and i % max(1, int(total_arquivos * 0.02)) == 0:
                             progresso_bar.progress((i + 1) / total_arquivos)
                             status_text.text(f"⛏️ Processando arquivo {i+1}/{total_arquivos}: {f.name}")
                         
                         try:
-                            # Leitura direta do ponteiro do arquivo
+                            # Lê o arquivo e libera memória IMEDIATAMENTE após extrair
                             f.seek(0)
                             content = f.read()
                             todos_xmls = extrair_recursivo(content, f.name)
+                            del content # Libera RAM do arquivo bruto
                             
                             for name, xml_data in todos_xmls:
                                 res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
@@ -284,10 +287,11 @@ if st.session_state['confirmado']:
                                     else:
                                         lote_dict[key] = (res, is_p)
                                         z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
-                        except Exception:
-                            continue # Pula arquivo corrompido sem travar
+                            
+                            del todos_xmls # Libera RAM da lista de XMLs
+                        except: continue
                 
-                status_box.update(label="✅ Garimpo Concluído!", state="complete", expanded=False)
+                status_box.update(label="✅ Concluído!", state="complete", expanded=False)
                 progresso_bar.empty()
                 status_text.empty()
 
@@ -319,6 +323,7 @@ if st.session_state['confirmado']:
                     for b in sorted(list(set(range(n_min, n_max + 1)) - set(ns))):
                         fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
 
+            # --- SINCIA FORÇADA: O contador É o tamanho da lista ---
             st_counts = {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list)}
 
             st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'df_canceladas': pd.DataFrame(canc_list), 'df_inutilizadas': pd.DataFrame(inut_list), 'st_counts': st_counts, 'garimpo_ok': True})
@@ -334,6 +339,7 @@ if st.session_state['confirmado']:
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
         
         st.markdown("---")
+        # --- QUADROS LADO A LADO ---
         col_audit, col_canc, col_inut = st.columns(3)
         with col_audit:
             st.markdown("### ⚠️ BURACOS")
@@ -358,6 +364,7 @@ if st.session_state['confirmado']:
 
         st.divider()
         
+        # --- GERAÇÃO DO EXCEL PARA DOWNLOAD ---
         buffer_excel = io.BytesIO()
         with pd.ExcelWriter(buffer_excel, engine='xlsxwriter') as writer:
             st.session_state['df_resumo'].to_excel(writer, sheet_name='Resumo', index=False)
