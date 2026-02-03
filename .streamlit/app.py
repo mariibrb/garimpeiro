@@ -92,7 +92,7 @@ def aplicar_estilo_premium():
 
 aplicar_estilo_premium()
 
-# --- MOTOR DE IDENTIFICAÇÃO (AJUSTE FINO MULTI-MODELO) ---
+# --- MOTOR DE IDENTIFICAÇÃO ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
@@ -106,75 +106,90 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
     }
     
     try:
-        # Aumentamos a leitura para garantir tags em arquivos grandes
-        content_str = content_bytes[:45000].decode('utf-8', errors='ignore')
-        tag_l = content_str.lower()
-        if '<?xml' not in tag_l and '<inf' not in tag_l: return None, False
+        content_str = content_bytes[:30000].decode('utf-8', errors='ignore')
+        if '<?xml' not in content_str and '<inf' not in content_str: return None, False
         
         match_ch = re.search(r'\d{44}', content_str)
         resumo["Chave"] = match_ch.group(0) if match_ch else ""
+        tag_l = content_str.lower()
         
-        if resumo["Chave"]:
-            resumo["Ano"], resumo["Mes"] = "20" + resumo["Chave"][2:4], resumo["Chave"][4:6]
-        else:
-            data_match = re.search(r'<(?:dhemi|dhregevento)>(\d{4})-(\d{2})', tag_l)
-            if data_match: resumo["Ano"], resumo["Mes"] = data_match.group(1), data_match.group(2)
+        # Extração de Data (Ano/Mês) para pastas
+        data_match = re.search(r'<(?:dhemi|dhregevento)>(\d{4})-(\d{2})', tag_l)
+        if data_match:
+            resumo["Ano"], resumo["Mes"] = data_match.group(1), data_match.group(2)
+        elif resumo["Chave"]:
+            resumo["Ano"] = "20" + resumo["Chave"][2:4]
+            resumo["Mes"] = resumo["Chave"][4:6]
 
-        # IDENTIFICAÇÃO DE MODELO (Ajuste Fino Universal)
+        # Identificação Precisa de Modelos (55, 65, 57)
         tipo = "NF-e"
         if '<mod>65</mod>' in tag_l: tipo = "NFC-e"
-        elif '<mod>57</mod>' in tag_l or '<infcte' in tag_l: tipo = "CT-e"
-        elif '<mod>58</mod>' in tag_l or '<infmdfe' in tag_l: tipo = "MDF-e"
+        elif '<infcte' in tag_l or '<mod>57</mod>' in tag_l: tipo = "CT-e"
+        elif '<infmdfe' in tag_l: tipo = "MDF-e"
         
+        # AJUSTE FINÍSSIMO: Detectar cancelamento tanto por evento quanto por status interno (cStat 101)
         status = "NORMAIS"
-        if '110111' in tag_l or '<cstat>101</cstat>' in tag_l: status = "CANCELADOS"
-        elif '110110' in tag_l: status = "CARTA_CORRECAO"
-        elif '<inutnfe' in tag_l or '<procinut' in tag_l or '<inutcte' in tag_l:
-            status, tipo = "INUTILIZADOS", "Inutilizacoes"
+        if '110111' in tag_l or '<cstat>101</cstat>' in tag_l: 
+            status = "CANCELADOS"
+        elif '110110' in tag_l: 
+            status = "CARTA_CORRECAO"
+        elif '<inutnfe' in tag_l or '<procinut' in tag_l:
+            status = "INUTILIZADOS"
+            tipo_pasta = "Inutilizacoes"
+        else:
+            tipo_pasta = tipo
             
         resumo["Tipo"], resumo["Status"] = tipo, status
         resumo["Série"] = re.search(r'<(?:serie)>(\d+)</', tag_l).group(1) if re.search(r'<(?:serie)>(\d+)</', tag_l) else "0"
         
-        # Numeração Precisa (Fallback via Chave)
-        n_match = re.search(r'<(?:nnf|nct|nmdf|nnfini|ninfini)>(\d+)</', tag_l)
-        resumo["Número"] = int(n_match.group(1)) if n_match else (int(resumo["Chave"][25:34]) if resumo["Chave"] else 0)
+        # Numeração (Captura o número da nota ou o número inicial da inutilização)
+        n_match = re.search(r'<(?:nnf|nct|nmdf|nnfini)>(\d+)</', tag_l)
+        resumo["Número"] = int(n_match.group(1)) if n_match else 0
         
-        # Valor Contábil (Amplo para CT-e e NF-e)
+        # Valor Contábil
         if status == "NORMAIS":
-            v_match = re.search(r'<(?:vnf|vtprest|vreceb)>([\d.]+)</', tag_l)
+            v_match = re.search(r'<(?:vnf|vtprest)>([\d.]+)</', tag_l)
             resumo["Valor"] = float(v_match.group(1)) if v_match else 0.0
             
-        # SEPARAÇÃO EMITENTE VS TERCEIROS (SAÍDA VS ENTRADA)
         cnpj_emit = re.search(r'<cnpj>(\d+)</cnpj>', tag_l).group(1) if re.search(r'<cnpj>(\d+)</cnpj>', tag_l) else ""
-        if not cnpj_emit and resumo["Chave"]: cnpj_emit = resumo["Chave"][6:20]
+        is_p = (cnpj_emit == client_cnpj_clean) or (resumo["Chave"] and client_cnpj_clean in resumo["Chave"][6:20])
         
-        is_p = (cnpj_emit == client_cnpj_clean)
-        
+        # Organização Hierárquica
         if is_p:
-            resumo["Pasta"] = f"EMITIDOS_CLIENTE/{tipo}/{status}/{resumo['Ano']}/{resumo['Mes']}/Serie_{resumo['Série']}"
+            resumo["Pasta"] = f"EMITIDOS_CLIENTE/{tipo_pasta if status == 'INUTILIZADOS' else tipo}/{status}/{resumo['Ano']}/{resumo['Mes']}/Serie_{resumo['Série']}"
         else:
             resumo["Pasta"] = f"RECEBIDOS_TERCEIROS/{tipo}/{resumo['Ano']}/{resumo['Mes']}"
             
         return resumo, is_p
     except: return None, False
 
-# --- FUNÇÃO RECURSIVA PARA MERGULHAR EM PASTAS E ZIPS (O SEGREDO DA REDUÇÃO) ---
-def extrair_recursivo(conteudo_bytes, nome_arquivo):
-    itens = []
+# --- FUNÇÃO RECURSIVA PARA MERGULHAR EM PASTAS E ZIPS (O AJUSTE) ---
+def extrair_recursivo(conteudo_zip_ou_xml, nome_arquivo):
+    itens_encontrados = []
+    
+    # Se for um ZIP, mergulha
     if nome_arquivo.lower().endswith('.zip'):
         try:
-            with zipfile.ZipFile(io.BytesIO(conteudo_bytes)) as z:
+            with zipfile.ZipFile(io.BytesIO(conteudo_zip_ou_xml)) as z:
                 for sub_nome in z.namelist():
-                    if sub_nome.startswith('__MACOSX') or os.path.basename(sub_nome).startswith('.'): continue
+                    # Ignora lixo de sistema
+                    if sub_nome.startswith('__MACOSX') or os.path.basename(sub_nome).startswith('.'):
+                        continue
+                    
                     sub_conteudo = z.read(sub_nome)
+                    # RECURSÃO: Se achar outro ZIP lá dentro, chama a função de novo
                     if sub_nome.lower().endswith('.zip'):
-                        itens.extend(extrair_recursivo(sub_conteudo, sub_nome))
+                        itens_encontrados.extend(extrair_recursivo(sub_conteudo, sub_nome))
+                    # Se for XML, guarda
                     elif sub_nome.lower().endswith('.xml'):
-                        itens.append((os.path.basename(sub_nome), sub_conteudo))
-        except: pass
+                        itens_encontrados.append((os.path.basename(sub_nome), sub_conteudo))
+        except Exception:
+            pass
+    # Se for XML direto no upload
     elif nome_arquivo.lower().endswith('.xml'):
-        itens.append((os.path.basename(nome_arquivo), conteudo_bytes))
-    return itens
+        itens_encontrados.append((os.path.basename(nome_arquivo), conteudo_zip_ou_xml))
+        
+    return itens_encontrados
 
 # --- INTERFACE ---
 st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
@@ -182,13 +197,34 @@ st.markdown("<h1>⛏️ O GARIMPEIRO</h1>", unsafe_allow_html=True)
 with st.container():
     m_col1, m_col2 = st.columns(2)
     with m_col1:
-        st.markdown("""<div class="instrucoes-card"><h3>📖 Passo a Passo</h3><ol><li><b>Arquivos:</b> Arraste XMLs ou ZIPs (com subpastas).</li><li><b>Processamento:</b> Clique em <b>"🚀 INICIAR GRANDE GARIMPO"</b>.</li><li><b>Auditoria:</b> Sistema checa 2.000+ arquivos em segundos.</li><li><b>Download:</b> Baixe o ZIP organizado.</li></ol></div>""", unsafe_allow_html=True)
+        st.markdown("""
+        <div class="instrucoes-card">
+            <h3>📖 Passo a Passo</h3>
+            <ol>
+                <li><b>Arquivos:</b> Arraste seus arquivos XML ou pastas ZIP (mesmo com ZIPS internos).</li>
+                <li><b>Processamento:</b> Clique em <b>"🚀 INICIAR GRANDE GARIMPO"</b>.</li>
+                <li><b>Auditoria:</b> O sistema checa buracos na numeração entre o menor e maior número.</li>
+                <li><b>Download:</b> Baixe o ZIP organizado por <b>Emitido/Recebido</b> e <b>Ano/Mês</b>.</li>
+            </ol>
+        </div>
+        """, unsafe_allow_html=True)
     with m_col2:
-        st.markdown("""<div class="instrucoes-card"><h3>📊 O que será obtido?</h3><ul><li><b>Extração Total:</b> Abre recursivamente ZIP dentro de ZIP.</li><li><b>Multi-Modelo:</b> Identifica NF-e, CT-e, MDF-e e NFC-e.</li><li><b>Fiscal:</b> Separação automática entre Entrada e Saída.</li><li><b>Auditoria:</b> Relatório de buracos e valores.</li></ul></div>""", unsafe_allow_html=True)
+        st.markdown("""
+        <div class="instrucoes-card">
+            <h3>📊 O que será obtido?</h3>
+            <ul>
+                <li><b>Garimpo Profundo:</b> Abertura de pastas e ZIPS dentro de outros ZIPS.</li>
+                <li><b>Divisão Cronológica:</b> Pastas separadas por Ano e Mês de emissão.</li>
+                <li><b>Hierarquia Fiscal:</b> Separação por Emitente, Modelo, Status e Série.</li>
+                <li><b>Peneira de Sequência:</b> Auditoria completa do lote (Início ao Fim).</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'st_counts']
+# ADICIONADO df_canceladas nas chaves de inicialização
+keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'df_canceladas', 'st_counts']
 for k in keys_to_init:
     if k not in st.session_state:
         if 'df' in k: st.session_state[k] = pd.DataFrame()
@@ -206,25 +242,28 @@ with st.sidebar:
         if st.button("✅ LIBERAR OPERAÇÃO"): st.session_state['confirmado'] = True
     st.divider()
     if st.button("🗑️ RESETAR SISTEMA"):
-        st.session_state.clear(); st.rerun()
+        st.session_state.clear()
+        st.rerun()
 
 if st.session_state['confirmado']:
     if not st.session_state['garimpo_ok']:
-        uploaded_files = st.file_uploader("Arraste seus arquivos aqui:", accept_multiple_files=True)
+        uploaded_files = st.file_uploader("Arraste seus arquivos XML ou ZIP aqui:", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
             p_keys, rel_list, audit_map, st_counts = set(), [], {}, {"CANCELADOS": 0, "INUTILIZADOS": 0}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
-            with st.status("⛏️ Minerando em camadas profundas...", expanded=True):
+            lista_canceladas = [] # Lista temporária para a tabela de canceladas
+            
+            with st.status("⛏️ Mergulhando nas profundezas das pastas...", expanded=True):
                 with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
                      zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
                     
                     for f in uploaded_files:
-                        # O SEGREDO: Uma única chamada processa todo o labirinto de pastas
-                        todos_xmls = extrair_recursivo(f.read(), f.name)
+                        f_bytes = f.read()
+                        todos_xmls = extrair_recursivo(f_bytes, f.name)
                         
                         for name, xml_data in todos_xmls:
                             res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
-                            if res:
+                            if res and res["Número"] > 0:
                                 key = res["Chave"] if res["Chave"] else name
                                 if key not in p_keys:
                                     p_keys.add(key)
@@ -233,35 +272,68 @@ if st.session_state['confirmado']:
                                     rel_list.append(res)
                                     if is_p:
                                         if res["Status"] in st_counts: st_counts[res["Status"]] += 1
-                                        if res["Número"] > 0:
-                                            sk = (res["Tipo"], res["Série"])
-                                            if sk not in audit_map: audit_map[sk] = {"nums": set(), "valor": 0.0}
-                                            audit_map[sk]["nums"].add(res["Número"])
-                                            audit_map[sk]["valor"] += res["Valor"]
+                                        
+                                        # CAPTURA PARA TABELA DE CANCELADAS
+                                        if res["Status"] == "CANCELADOS":
+                                            lista_canceladas.append({
+                                                "Tipo": res["Tipo"],
+                                                "Série": res["Série"],
+                                                "Nº Cancelado": res["Número"],
+                                                "Chave": res["Chave"]
+                                            })
+                                            
+                                        mod_seq = "NF-e" if "NF-e" in res["Tipo"] or "Inutilizacoes" in res["Tipo"] else res["Tipo"]
+                                        if "NFC-e" in res["Tipo"]: mod_seq = "NFC-e"
+                                        
+                                        grupo = (mod_seq, res["Série"])
+                                        if grupo not in audit_map:
+                                            audit_map[grupo] = {"nums": set(), "valor": 0.0}
+                                        audit_map[grupo]["nums"].add(res["Número"])
+                                        audit_map[grupo]["valor"] += res["Valor"]
 
             res_final, fal_final = [], []
             for (t, s), dados in audit_map.items():
                 ns = sorted(list(dados["nums"]))
                 if ns:
                     n_min, n_max = ns[0], ns[-1]
-                    res_final.append({"Documento": t, "Série": s, "Início": n_min, "Fim": n_max, "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)})
-                    for b in sorted(list(set(range(n_min, n_max + 1)) - set(ns))):
+                    res_final.append({
+                        "Documento": t, "Série": s, "Início": n_min, "Fim": n_max, 
+                        "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)
+                    })
+                    buracos = sorted(list(set(range(n_min, n_max + 1)) - set(ns)))
+                    for b in buracos:
                         fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
 
-            st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'st_counts': st_counts, 'garimpo_ok': True})
+            st.session_state.update({
+                'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 
+                'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 
+                'df_faltantes': pd.DataFrame(fal_final), 
+                'df_canceladas': pd.DataFrame(lista_canceladas), # SALVA TABELA DE CANCELADAS
+                'st_counts': st_counts, 'garimpo_ok': True
+            })
             st.rerun()
     else:
-        st.success(f"⛏️ Garimpo Concluído! {len(st.session_state['relatorio'])} arquivos analisados.")
+        st.success(f"⛏️ Garimpo Concluído!")
         sc = st.session_state['st_counts']
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 VOLUME TOTAL", len(st.session_state['relatorio']))
         c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
         c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
-        st.markdown("### 📊 RESUMO POR SÉRIE")
+
+        st.markdown("### 📊 RESUMO POR SÉRIE E VALOR CONTÁBIL")
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
+        
         if not st.session_state['df_faltantes'].empty:
-            st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA")
+            st.markdown("### ⚠️ AUDITORIA DE SEQUÊNCIA (BURACOS NO LOTE)")
             st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
+        else:
+            st.info("✅ Nenhuma quebra de sequência detectada no lote enviado.")
+
+        # NOVO BLOCO: Tabela de Canceladas
+        if not st.session_state['df_canceladas'].empty:
+            st.markdown("### ❌ NOTAS CANCELADAS IDENTIFICADAS")
+            st.dataframe(st.session_state['df_canceladas'], use_container_width=True, hide_index=True)
+
         st.divider()
         col1, col2 = st.columns(2)
         with col1: st.download_button("📂 BAIXAR ORGANIZADO (ZIP)", st.session_state['z_org'], "garimpo_organizado.zip", use_container_width=True)
