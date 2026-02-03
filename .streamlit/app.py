@@ -109,7 +109,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         tag_l = content_str.lower()
         if '<?xml' not in tag_l and '<inf' not in tag_l and '<retinut' not in tag_l: return None, False
         
-        # AJUSTE DUPLA CHECAGEM: INUTILIZAÇÃO (XML real sem chave)
+        # AJUSTE PARA INUTILIZAÇÃO (XML real sem chave)
         if '<inut' in tag_l or '<retinut' in tag_l:
             resumo["Status"], resumo["Tipo"] = "INUTILIZADOS", "NF-e"
             resumo["Série"] = re.search(r'<serie>(\d+)</', tag_l).group(1) if re.search(r'<serie>(\d+)</', tag_l) else "0"
@@ -118,7 +118,6 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             resumo["Chave"] = f"INUT_{resumo['Série']}_{resumo['Número']}"
         
         else:
-            # BUSCA DA CHAVE DE REFERÊNCIA
             match_ch = re.search(r'<(?:chNFe|chCTe|chMDFe)>(\d{44})</', content_str, re.IGNORECASE)
             if not match_ch:
                 match_ch = re.search(r'Id=["\'](?:NFe|CTe|MDFe)?(\d{44})["\']', content_str, re.IGNORECASE)
@@ -193,8 +192,10 @@ with st.container():
             <h3>📖 Instruções de Uso</h3>
     <ul>
         <li><b>Fonte de Dados:</b> O sistema aceita arquivos <b>XML</b> individuais ou pacotes <b>ZIP</b>. </li>
-        <li><b>Identificação Fiscal:</b> A Série e o Número são extraídos da <b>Chave de Acesso</b> ou tags de inutilização.</li>
-        <li><b>Dupla Checagem:</b> Primeiro valida buracos, depois cruza com eventos de cancelamento e inutilização.</li>
+        <li><b>Identificação Fiscal:</b> A Série e o Número são extraídos diretamente da <b>Chave de Acesso (44 dígitos)</b>. Isso garante que, em eventos de cancelamento, o número lido seja o da nota de referência e não o do protocolo.</li>
+        <li><b>Critério de Saída (Emitidos):</b> Documentos onde o CNPJ do emitente coincide com o CNPJ configurado são classificados como <b>EMITIDOS</b>.</li>
+        <li><b>Critério de Entrada (Terceiros):</b> Documentos de outros emitentes destinados ao CNPJ configurado são classificados como <b>RECEBIDOS</b>.</li>
+        <li><b>Regra de Prevalência:</b> Se o lote contiver a nota autorizada e o seu respectivo cancelamento, o sistema prioriza o status <b>CANCELADO</b> para a auditoria.</li>
     </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -204,7 +205,9 @@ with st.container():
             <h3>📊 O que será obtido?</h3>
             <ul>
                 <li><b>Garimpo Profundo:</b> Abre recursivamente ZIP dentro de ZIP.</li>
-                <li><b>Peneira Lado a Lado:</b> Auditoria de buracos, canceladas e inutilizadas.</li>
+                <li><b>Divisão Cronológica:</b> Pastas separadas por Ano e Mês.</li>
+                <li><b>Hierarquia Fiscal:</b> Separação por Emitente e Status.</li>
+                <li><b>Peneira Lado a Lado:</b> Auditoria de buracos e notas canceladas.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -265,9 +268,9 @@ if st.session_state['confirmado']:
                         if res["Status"] == "CANCELADOS":
                             canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"]})
                         elif res["Status"] == "INUTILIZADOS":
-                            inut_list.append({"Modelo": "NF-e", "Série": res["Série"], "Nota": res["Número"]})
+                            inut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"]})
                         
-                        sk = ("NF-e" if res["Tipo"] == "Inutilizacoes" else res["Tipo"], res["Série"])
+                        sk = (res["Tipo"], res["Série"])
                         if sk not in audit_map: audit_map[sk] = {"nums": set(), "valor": 0.0}
                         audit_map[sk]["nums"].add(res["Número"]); audit_map[sk]["valor"] += res["Valor"]
 
@@ -293,19 +296,17 @@ if st.session_state['confirmado']:
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
         
         st.markdown("---")
+        # --- QUADROS LADO A LADO: BURACO > CANCELADA > INUTILIZADA ---
         col_audit, col_canc, col_inut = st.columns(3)
-        
         with col_audit:
             st.markdown("### ⚠️ BURACOS")
-            st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True) if not st.session_state['df_faltantes'].empty else st.info("✅ Tudo em ordem.")
-
+            st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True) if not st.session_state['df_faltantes'].empty else st.info("✅ OK")
         with col_canc:
             st.markdown("### ❌ CANCELADAS")
-            st.dataframe(st.session_state['df_canceladas'], use_container_width=True, hide_index=True) if not st.session_state['df_canceladas'].empty else st.info("ℹ️ Nenhuma nota.")
-
+            st.dataframe(st.session_state['df_canceladas'], use_container_width=True, hide_index=True) if not st.session_state['df_canceladas'].empty else st.info("ℹ️ Nenhuma")
         with col_inut:
             st.markdown("### 🚫 INUTILIZADAS")
-            st.dataframe(st.session_state['df_inutilizadas'], use_container_width=True, hide_index=True) if not st.session_state['df_inutilizadas'].empty else st.info("ℹ️ Nenhuma nota.")
+            st.dataframe(st.session_state['df_inutilizadas'], use_container_width=True, hide_index=True) if not st.session_state['df_inutilizadas'].empty else st.info("ℹ️ Nenhuma")
 
         st.divider()
         col1, col2 = st.columns(2)
