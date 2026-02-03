@@ -110,8 +110,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         tag_l = content_str.lower()
         if '<?xml' not in tag_l and '<inf' not in tag_l and '<inut' not in tag_l and '<retinut' not in tag_l: return None, False
         
-        # 1. IDENTIFICAÇÃO DE INUTILIZADAS (Prioridade Total)
-        # Verifica se é Inutilização (inutNFe ou retInutNFe) e IGNORA texto de justificativa
+        # 1. IDENTIFICAÇÃO DE INUTILIZADAS (Prioridade e leitura correta do XML de pedido)
         if '<inutnfe' in tag_l or '<retinutnfe' in tag_l or '<procinut' in tag_l:
             resumo["Status"], resumo["Tipo"] = "INUTILIZADOS", "NF-e"
             if '<mod>65</mod>' in tag_l: resumo["Tipo"] = "NFC-e"
@@ -127,7 +126,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             resumo["Chave"] = f"INUT_{resumo['Série']}_{ini}"
 
         else:
-            # 2. BUSCA DA CHAVE DE REFERÊNCIA (Para notas normais e eventos de cancelamento)
+            # 2. BUSCA DA CHAVE DE REFERÊNCIA (Notas e Eventos)
             match_ch = re.search(r'<(?:chNFe|chCTe|chMDFe)>(\d{44})</', content_str, re.IGNORECASE)
             if not match_ch:
                 match_ch = re.search(r'Id=["\'](?:NFe|CTe|MDFe)?(\d{44})["\']', content_str, re.IGNORECASE)
@@ -148,7 +147,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             elif '<mod>57</mod>' in tag_l or '<infcte' in tag_l: tipo = "CT-e"
             elif '<mod>58</mod>' in tag_l or '<infmdfe' in tag_l: tipo = "MDF-e"
             
-            # 3. IDENTIFICAÇÃO DE CANCELADAS (Apenas Código Fiscal - REMOVIDO TEXTO GENÉRICO)
+            # 3. IDENTIFICAÇÃO DE CANCELADAS (Só conta se tiver código específico)
             status = "NORMAIS"
             if '110111' in tag_l or '<cstat>101</cstat>' in tag_l: 
                 status = "CANCELADOS"
@@ -251,18 +250,22 @@ if st.session_state['confirmado']:
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
             lote_dict = {}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
-            with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
-                 zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
-                for f in uploaded_files:
-                    for name, xml_data in extrair_recursivo(f.read(), f.name):
-                        res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
-                        if res:
-                            key = res["Chave"]
-                            if key in lote_dict:
-                                if res["Status"] in ["CANCELADOS", "INUTILIZADOS"]: lote_dict[key] = (res, is_p)
-                            else:
-                                lote_dict[key] = (res, is_p)
-                                z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
+            
+            with st.status("⛏️ Minerando...", expanded=True):
+                with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
+                     zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
+                    
+                    for f in uploaded_files:
+                        todos_xmls = extrair_recursivo(f.read(), f.name)
+                        for name, xml_data in todos_xmls:
+                            res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
+                            if res:
+                                key = res["Chave"]
+                                if key in lote_dict:
+                                    if res["Status"] in ["CANCELADOS", "INUTILIZADOS"]: lote_dict[key] = (res, is_p)
+                                else:
+                                    lote_dict[key] = (res, is_p)
+                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
 
             rel_list, audit_map, canc_list, inut_list = [], {}, [], []
             for k, (res, is_p) in lote_dict.items():
@@ -287,8 +290,9 @@ if st.session_state['confirmado']:
             for (t, s), dados in audit_map.items():
                 ns = sorted(list(dados["nums"]))
                 if ns:
-                    res_final.append({"Documento": t, "Série": s, "Início": ns[0], "Fim": ns[-1], "Qtde": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)})
-                    for b in sorted(list(set(range(ns[0], ns[-1] + 1)) - set(ns))):
+                    n_min, n_max = ns[0], ns[-1]
+                    res_final.append({"Documento": t, "Série": s, "Início": n_min, "Fim": n_max, "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)})
+                    for b in sorted(list(set(range(n_min, n_max + 1)) - set(ns))):
                         fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
 
             # --- SINCIA FORÇADA: O contador É o tamanho da lista ---
@@ -297,6 +301,7 @@ if st.session_state['confirmado']:
             st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'df_canceladas': pd.DataFrame(canc_list), 'df_inutilizadas': pd.DataFrame(inut_list), 'st_counts': st_counts, 'garimpo_ok': True})
             st.rerun()
     else:
+        st.success(f"⛏️ Garimpo Concluído! {len(st.session_state['relatorio'])} arquivos analisados.")
         sc = st.session_state['st_counts']
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 VOLUME TOTAL", len(st.session_state['relatorio']))
