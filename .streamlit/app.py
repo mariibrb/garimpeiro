@@ -110,23 +110,20 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         tag_l = content_str.lower()
         if '<?xml' not in tag_l and '<inf' not in tag_l and '<inutnfe' not in tag_l and '<retinutnfe' not in tag_l: return None, False
         
-        # 1. IDENTIFICAÇÃO DE INUTILIZADAS (Prioridade para evitar falsos positivos)
+        # 1. IDENTIFICAÇÃO DE INUTILIZADAS (Prioritário para evitar conflito com 'cancelamento' na justificativa)
         if '<inutnfe' in tag_l or '<retinutnfe' in tag_l or '<procinut' in tag_l:
             resumo["Status"], resumo["Tipo"] = "INUTILIZADOS", "NF-e"
             if '<mod>65</mod>' in tag_l: resumo["Tipo"] = "NFC-e"
             elif '<mod>57</mod>' in tag_l: resumo["Tipo"] = "CT-e"
             
-            s_match = re.search(r'<serie>(\d+)</', tag_l)
-            resumo["Série"] = s_match.group(1) if s_match else "0"
-            n_match = re.search(r'<nnfini>(\d+)</', tag_l)
-            resumo["Número"] = int(n_match.group(1)) if n_match else 0
-            
-            ano_match = re.search(r'<ano>(\d+)</', tag_l)
-            resumo["Ano"] = "20" + ano_match.group(1)[-2:] if ano_match else "0000"
-            resumo["Chave"] = f"INUT_{resumo['Série']}_{resumo['Número']}"
+            resumo["Série"] = re.search(r'<serie>(\d+)</', tag_l).group(1) if re.search(r'<serie>(\d+)</', tag_l) else "0"
+            ini = re.search(r'<nnfini>(\d+)</', tag_l).group(1) if re.search(r'<nnfini>(\d+)</', tag_l) else "0"
+            resumo["Número"] = int(ini)
+            resumo["Ano"] = "20" + re.search(r'<ano>(\d+)</', tag_l).group(1) if re.search(r'<ano>(\d+)</', tag_l) else "0000"
+            resumo["Chave"] = f"INUT_{resumo['Série']}_{ini}"
 
         else:
-            # 2. BUSCA DA CHAVE DE REFERÊNCIA (Notas Normais e Eventos)
+            # 2. BUSCA DA CHAVE DE REFERÊNCIA
             match_ch = re.search(r'<(?:chNFe|chCTe|chMDFe)>(\d{44})</', content_str, re.IGNORECASE)
             if not match_ch:
                 match_ch = re.search(r'Id=["\'](?:NFe|CTe|MDFe)?(\d{44})["\']', content_str, re.IGNORECASE)
@@ -147,13 +144,14 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             elif '<mod>57</mod>' in tag_l or '<infcte' in tag_l: tipo = "CT-e"
             elif '<mod>58</mod>' in tag_l or '<infmdfe' in tag_l: tipo = "MDF-e"
             
-            # Validação real: Código de cancelamento ou cStat específico
+            # 3. IDENTIFICAÇÃO DE CANCELADAS (Apenas por código fiscal, ignora justificativa)
             status = "NORMAIS"
             if '110111' in tag_l or '<cstat>101</cstat>' in tag_l: 
                 status = "CANCELADOS"
             elif '110110' in tag_l: status = "CARTA_CORRECAO"
                 
             resumo["Tipo"], resumo["Status"] = tipo, status
+
             if status == "NORMAIS":
                 v_match = re.search(r'<(?:vnf|vtprest|vreceb)>([\d.]+)</', tag_l)
                 resumo["Valor"] = float(v_match.group(1)) if v_match else 0.0
@@ -163,6 +161,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             cnpj_emit = resumo["Chave"][6:20]
         
         is_p = (cnpj_emit == client_cnpj_clean)
+        
         if is_p:
             resumo["Pasta"] = f"EMITIDOS_CLIENTE/{resumo['Tipo']}/{resumo['Status']}/{resumo['Ano']}/{resumo['Mes']}/Serie_{resumo['Série']}"
         else:
@@ -199,9 +198,9 @@ with st.container():
         <div class="instrucoes-card">
             <h3>📖 Instruções de Uso</h3>
     <ul>
+        <li><b>Fonte de Dados:</b> XML individuais ou pacotes ZIP. </li>
         <li><b>Identificação Fiscal:</b> Extração direta da Chave ou tags de Inutilização.</li>
-        <li><b>Dupla Checagem:</b> Buracos na sequência são cruzados com Inutilizadas e Canceladas.</li>
-        <li><b>Integridade de Contagem:</b> Os totalizadores espelham exatamente a quantidade de itens identificados.</li>
+        <li><b>Integridade de Contagem:</b> Os totalizadores espelham exatamente o que consta nos quadros detalhados.</li>
     </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -211,7 +210,7 @@ with st.container():
             <h3>📊 O que será obtido?</h3>
             <ul>
                 <li><b>Peneira Lado a Lado:</b> Auditoria de buracos, canceladas e inutilizadas.</li>
-                <li><b>ZIP Organizado:</b> Pastas estruturadas por Emitente, Modelo e Status.</li>
+                <li><b>Divisão Cronológica:</b> Pastas separadas por Ano e Mês.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -228,6 +227,7 @@ for k in keys_to_init:
         else: st.session_state[k] = False
 
 with st.sidebar:
+    st.markdown("### 🔍 Configuração")
     cnpj_input = st.text_input("CNPJ DO CLIENTE", placeholder="00.000.000/0001-00")
     cnpj_limpo = "".join(filter(str.isdigit, cnpj_input))
     if len(cnpj_limpo) == 14:
@@ -276,11 +276,11 @@ if st.session_state['confirmado']:
             for (t, s), dados in audit_map.items():
                 ns = sorted(list(dados["nums"]))
                 if ns:
-                    res_final.append({"Documento": t, "Série": s, "Início": ns[0], "Fim": ns[-1], "Qtde": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)})
+                    res_final.append({"Documento": t, "Série": s, "Início": ns[0], "Fim": ns[-1], "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)})
                     for b in sorted(list(set(range(ns[0], ns[-1] + 1)) - set(ns))):
                         fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
 
-            # INTEGRIDADE TOTAL: Totalizador agora segue exatamente as listas dos quadros
+            # LÓGICA DE CONTAGEM SINCRONIZADA COM OS QUADROS
             st_counts = {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list)}
 
             st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'df_canceladas': pd.DataFrame(canc_list), 'df_inutilizadas': pd.DataFrame(inut_list), 'st_counts': st_counts, 'garimpo_ok': True})
@@ -291,8 +291,10 @@ if st.session_state['confirmado']:
         c1.metric("📦 VOLUME TOTAL", len(st.session_state['relatorio']))
         c2.metric("❌ CANCELADAS", sc["CANCELADOS"])
         c3.metric("🚫 INUTILIZADAS", sc["INUTILIZADOS"])
+        
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
         st.markdown("---")
+        # --- QUADROS LADO A LADO ---
         col_audit, col_canc, col_inut = st.columns(3)
         with col_audit:
             st.markdown("### ⚠️ BURACOS")
@@ -303,10 +305,12 @@ if st.session_state['confirmado']:
         with col_inut:
             st.markdown("### 🚫 INUTILIZADAS")
             st.dataframe(st.session_state['df_inutilizadas'], use_container_width=True, hide_index=True) if not st.session_state['df_inutilizadas'].empty else st.info("ℹ️ Nenhuma nota.")
+
         st.divider()
         col1, col2 = st.columns(2)
         with col1: st.download_button("📂 BAIXAR ORGANIZADO (ZIP)", st.session_state['z_org'], "garimpo_organizado.zip", use_container_width=True)
         with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
-        if st.button("⛏️ NOVO GARIMPO"): st.session_state.clear(); st.rerun()
+        if st.button("⛏️ NOVO GARIMPO"):
+            st.session_state.clear(); st.rerun()
 else:
     st.warning("👈 Insira o CNPJ na barra lateral para começar.")
