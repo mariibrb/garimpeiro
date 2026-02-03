@@ -217,7 +217,7 @@ with st.container():
                 <li><b>Garimpo Profundo:</b> Abre recursivamente ZIP dentro de ZIP.</li>
                 <li><b>Divisão Cronológica:</b> Pastas separadas por Ano e Mês.</li>
                 <li><b>Hierarquia Fiscal:</b> Separação por Emitente e Status.</li>
-                <li><b>Peneira Lado a Lado:</b> Auditoria de buracos e notas canceladas.</li>
+                <li><b>Peneira Lado a Lado:</b> Auditoria de buracos, notas canceladas e inutilizadas.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
