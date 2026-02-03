@@ -184,13 +184,14 @@ with st.container():
     with m_col1:
         st.markdown("""
         <div class="instrucoes-card">
-            <h3>📖 Passo a Passo</h3>
-            <ol>
-                <li><b>Arquivos:</b> Arraste seus arquivos XML ou pastas ZIP.</li>
-                <li><b>Processamento:</b> Clique em <b>"🚀 INICIAR GRANDE GARIMPO"</b>.</li>
-                <li><b>Auditoria:</b> O sistema checa buracos na numeração via Chave de Acesso.</li>
-                <li><b>Download:</b> Baixe o ZIP organizado.</li>
-            </ol>
+            <h3>📖 Instruções de Uso</h3>
+    <ul>
+        <li><b>Fonte de Dados:</b> O sistema aceita arquivos <b>XML</b> individuais ou pacotes <b>ZIP</b>. Se houver ZIPs dentro de ZIPs, o garimpeiro fará o mergulho recursivo automaticamente.</li>
+        <li><b>Identificação Fiscal:</b> A Série e o Número são extraídos diretamente da <b>Chave de Acesso (44 dígitos)</b>. Isso garante que, em eventos de cancelamento, o número lido seja o da nota de referência e não o do protocolo.</li>
+        <li><b>Critério de Saída (Emitidos):</b> Documentos onde o CNPJ do emitente coincide com o CNPJ configurado são classificados como <b>EMITIDOS</b>.</li>
+        <li><b>Critério de Entrada (Terceiros):</b> Documentos de outros emitentes destinados ao CNPJ configurado são classificados como <b>RECEBIDOS</b>.</li>
+        <li><b>Regra de Prevalência:</b> Se o lote contiver a nota autorizada e o seu respectivo cancelamento, o sistema prioriza o status <b>CANCELADO</b> para a auditoria.</li>
+    </ul>
         </div>
         """, unsafe_allow_html=True)
     with m_col2:
