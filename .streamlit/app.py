@@ -110,7 +110,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         tag_l = content_str.lower()
         if '<?xml' not in tag_l and '<inf' not in tag_l and '<inut' not in tag_l and '<retinut' not in tag_l: return None, False
         
-        # 1. IDENTIFICAÇÃO DE INUTILIZADAS (Prioridade)
+        # 1. IDENTIFICAÇÃO DE INUTILIZADAS (Prioridade e leitura correta do XML de pedido)
         if '<inutnfe' in tag_l or '<retinutnfe' in tag_l or '<procinut' in tag_l:
             resumo["Status"], resumo["Tipo"] = "INUTILIZADOS", "NF-e"
             if '<mod>65</mod>' in tag_l: resumo["Tipo"] = "NFC-e"
@@ -126,7 +126,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             resumo["Chave"] = f"INUT_{resumo['Série']}_{ini}"
 
         else:
-            # 2. BUSCA DA CHAVE DE REFERÊNCIA
+            # 2. BUSCA DA CHAVE DE REFERÊNCIA (Notas e Eventos)
             match_ch = re.search(r'<(?:chNFe|chCTe|chMDFe)>(\d{44})</', content_str, re.IGNORECASE)
             if not match_ch:
                 match_ch = re.search(r'Id=["\'](?:NFe|CTe|MDFe)?(\d{44})["\']', content_str, re.IGNORECASE)
@@ -147,7 +147,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             elif '<mod>57</mod>' in tag_l or '<infcte' in tag_l: tipo = "CT-e"
             elif '<mod>58</mod>' in tag_l or '<infmdfe' in tag_l: tipo = "MDF-e"
             
-            # 3. IDENTIFICAÇÃO DE CANCELADAS (Só códigos fiscais)
+            # 3. IDENTIFICAÇÃO DE CANCELADAS (Só conta se tiver código específico)
             status = "NORMAIS"
             if '110111' in tag_l or '<cstat>101</cstat>' in tag_l: 
                 status = "CANCELADOS"
@@ -217,7 +217,7 @@ with st.container():
                 <li><b>Garimpo Profundo:</b> Abre recursivamente ZIP dentro de ZIP.</li>
                 <li><b>Divisão Cronológica:</b> Pastas separadas por Ano e Mês.</li>
                 <li><b>Hierarquia Fiscal:</b> Separação por Emitente e Status.</li>
-                <li><b>Peneira Lado a Lado:</b> Auditoria de buracos, notas canceladas e notas inutilizadas.</li>
+                <li><b>Peneira Lado a Lado:</b> Auditoria de buracos e notas canceladas.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -291,7 +291,7 @@ if st.session_state['confirmado']:
                     for b in sorted(list(set(range(n_min, n_max + 1)) - set(ns))):
                         fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
 
-            # --- CORREÇÃO DA CONTAGEM (Sincronizado com os quadros) ---
+            # --- SINCIA FORÇADA: O contador É o tamanho da lista ---
             st_counts = {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list)}
 
             st.session_state.update({'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 'relatorio': rel_list, 'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 'df_canceladas': pd.DataFrame(canc_list), 'df_inutilizadas': pd.DataFrame(inut_list), 'st_counts': st_counts, 'garimpo_ok': True})
@@ -307,9 +307,8 @@ if st.session_state['confirmado']:
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
         
         st.markdown("---")
-        # --- QUADROS COM FIX VISUAL (Blocos IF/ELSE para remover erro DeltaGenerator) ---
+        # --- QUADROS LADO A LADO ---
         col_audit, col_canc, col_inut = st.columns(3)
-        
         with col_audit:
             st.markdown("### ⚠️ BURACOS")
             if not st.session_state['df_faltantes'].empty:
@@ -332,9 +331,20 @@ if st.session_state['confirmado']:
                 st.info("ℹ️ Nenhuma nota.")
 
         st.divider()
-        col1, col2 = st.columns(2)
-        with col1: st.download_button("📂 BAIXAR ORGANIZADO (ZIP)", st.session_state['z_org'], "garimpo_organizado.zip", use_container_width=True)
-        with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
+        
+        # --- GERAÇÃO DO EXCEL PARA DOWNLOAD ---
+        buffer_excel = io.BytesIO()
+        with pd.ExcelWriter(buffer_excel, engine='xlsxwriter') as writer:
+            st.session_state['df_resumo'].to_excel(writer, sheet_name='Resumo', index=False)
+            st.session_state['df_faltantes'].to_excel(writer, sheet_name='Buracos', index=False)
+            st.session_state['df_canceladas'].to_excel(writer, sheet_name='Canceladas', index=False)
+            st.session_state['df_inutilizadas'].to_excel(writer, sheet_name='Inutilizadas', index=False)
+            
+        c_d1, c_d2, c_d3 = st.columns(3)
+        with c_d1: st.download_button("📂 BAIXAR ORGANIZADO (ZIP)", st.session_state['z_org'], "garimpo_organizado.zip", use_container_width=True)
+        with c_d2: st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
+        with c_d3: st.download_button("📊 RELATÓRIO EXCEL", buffer_excel.getvalue(), "auditoria_garimpo.xlsx", use_container_width=True)
+        
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear(); st.rerun()
 else:
