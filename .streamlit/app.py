@@ -8,7 +8,7 @@ import random
 import gc
 
 # --- CONFIGURAÇÃO E ESTILO (CLONE ABSOLUTO DO DIAMOND TAX) ---
-st.set_page_config(page_title="O GARIMPEIRO", layout="wide", page_icon="⛏️")
+st.set_page_config(page_title="GARIMPEIRO", layout="wide", page_icon="⛏️")
 
 def aplicar_estilo_premium():
     st.markdown("""
