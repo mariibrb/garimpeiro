@@ -127,7 +127,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             resumo["Chave"] = f"INUT_{resumo['Série']}_{ini}"
 
         else:
-            # 2. BUSCA DA CHAVE DE REFERÊNCIA
+            # 2. CHAVE DE ACESSO
             match_ch = re.search(r'<(?:chNFe|chCTe|chMDFe)>(\d{44})</', content_str, re.IGNORECASE)
             if not match_ch:
                 match_ch = re.search(r'Id=["\'](?:NFe|CTe|MDFe)?(\d{44})["\']', content_str, re.IGNORECASE)
@@ -148,7 +148,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             elif '<mod>57</mod>' in tag_l or '<infcte' in tag_l: tipo = "CT-e"
             elif '<mod>58</mod>' in tag_l or '<infmdfe' in tag_l: tipo = "MDF-e"
             
-            # 3. IDENTIFICAÇÃO DE CANCELADAS
+            # 3. CANCELADAS
             status = "NORMAIS"
             if '110111' in tag_l or '<cstat>101</cstat>' in tag_l: 
                 status = "CANCELADOS"
@@ -202,11 +202,9 @@ with st.container():
         <div class="instrucoes-card">
             <h3>📖 Instruções de Uso</h3>
     <ul>
-        <li><b>Fonte de Dados:</b> O sistema aceita arquivos <b>XML</b> individuais ou pacotes <b>ZIP</b>. </li>
-        <li><b>Identificação Fiscal:</b> A Série e o Número são extraídos diretamente da <b>Chave de Acesso (44 dígitos)</b>. Isso garante que, em eventos de cancelamento, o número lido seja o da nota de referência e não o do protocolo.</li>
-        <li><b>Critério de Saída (Emitidos):</b> Documentos onde o CNPJ do emitente coincide com o CNPJ configurado são classificados como <b>EMITIDOS</b>.</li>
-        <li><b>Critério de Entrada (Terceiros):</b> Documentos de outros emitentes destinados ao CNPJ configurado são classificados como <b>RECEBIDOS</b>.</li>
-        <li><b>Regra de Prevalência:</b> Se o lote contiver a nota autorizada e o seu respectivo cancelamento, o sistema prioriza o status <b>CANCELADO</b> para a auditoria.</li>
+        <li><b>Etapa 1:</b> Suba os XMLs para obter o raio-x inicial e achar buracos.</li>
+        <li><b>Etapa 2 (Novo):</b> Suba o relatório Excel de Autenticidade para validar o status real (Cancelada/Autorizada).</li>
+        <li><b>Prevalência:</b> O status do relatório Excel prevalece sobre o XML em caso de divergência.</li>
     </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -219,6 +217,7 @@ with st.container():
                 <li><b>Divisão Cronológica:</b> Pastas separadas por Ano e Mês.</li>
                 <li><b>Hierarquia Fiscal:</b> Separação por Emitente e Status.</li>
                 <li><b>Peneira Lado a Lado:</b> Auditoria de buracos, notas canceladas, inutilizadas e autorizadas.</li>
+                <li><b>[NOVO] Auditoria de Autenticidade:</b> Comparação com relatório Excel externo.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -245,14 +244,16 @@ with st.sidebar:
     if st.button("🗑️ RESETAR SISTEMA"):
         st.session_state.clear(); st.rerun()
 
+# --- LÓGICA DE EXECUÇÃO ---
 if st.session_state['confirmado']:
+    
+    # 1. TELA INICIAL (ETAPA 1 - SÓ XML)
     if not st.session_state['garimpo_ok']:
-        uploaded_files = st.file_uploader("Arraste seus arquivos aqui:", accept_multiple_files=True)
-        if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
+        uploaded_files = st.file_uploader("📂 1. ARQUIVOS XML/ZIP (Etapa Obrigatória)", accept_multiple_files=True)
+        
+        if uploaded_files and st.button("🚀 INICIAR GARIMPO (ETAPA 1)"):
             lote_dict = {}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
-            
-            # --- STATUS VISUAL ---
             progresso_bar = st.progress(0)
             status_text = st.empty()
             total_arquivos = len(uploaded_files)
@@ -263,7 +264,6 @@ if st.session_state['confirmado']:
                     
                     for i, f in enumerate(uploaded_files):
                         if i % 50 == 0: gc.collect()
-                        
                         if total_arquivos > 0 and i % max(1, int(total_arquivos * 0.02)) == 0:
                             progresso_bar.progress((i + 1) / total_arquivos)
                             status_text.text(f"⛏️ Processando arquivo {i+1}/{total_arquivos}: {f.name}")
@@ -278,6 +278,7 @@ if st.session_state['confirmado']:
                                 res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
                                 if res:
                                     key = res["Chave"]
+                                    # Lógica: Se já existe, prioriza Cancelada/Inutilizada
                                     if key in lote_dict:
                                         if res["Status"] in ["CANCELADOS", "INUTILIZADOS"]: lote_dict[key] = (res, is_p)
                                     else:
@@ -286,9 +287,10 @@ if st.session_state['confirmado']:
                             del todos_xmls
                         except: continue
                 
-                status_box.update(label="✅ Concluído!", state="complete", expanded=False)
+                status_box.update(label="✅ Etapa 1 Concluída!", state="complete", expanded=False)
                 progresso_bar.empty(); status_text.empty()
 
+            # PROCESSAMENTO DOS DADOS
             rel_list, audit_map, canc_list, inut_list, aut_list = [], {}, [], [], []
             for k, (res, is_p) in lote_dict.items():
                 rel_list.append(res)
@@ -305,7 +307,8 @@ if st.session_state['confirmado']:
                         if res["Número"] > 0:
                             audit_map[sk]["nums"].add(res["Número"])
                             if res["Status"] == "CANCELADOS":
-                                canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"]})
+                                # --- AJUSTE: INCLUÍDA A CHAVE NA LISTA DE CANCELADAS ---
+                                canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"]})
                             elif res["Status"] == "NORMAIS":
                                 aut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Valor": res["Valor"], "Chave": res["Chave"]})
                             audit_map[sk]["valor"] += res["Valor"]
@@ -329,12 +332,14 @@ if st.session_state['confirmado']:
                 'df_canceladas': pd.DataFrame(canc_list), 
                 'df_inutilizadas': pd.DataFrame(inut_list), 
                 'df_autorizadas': pd.DataFrame(aut_list),
-                'df_divergencias': pd.DataFrame(),
+                'df_divergencias': pd.DataFrame(), # Limpa divergencias ao iniciar novo
                 'st_counts': st_counts, 
                 'garimpo_ok': True
             })
             st.rerun()
-    else:
+
+    # 2. TELA DE RESULTADOS + ETAPA 2
+    else: 
         sc = st.session_state['st_counts']
         c1, c2, c3 = st.columns(3)
         c1.metric("📦 AUTORIZADAS (XML)", sc.get("AUTORIZADAS", 0))
@@ -347,8 +352,8 @@ if st.session_state['confirmado']:
         # --- QUADRO DE DIVERGÊNCIAS (APARECE SÓ SE HOUVER DIVERGENCIA APÓS ETAPA 2) ---
         if not st.session_state['df_divergencias'].empty:
             st.markdown("---")
-            st.markdown("### 🚨 DIVERGÊNCIAS DE STATUS (XML vs EXCEL)")
-            st.warning("Atenção: As notas abaixo constam como AUTORIZADAS nos XMLs, mas CANCELADAS no relatório de autenticidade.")
+            st.markdown("### 🚨 DIVERGÊNCIAS ENCONTRADAS (XML vs EXCEL)")
+            st.error(f"Foram encontradas {len(st.session_state['df_divergencias'])} notas que estão AUTORIZADAS no XML mas CANCELADAS no relatório de autenticidade.")
             st.dataframe(st.session_state['df_divergencias'], use_container_width=True, hide_index=True)
         
         st.markdown("---")
@@ -370,7 +375,7 @@ if st.session_state['confirmado']:
         
         # --- ETAPA 2: AUDITORIA CRUZADA (NOVO MÓDULO) ---
         with st.expander("🕵️ ETAPA 2: CRUZAR COM RELATÓRIO DE AUTENTICIDADE (EXCEL)", expanded=True):
-            st.info("Suba aqui o relatório Excel para verificar se alguma nota autorizada acima foi cancelada posteriormente.")
+            st.info("Já tem o relatório de autenticidade? Suba ele aqui para verificar se alguma nota autorizada acima foi cancelada posteriormente.")
             auth_file = st.file_uploader("Selecione o arquivo Excel (.xlsx)", type=["xlsx", "xls"], key="auth_uploader_2")
             
             if auth_file and st.button("🔍 VERIFICAR DIVERGÊNCIAS"):
@@ -390,6 +395,7 @@ if st.session_state['confirmado']:
                         # Só interessa cruzar se o XML diz que está NORMAL/AUTORIZADA
                         if res["Status"] == "NORMAIS" and res["Chave"] in auth_dict:
                             status_excel = auth_dict[res["Chave"]]
+                            # Se Excel diz CANCELADA, temos uma divergência
                             if "CANCEL" in status_excel:
                                 divergencia_list.append({
                                     "Chave": res["Chave"],
@@ -401,7 +407,7 @@ if st.session_state['confirmado']:
                                 })
                     
                     st.session_state['df_divergencias'] = pd.DataFrame(divergencia_list)
-                    st.success("Verificação concluída! Confira o quadro de divergências acima.")
+                    st.success("Verificação concluída! Confira o quadro de divergências que apareceu acima.")
                     st.rerun()
                     
                 except Exception as e:
@@ -421,7 +427,7 @@ if st.session_state['confirmado']:
         col1, col2, col3 = st.columns(3)
         with col1: st.download_button("📂 BAIXAR ORGANIZADO (ZIP)", st.session_state['z_org'], "garimpo_organizado.zip", use_container_width=True)
         with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
-        with col3: st.download_button("📊 RELATÓRIO EXCEL", buffer_excel.getvalue(), "relatorio_auditoria_completo.xlsx", use_container_width=True, mime="application/vnd.ms-excel")
+        with col3: st.download_button("📊 RELATÓRIO EXCEL COMPLETO", buffer_excel.getvalue(), "relatorio_auditoria_completo.xlsx", use_container_width=True, mime="application/vnd.ms-excel")
         
         if st.button("⛏️ NOVO GARIMPO"):
             st.session_state.clear(); st.rerun()
