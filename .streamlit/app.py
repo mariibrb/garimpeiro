@@ -111,7 +111,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         tag_l = content_str.lower()
         if '<?xml' not in tag_l and '<inf' not in tag_l and '<inut' not in tag_l and '<retinut' not in tag_l: return None, False
         
-        # 1. IDENTIFICAÇÃO DE INUTILIZADAS
+        # 1. INUTILIZADAS
         if '<inutnfe' in tag_l or '<retinutnfe' in tag_l or '<procinut' in tag_l:
             resumo["Status"], resumo["Tipo"] = "INUTILIZADOS", "NF-e"
             if '<mod>65</mod>' in tag_l: resumo["Tipo"] = "NFC-e"
@@ -127,7 +127,6 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             resumo["Chave"] = f"INUT_{resumo['Série']}_{ini}"
 
         else:
-            # 2. BUSCA DA CHAVE DE REFERÊNCIA
             match_ch = re.search(r'<(?:chNFe|chCTe|chMDFe)>(\d{44})</', content_str, re.IGNORECASE)
             if not match_ch:
                 match_ch = re.search(r'Id=["\'](?:NFe|CTe|MDFe)?(\d{44})["\']', content_str, re.IGNORECASE)
@@ -148,7 +147,6 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
             elif '<mod>57</mod>' in tag_l or '<infcte' in tag_l: tipo = "CT-e"
             elif '<mod>58</mod>' in tag_l or '<infmdfe' in tag_l: tipo = "MDF-e"
             
-            # 3. IDENTIFICAÇÃO DE CANCELADAS
             status = "NORMAIS"
             if '110111' in tag_l or '<cstat>101</cstat>' in tag_l: 
                 status = "CANCELADOS"
@@ -219,13 +217,14 @@ with st.container():
                 <li><b>Divisão Cronológica:</b> Pastas separadas por Ano e Mês.</li>
                 <li><b>Hierarquia Fiscal:</b> Separação por Emitente e Status.</li>
                 <li><b>Peneira Lado a Lado:</b> Auditoria de buracos, notas canceladas, inutilizadas e autorizadas.</li>
+                <li><b>[NOVO] Auditoria de Autenticidade:</b> Comparação com relatório Excel externo.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
 
 st.markdown("---")
 
-keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'df_canceladas', 'df_inutilizadas', 'df_autorizadas', 'st_counts']
+keys_to_init = ['garimpo_ok', 'confirmado', 'z_org', 'z_todos', 'relatorio', 'df_resumo', 'df_faltantes', 'df_canceladas', 'df_inutilizadas', 'df_autorizadas', 'df_divergencias', 'st_counts']
 for k in keys_to_init:
     if k not in st.session_state:
         if 'df' in k: st.session_state[k] = pd.DataFrame()
@@ -246,141 +245,188 @@ with st.sidebar:
         st.session_state.clear(); st.rerun()
 
 if st.session_state['confirmado']:
-    if not st.session_state['garimpo_ok']:
-        uploaded_files = st.file_uploader("Arraste seus arquivos aqui:", accept_multiple_files=True)
-        if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
-            lote_dict = {}
-            buf_org, buf_todos = io.BytesIO(), io.BytesIO()
-            
-            # --- STATUS VISUAL E OTIMIZAÇÃO (SEM TRAVAMENTO) ---
-            progresso_bar = st.progress(0)
-            status_text = st.empty()
-            total_arquivos = len(uploaded_files)
-            
-            with st.status("⛏️ Minerando...", expanded=True) as status_box:
-                with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
-                     zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
-                    
-                    for i, f in enumerate(uploaded_files):
-                        # Limpeza de Memória a cada 50 arquivos (EVITA O TRAVAMENTO)
-                        if i % 50 == 0:
-                            gc.collect()
-                        
-                        # Atualiza barra apenas a cada 2% para não travar a tela
-                        if total_arquivos > 0 and i % max(1, int(total_arquivos * 0.02)) == 0:
-                            progresso_bar.progress((i + 1) / total_arquivos)
-                            status_text.text(f"⛏️ Processando arquivo {i+1}/{total_arquivos}: {f.name}")
-                        
-                        try:
-                            # Lê o arquivo e libera memória IMEDIATAMENTE após extrair
-                            f.seek(0)
-                            content = f.read()
-                            todos_xmls = extrair_recursivo(content, f.name)
-                            del content # Libera RAM do arquivo bruto
-                            
-                            for name, xml_data in todos_xmls:
-                                res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
-                                if res:
-                                    key = res["Chave"]
-                                    if key in lote_dict:
-                                        if res["Status"] in ["CANCELADOS", "INUTILIZADOS"]: lote_dict[key] = (res, is_p)
-                                    else:
-                                        lote_dict[key] = (res, is_p)
-                                        z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
-                            
-                            del todos_xmls # Libera RAM da lista de XMLs
-                        except: continue
+    # --- ÁREA DE UPLOAD (XML e EXCEL DE AUTENTICIDADE) ---
+    col_up1, col_up2 = st.columns(2)
+    with col_up1:
+        uploaded_files = st.file_uploader("1. ARQUIVOS XML/ZIP (Obrigatório)", accept_multiple_files=True, key="xml_uploader")
+    with col_up2:
+        auth_file = st.file_uploader("2. RELATÓRIO AUTENTICIDADE (Opcional - Excel)", type=["xlsx", "xls"], key="auth_uploader")
+
+    if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
+        lote_dict = {}
+        buf_org, buf_todos = io.BytesIO(), io.BytesIO()
+        
+        # --- PREPARAÇÃO DO DICIONÁRIO DE AUTENTICIDADE ---
+        auth_dict = {}
+        if auth_file:
+            try:
+                df_auth = pd.read_excel(auth_file)
+                # Assume Coluna A = Chave, Coluna F = Status (índices 0 e 5)
+                # Limpa chave e normaliza status
+                for index, row in df_auth.iterrows():
+                    chave_auth = str(row.iloc[0]).strip()
+                    status_auth = str(row.iloc[5]).strip().upper()
+                    if len(chave_auth) == 44:
+                        auth_dict[chave_auth] = status_auth
+            except Exception as e:
+                st.error(f"Erro ao ler arquivo de autenticidade: {e}")
+
+        progresso_bar = st.progress(0)
+        status_text = st.empty()
+        total_arquivos = len(uploaded_files)
+        
+        with st.status("⛏️ Minerando...", expanded=True) as status_box:
+            with zipfile.ZipFile(buf_org, "w", zipfile.ZIP_STORED) as z_org, \
+                 zipfile.ZipFile(buf_todos, "w", zipfile.ZIP_STORED) as z_todos:
                 
-                status_box.update(label="✅ Concluído!", state="complete", expanded=False)
-                progresso_bar.empty()
-                status_text.empty()
-
-            rel_list, audit_map, canc_list, inut_list, aut_list = [], {}, [], [], []
-            for k, (res, is_p) in lote_dict.items():
-                rel_list.append(res)
-                if is_p:
-                    sk = (res["Tipo"], res["Série"])
-                    if sk not in audit_map: audit_map[sk] = {"nums": set(), "valor": 0.0}
+                for i, f in enumerate(uploaded_files):
+                    if i % 50 == 0: gc.collect()
                     
-                    if res["Status"] == "INUTILIZADOS":
-                        r = res.get("Range", (res["Número"], res["Número"]))
-                        for n in range(r[0], r[1] + 1):
-                            audit_map[sk]["nums"].add(n)
-                            inut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": n})
-                    else:
-                        if res["Número"] > 0:
-                            audit_map[sk]["nums"].add(res["Número"])
-                            if res["Status"] == "CANCELADOS":
-                                canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"]})
-                            elif res["Status"] == "NORMAIS":
-                                aut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Valor": res["Valor"], "Chave": res["Chave"]})
-                            audit_map[sk]["valor"] += res["Valor"]
+                    if total_arquivos > 0 and i % max(1, int(total_arquivos * 0.02)) == 0:
+                        progresso_bar.progress((i + 1) / total_arquivos)
+                        status_text.text(f"⛏️ Processando arquivo {i+1}/{total_arquivos}: {f.name}")
+                    
+                    try:
+                        f.seek(0)
+                        content = f.read()
+                        todos_xmls = extrair_recursivo(content, f.name)
+                        del content
+                        
+                        for name, xml_data in todos_xmls:
+                            res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
+                            if res:
+                                key = res["Chave"]
+                                if key in lote_dict:
+                                    if res["Status"] in ["CANCELADOS", "INUTILIZADOS"]: lote_dict[key] = (res, is_p)
+                                else:
+                                    lote_dict[key] = (res, is_p)
+                                    z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
+                        del todos_xmls
+                    except: continue
+            
+            status_box.update(label="✅ Concluído!", state="complete", expanded=False)
+            progresso_bar.empty(); status_text.empty()
 
-            res_final, fal_final = [], []
-            for (t, s), dados in audit_map.items():
-                ns = sorted(list(dados["nums"]))
-                if ns:
-                    n_min, n_max = ns[0], ns[-1]
-                    res_final.append({"Documento": t, "Série": s, "Início": n_min, "Fim": n_max, "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)})
-                    for b in sorted(list(set(range(n_min, n_max + 1)) - set(ns))):
-                        fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
-
-            st_counts = {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list), "AUTORIZADAS": len(aut_list)}
-
-            st.session_state.update({
-                'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 
-                'relatorio': rel_list, 
-                'df_resumo': pd.DataFrame(res_final), 
-                'df_faltantes': pd.DataFrame(fal_final), 
-                'df_canceladas': pd.DataFrame(canc_list), 
-                'df_inutilizadas': pd.DataFrame(inut_list), 
-                'df_autorizadas': pd.DataFrame(aut_list),
-                'st_counts': st_counts, 
-                'garimpo_ok': True
-            })
-            st.rerun()
-    else:
-        sc = st.session_state['st_counts']
-        c1, c2, c3 = st.columns(3)
-        c1.metric("📦 VOLUME TOTAL", len(st.session_state['relatorio']))
-        c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
-        c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
+        rel_list, audit_map, canc_list, inut_list, aut_list, divergencia_list = [], {}, [], [], [], []
         
-        st.markdown("### 📊 RESUMO POR SÉRIE")
-        st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
-        
-        st.markdown("---")
-        col_audit, col_canc, col_inut = st.columns(3)
-        with col_audit:
-            st.markdown("### ⚠️ BURACOS")
-            if not st.session_state['df_faltantes'].empty: st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
-            else: st.info("✅ Tudo em ordem.")
-        with col_canc:
-            st.markdown("### ❌ CANCELADAS")
-            if not st.session_state['df_canceladas'].empty: st.dataframe(st.session_state['df_canceladas'], use_container_width=True, hide_index=True)
-            else: st.info("ℹ️ Nenhuma nota.")
-        with col_inut:
-            st.markdown("### 🚫 INUTILIZADAS")
-            if not st.session_state['df_inutilizadas'].empty: st.dataframe(st.session_state['df_inutilizadas'], use_container_width=True, hide_index=True)
-            else: st.info("ℹ️ Nenhuma nota.")
+        for k, (res, is_p) in lote_dict.items():
+            rel_list.append(res)
+            if is_p:
+                # --- VERIFICAÇÃO DE DIVERGÊNCIA COM EXCEL ---
+                status_xml = res["Status"] # NORMAIS, CANCELADOS, INUTILIZADOS
+                status_real = status_xml # Assume o do XML por padrão
+                obs_div = ""
 
-        st.divider()
-        
-        # --- GERAÇÃO DO EXCEL PARA DOWNLOAD ---
-        buffer_excel = io.BytesIO()
-        with pd.ExcelWriter(buffer_excel, engine='xlsxwriter') as writer:
-            st.session_state['df_resumo'].to_excel(writer, sheet_name='Resumo', index=False)
-            st.session_state['df_faltantes'].to_excel(writer, sheet_name='Buracos', index=False)
-            st.session_state['df_canceladas'].to_excel(writer, sheet_name='Canceladas', index=False)
-            st.session_state['df_inutilizadas'].to_excel(writer, sheet_name='Inutilizadas', index=False)
-            st.session_state['df_autorizadas'].to_excel(writer, sheet_name='Autorizadas', index=False)
+                if k in auth_dict:
+                    status_excel = auth_dict[k] # Ex: "CANCELADA", "AUTORIZADA"
+                    # Lógica de Divergência: XML diz Normal, Excel diz Cancelada
+                    if status_xml == "NORMAIS" and "CANCEL" in status_excel:
+                        status_real = "CANCELADOS_DIVERGENTE" # Marca interna
+                        divergencia_list.append({
+                            "Chave": k,
+                            "Modelo": res["Tipo"],
+                            "Série": res["Série"],
+                            "Nota": res["Número"],
+                            "Status no XML": "AUTORIZADA",
+                            "Status no Excel": status_excel
+                        })
+                
+                # --- AGREGACAO NOS QUADROS ---
+                sk = (res["Tipo"], res["Série"])
+                if sk not in audit_map: audit_map[sk] = {"nums": set(), "valor": 0.0}
+                
+                if status_real == "INUTILIZADOS":
+                    r = res.get("Range", (res["Número"], res["Número"]))
+                    for n in range(r[0], r[1] + 1):
+                        audit_map[sk]["nums"].add(n)
+                        inut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": n})
+                else:
+                    if res["Número"] > 0:
+                        audit_map[sk]["nums"].add(res["Número"])
+                        
+                        # Se for cancelada no XML OU cancelada apenas no Excel (divergente)
+                        if status_real == "CANCELADOS" or status_real == "CANCELADOS_DIVERGENTE":
+                            canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Obs": "Via Excel" if status_real == "CANCELADOS_DIVERGENTE" else "Via XML"})
+                        elif status_real == "NORMAIS":
+                            aut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Valor": res["Valor"], "Chave": res["Chave"]})
+                        
+                        audit_map[sk]["valor"] += res["Valor"]
 
-        col1, col2, col3 = st.columns(3)
-        with col1: st.download_button("📂 BAIXAR ORGANIZADO (ZIP)", st.session_state['z_org'], "garimpo_organizado.zip", use_container_width=True)
-        with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
-        with col3: st.download_button("📊 RELATÓRIO EXCEL", buffer_excel.getvalue(), "relatorio_auditoria.xlsx", use_container_width=True, mime="application/vnd.ms-excel")
-        
-        if st.button("⛏️ NOVO GARIMPO"):
-            st.session_state.clear(); st.rerun()
+        res_final, fal_final = [], []
+        for (t, s), dados in audit_map.items():
+            ns = sorted(list(dados["nums"]))
+            if ns:
+                n_min, n_max = ns[0], ns[-1]
+                res_final.append({"Documento": t, "Série": s, "Início": n_min, "Fim": n_max, "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)})
+                for b in sorted(list(set(range(n_min, n_max + 1)) - set(ns))):
+                    fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
+
+        st_counts = {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list), "AUTORIZADAS": len(aut_list)}
+
+        st.session_state.update({
+            'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 
+            'relatorio': rel_list, 
+            'df_resumo': pd.DataFrame(res_final), 
+            'df_faltantes': pd.DataFrame(fal_final), 
+            'df_canceladas': pd.DataFrame(canc_list), 
+            'df_inutilizadas': pd.DataFrame(inut_list), 
+            'df_autorizadas': pd.DataFrame(aut_list),
+            'df_divergencias': pd.DataFrame(divergencia_list),
+            'st_counts': st_counts, 
+            'garimpo_ok': True
+        })
+        st.rerun()
+
+elif st.session_state['garimpo_ok']: # Tela de Resultados
+    sc = st.session_state['st_counts']
+    c1, c2, c3 = st.columns(3)
+    c1.metric("📦 VOLUME TOTAL", len(st.session_state['relatorio']))
+    c2.metric("❌ CANCELADAS", sc.get("CANCELADOS", 0))
+    c3.metric("🚫 INUTILIZADAS", sc.get("INUTILIZADOS", 0))
+    
+    st.markdown("### 📊 RESUMO POR SÉRIE")
+    st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
+    
+    # --- QUADRO DE DIVERGÊNCIAS (NOVO) ---
+    if not st.session_state['df_divergencias'].empty:
+        st.markdown("### 🚨 DIVERGÊNCIAS DE STATUS (XML vs EXCEL)")
+        st.warning("Atenção: As notas abaixo constam como AUTORIZADAS nos XMLs, mas CANCELADAS no relatório de autenticidade.")
+        st.dataframe(st.session_state['df_divergencias'], use_container_width=True, hide_index=True)
+    
+    st.markdown("---")
+    col_audit, col_canc, col_inut = st.columns(3)
+    with col_audit:
+        st.markdown("### ⚠️ BURACOS")
+        if not st.session_state['df_faltantes'].empty: st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
+        else: st.info("✅ Tudo em ordem.")
+    with col_canc:
+        st.markdown("### ❌ CANCELADAS")
+        if not st.session_state['df_canceladas'].empty: st.dataframe(st.session_state['df_canceladas'], use_container_width=True, hide_index=True)
+        else: st.info("ℹ️ Nenhuma nota.")
+    with col_inut:
+        st.markdown("### 🚫 INUTILIZADAS")
+        if not st.session_state['df_inutilizadas'].empty: st.dataframe(st.session_state['df_inutilizadas'], use_container_width=True, hide_index=True)
+        else: st.info("ℹ️ Nenhuma nota.")
+
+    st.divider()
+    
+    # --- GERAÇÃO DO EXCEL COM ABA DIVERGENCIAS ---
+    buffer_excel = io.BytesIO()
+    with pd.ExcelWriter(buffer_excel, engine='xlsxwriter') as writer:
+        st.session_state['df_resumo'].to_excel(writer, sheet_name='Resumo', index=False)
+        st.session_state['df_faltantes'].to_excel(writer, sheet_name='Buracos', index=False)
+        st.session_state['df_canceladas'].to_excel(writer, sheet_name='Canceladas', index=False)
+        st.session_state['df_inutilizadas'].to_excel(writer, sheet_name='Inutilizadas', index=False)
+        st.session_state['df_autorizadas'].to_excel(writer, sheet_name='Autorizadas', index=False)
+        if not st.session_state['df_divergencias'].empty:
+            st.session_state['df_divergencias'].to_excel(writer, sheet_name='Divergencias_Status', index=False)
+
+    col1, col2, col3 = st.columns(3)
+    with col1: st.download_button("📂 BAIXAR ORGANIZADO (ZIP)", st.session_state['z_org'], "garimpo_organizado.zip", use_container_width=True)
+    with col2: st.download_button("📦 BAIXAR TODOS (SÓ XML)", st.session_state['z_todos'], "todos_xml.zip", use_container_width=True)
+    with col3: st.download_button("📊 RELATÓRIO EXCEL", buffer_excel.getvalue(), "relatorio_auditoria.xlsx", use_container_width=True, mime="application/vnd.ms-excel")
+    
+    if st.button("⛏️ NOVO GARIMPO"):
+        st.session_state.clear(); st.rerun()
 else:
     st.warning("👈 Insira o CNPJ na barra lateral para começar.")
