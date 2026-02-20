@@ -230,7 +230,7 @@ for k in keys_to_init:
         if 'df' in k: st.session_state[k] = pd.DataFrame()
         elif 'z_' in k: st.session_state[k] = None
         elif k == 'relatorio': st.session_state[k] = []
-        elif k == 'dict_arquivos': st.session_state[k] = {} 
+        elif k == 'dict_arquivos': st.session_state[k] = {}
         elif k == 'st_counts': st.session_state[k] = {"CANCELADOS": 0, "INUTILIZADOS": 0, "AUTORIZADAS": 0}
         else: st.session_state[k] = False
 
@@ -250,7 +250,7 @@ if st.session_state['confirmado']:
         uploaded_files = st.file_uploader("Arraste seus arquivos aqui:", accept_multiple_files=True)
         if uploaded_files and st.button("🚀 INICIAR GRANDE GARIMPO"):
             lote_dict = {}
-            dict_fisico = {} 
+            dict_fisico = {}
             buf_org, buf_todos = io.BytesIO(), io.BytesIO()
             
             progresso_bar = st.progress(0)
@@ -308,12 +308,15 @@ if st.session_state['confirmado']:
                     if res["Status"] == "INUTILIZADOS":
                         r = res.get("Range", (res["Número"], res["Número"]))
                         for n in range(r[0], r[1] + 1):
-                            audit_map[sk]["nums"].add(n); inut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": n})
+                            audit_map[sk]["nums"].add(n)
+                            inut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": n})
                     else:
                         if res["Número"] > 0:
                             audit_map[sk]["nums"].add(res["Número"])
-                            if res["Status"] == "CANCELADOS": canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"]})
-                            elif res["Status"] == "NORMAIS": aut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Valor": res["Valor"], "Chave": res["Chave"]})
+                            if res["Status"] == "CANCELADOS":
+                                canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"]})
+                            elif res["Status"] == "NORMAIS":
+                                aut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Valor": res["Valor"], "Chave": res["Chave"]})
                             audit_map[sk]["valor"] += res["Valor"]
 
             res_final, fal_final = [], []
@@ -410,9 +413,19 @@ if st.session_state['confirmado']:
                                     elif status_final == "NORMAIS": aut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Valor": res["Valor"], "Chave": res["Chave"]})
                                     audit_map[sk]["valor"] += res["Valor"]
 
+                    res_final, fal_final = [], []
+                    for (t, s), dados in audit_map.items():
+                        ns = sorted(list(dados["nums"]))
+                        if ns:
+                            n_min, n_max = ns[0], ns[-1]
+                            res_final.append({"Documento": t, "Série": s, "Início": n_min, "Fim": n_max, "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)})
+                            for b in sorted(list(set(range(n_min, n_max + 1)) - set(ns))):
+                                fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
+
                     st.session_state.update({
-                        'df_canceladas': pd.DataFrame(canc_list), 'df_autorizadas': pd.DataFrame(aut_list),
-                        'df_inutilizadas': pd.DataFrame(inut_list), 'df_geral': pd.DataFrame(geral_list),
+                        'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 
+                        'df_canceladas': pd.DataFrame(canc_list), 'df_inutilizadas': pd.DataFrame(inut_list), 
+                        'df_autorizadas': pd.DataFrame(aut_list), 'df_geral': pd.DataFrame(geral_list),
                         'df_divergencias': pd.DataFrame(div_list), 'st_counts': {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list), "AUTORIZADAS": len(aut_list)}
                     })
                     st.rerun()
@@ -435,6 +448,55 @@ if st.session_state['confirmado']:
                                     st.session_state['relatorio'].append(res)
                                     st.session_state['dict_arquivos'][f"{res['Pasta']}/{name}"] = xml_data
                         except: continue
+                    
+                    # RECALCULO COMPLETO PARA MANTER INTEGRIDADE DOS BURACOS
+                    lote_recalc = {}
+                    for item in st.session_state['relatorio']:
+                        key = item["Chave"]
+                        is_p = "EMITIDOS_CLIENTE" in item["Pasta"]
+                        if key in lote_recalc:
+                            if item["Status"] in ["CANCELADOS", "INUTILIZADOS"]: lote_recalc[key] = (item, is_p)
+                        else: lote_recalc[key] = (item, is_p)
+                    
+                    audit_map, canc_list, inut_list, aut_list, geral_list = {}, [], [], [], []
+                    for k, (res, is_p) in lote_recalc.items():
+                        origem_label = f"EMISSÃO PRÓPRIA ({res['Operacao']})" if is_p else f"TERCEIROS ({res['Operacao']})"
+                        if res["Status"] == "INUTILIZADOS":
+                            r = res.get("Range", (res["Número"], res["Número"]))
+                            for n in range(r[0], r[1] + 1):
+                                geral_list.append({"Origem": origem_label, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": n, "Chave": res["Chave"], "Status Final": "INUTILIZADA", "Valor": 0.0})
+                        else:
+                            geral_list.append({"Origem": origem_label, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"], "Status Final": res["Status"], "Valor": res["Valor"]})
+
+                        if is_p:
+                            sk = (res["Tipo"], res["Série"])
+                            if sk not in audit_map: audit_map[sk] = {"nums": set(), "valor": 0.0}
+                            if res["Status"] == "INUTILIZADOS":
+                                r = res.get("Range", (res["Número"], res["Número"]))
+                                for n in range(r[0], r[1] + 1):
+                                    audit_map[sk]["nums"].add(n); inut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": n})
+                            else:
+                                if res["Número"] > 0:
+                                    audit_map[sk]["nums"].add(res["Número"])
+                                    if res["Status"] == "CANCELADOS": canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"]})
+                                    elif res["Status"] == "NORMAIS": aut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Valor": res["Valor"], "Chave": res["Chave"]})
+                                    audit_map[sk]["valor"] += res["Valor"]
+
+                    res_final, fal_final = [], []
+                    for (t, s), dados in audit_map.items():
+                        ns = sorted(list(dados["nums"]))
+                        if ns:
+                            n_min, n_max = ns[0], ns[-1]
+                            res_final.append({"Documento": t, "Série": s, "Início": n_min, "Fim": n_max, "Quantidade": len(ns), "Valor Contábil (R$)": round(dados["valor"], 2)})
+                            for b in sorted(list(set(range(n_min, n_max + 1)) - set(ns))):
+                                fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
+
+                    st.session_state.update({
+                        'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 
+                        'df_canceladas': pd.DataFrame(canc_list), 'df_inutilizadas': pd.DataFrame(inut_list), 
+                        'df_autorizadas': pd.DataFrame(aut_list), 'df_geral': pd.DataFrame(geral_list),
+                        'st_counts': {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list), "AUTORIZADAS": len(aut_list)}
+                    })
                     st.rerun()
 
         st.divider()
