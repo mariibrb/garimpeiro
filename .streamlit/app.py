@@ -102,9 +102,9 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
     
     resumo = {
         "Arquivo": nome_puro, "Chave": "", "Tipo": "Outros", "Série": "0",
-        "Número": 0, "Status": "NORMAIS", "Pasta": "RECEBIDOS_TERCEIROS/OUTROS",
+        "Número": 0, "Status": "NORMAIS", "Pasta": "",
         "Valor": 0.0, "Conteúdo": content_bytes, "Ano": "0000", "Mes": "00",
-        "Operacao": "SAIDA" 
+        "Operacao": "SAIDA"
     }
     
     try:
@@ -170,6 +170,7 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         
         is_p = (cnpj_emit == client_cnpj_clean)
         
+        # --- HIERARQUIA RIGOROSA DE PASTAS ---
         if is_p:
             resumo["Pasta"] = f"EMITIDOS_CLIENTE/{resumo['Operacao']}/{resumo['Tipo']}/{resumo['Status']}/{resumo['Ano']}/{resumo['Mes']}/Serie_{resumo['Série']}"
         else:
@@ -208,7 +209,7 @@ with st.container():
     <ul>
         <li><b>Etapa 1:</b> Suba os XMLs para obter o raio-x inicial e achar buracos.</li>
         <li><b>Adicionar Arquivos:</b> Use a barra de adição abaixo dos resultados para incluir arquivos sem resetar.</li>
-        <li><b>Etapa 2 (Novo):</b> Suba o relatório Excel de Autenticidade para validar o status real.</li>
+        <li><b>Etapa 2:</b> Suba o relatório Excel de Autenticidade para validar o status real.</li>
     </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -278,11 +279,14 @@ if st.session_state['confirmado']:
                                 res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
                                 if res:
                                     key = res["Chave"]
+                                    # Prioriza XMLs com status de evento (cancelamento/inutilização)
                                     if key in lote_dict:
                                         if res["Status"] in ["CANCELADOS", "INUTILIZADOS"]: lote_dict[key] = (res, is_p)
                                     else:
                                         lote_dict[key] = (res, is_p)
-                                        z_org.writestr(f"{res['Pasta']}/{name}", xml_data); z_todos.writestr(name, xml_data)
+                                        # Escreve nos ZIPs seguindo a pasta identificada
+                                        z_org.writestr(f"{res['Pasta']}/{name}", xml_data)
+                                        z_todos.writestr(name, xml_data)
                             del todos_xmls
                         except: continue
                 
@@ -294,13 +298,13 @@ if st.session_state['confirmado']:
                 rel_list.append(res)
                 
                 # LISTA GERAL
-                origem_txt = f"EMISSÃO PRÓPRIA ({res['Operacao']})" if is_p else f"TERCEIROS ({res['Operacao']})"
+                origem_label = f"EMISSÃO PRÓPRIA ({res['Operacao']})" if is_p else f"TERCEIROS ({res['Operacao']})"
                 if res["Status"] == "INUTILIZADOS":
                     r = res.get("Range", (res["Número"], res["Número"]))
                     for n in range(r[0], r[1] + 1):
-                        geral_list.append({"Origem": origem_txt, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": n, "Chave": res["Chave"], "Status Final": "INUTILIZADA", "Valor": 0.0})
+                        geral_list.append({"Origem": origem_label, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": n, "Chave": res["Chave"], "Status Final": "INUTILIZADA", "Valor": 0.0})
                 else:
-                    geral_list.append({"Origem": origem_txt, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"], "Status Final": res["Status"], "Valor": res["Valor"]})
+                    geral_list.append({"Origem": origem_label, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"], "Status Final": res["Status"], "Valor": res["Valor"]})
 
                 # AUDITORIA (SÓ PRÓPRIAS)
                 if is_p:
@@ -330,8 +334,6 @@ if st.session_state['confirmado']:
                     for b in sorted(list(set(range(n_min, n_max + 1)) - set(ns))):
                         fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
 
-            st_counts = {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list), "AUTORIZADAS": len(aut_list)}
-
             st.session_state.update({
                 'z_org': buf_org.getvalue(), 'z_todos': buf_todos.getvalue(), 
                 'relatorio': rel_list, 
@@ -341,19 +343,17 @@ if st.session_state['confirmado']:
                 'df_inutilizadas': pd.DataFrame(inut_list), 
                 'df_autorizadas': pd.DataFrame(aut_list),
                 'df_geral': pd.DataFrame(geral_list),
-                'df_divergencias': pd.DataFrame(),
-                'st_counts': st_counts, 
+                'st_counts': {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list), "AUTORIZADAS": len(aut_list)}, 
                 'garimpo_ok': True
             })
             st.rerun()
     else:
         # --- FUNCIONALIDADE DE ADICIONAR ARQUIVOS (CUMULATIVO) ---
         st.markdown("### ➕ ADICIONAR MAIS ARQUIVOS (SEM RESETAR)")
-        with st.expander("Clique aqui para adicionar XMLs ou ZIPs encontrados posteriormente (ex: buracos)"):
+        with st.expander("Clique aqui para adicionar XMLs ou ZIPs encontrados posteriormente"):
             extra_files = st.file_uploader("Adicionar arquivos ao lote atual:", accept_multiple_files=True, key="extra_files")
             if extra_files and st.button("PROCESSAR E ATUALIZAR LISTA"):
                 with st.spinner("Adicionando e recalculando..."):
-                    novos_lidos = 0
                     for f in extra_files:
                         try:
                             content = f.read()
@@ -362,27 +362,26 @@ if st.session_state['confirmado']:
                                 res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
                                 if res:
                                     st.session_state['relatorio'].append(res)
-                                    novos_lidos += 1
                         except: continue
                     
+                    # RECALCULO GERAL
                     lote_recalc = {}
                     for item in st.session_state['relatorio']:
                         key = item["Chave"]
-                        is_p = True if "EMITIDOS" in item["Pasta"] else False
+                        is_p = "EMITIDOS_CLIENTE" in item["Pasta"]
                         if key in lote_recalc:
                             if item["Status"] in ["CANCELADOS", "INUTILIZADOS"]: lote_recalc[key] = (item, is_p)
-                        else:
-                            lote_recalc[key] = (item, is_p)
+                        else: lote_recalc[key] = (item, is_p)
                     
                     audit_map, canc_list, inut_list, aut_list, geral_list = {}, [], [], [], []
                     for k, (res, is_p) in lote_recalc.items():
-                        origem_txt = f"EMISSÃO PRÓPRIA ({res['Operacao']})" if is_p else f"TERCEIROS ({res['Operacao']})"
+                        origem_label = f"EMISSÃO PRÓPRIA ({res['Operacao']})" if is_p else f"TERCEIROS ({res['Operacao']})"
                         if res["Status"] == "INUTILIZADOS":
                             r = res.get("Range", (res["Número"], res["Número"]))
                             for n in range(r[0], r[1] + 1):
-                                geral_list.append({"Origem": origem_txt, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": n, "Chave": res["Chave"], "Status Final": "INUTILIZADA", "Valor": 0.0})
+                                geral_list.append({"Origem": origem_label, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": n, "Chave": res["Chave"], "Status Final": "INUTILIZADA", "Valor": 0.0})
                         else:
-                            geral_list.append({"Origem": origem_txt, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"], "Status Final": res["Status"], "Valor": res["Valor"]})
+                            geral_list.append({"Origem": origem_label, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"], "Status Final": res["Status"], "Valor": res["Valor"]})
 
                         if is_p:
                             sk = (res["Tipo"], res["Série"])
@@ -411,15 +410,11 @@ if st.session_state['confirmado']:
                                 fal_final.append({"Tipo": t, "Série": s, "Nº Faltante": b})
 
                     st.session_state.update({
-                        'df_resumo': pd.DataFrame(res_final), 
-                        'df_faltantes': pd.DataFrame(fal_final), 
-                        'df_canceladas': pd.DataFrame(canc_list), 
-                        'df_inutilizadas': pd.DataFrame(inut_list), 
-                        'df_autorizadas': pd.DataFrame(aut_list),
-                        'df_geral': pd.DataFrame(geral_list),
+                        'df_resumo': pd.DataFrame(res_final), 'df_faltantes': pd.DataFrame(fal_final), 
+                        'df_canceladas': pd.DataFrame(canc_list), 'df_inutilizadas': pd.DataFrame(inut_list), 
+                        'df_autorizadas': pd.DataFrame(aut_list), 'df_geral': pd.DataFrame(geral_list),
                         'st_counts': {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list), "AUTORIZADAS": len(aut_list)}
                     })
-                    st.success(f"✅ Adicionados {novos_lidos} novos registros! Tabelas atualizadas.")
                     st.rerun()
 
         st.divider()
@@ -433,12 +428,6 @@ if st.session_state['confirmado']:
         
         st.markdown("### 📊 RESUMO POR SÉRIE")
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
-        
-        if not st.session_state['df_divergencias'].empty:
-            st.markdown("---")
-            st.markdown("### 🚨 DIVERGÊNCIAS (VALIDAÇÃO ETAPA 2)")
-            st.error("Notas abaixo eram Autorizadas no XML, mas estão Canceladas na Autenticidade.")
-            st.dataframe(st.session_state['df_divergencias'], use_container_width=True, hide_index=True)
         
         st.markdown("---")
         col_audit, col_canc, col_inut = st.columns(3)
@@ -459,46 +448,36 @@ if st.session_state['confirmado']:
         
         # --- ETAPA 2: VALIDAÇÃO ---
         st.markdown("### 🕵️ ETAPA 2: VALIDAR COM RELATÓRIO DE AUTENTICIDADE")
-        with st.expander("Clique aqui para subir o Excel e atualizar o status geral", expanded=True):
+        with st.expander("Clique aqui para subir o Excel e atualizar o status real"):
             auth_file = st.file_uploader("Suba o Excel (.xlsx) [Col A=Chave, Col F=Status]", type=["xlsx", "xls"], key="auth_up")
-            if auth_file and st.button("🔄 VALIDAR E ATUALIZAR TABELAS"):
+            if auth_file and st.button("🔄 VALIDAR E ATUALIZAR"):
                 try:
                     df_auth = pd.read_excel(auth_file)
-                    auth_dict = {}
-                    for idx, row in df_auth.iterrows():
-                        chave = str(row.iloc[0]).strip()
-                        status = str(row.iloc[5]).strip().upper()
-                        if len(chave) == 44: auth_dict[chave] = status
+                    auth_dict = {str(row.iloc[0]).strip(): str(row.iloc[5]).strip().upper() for _, row in df_auth.iterrows() if len(str(row.iloc[0]).strip()) == 44}
                     
                     lote_recalc = {}
                     for item in st.session_state['relatorio']:
                         key = item["Chave"]
-                        is_p = True if "EMITIDOS" in item["Pasta"] else False
+                        is_p = "EMITIDOS_CLIENTE" in item["Pasta"]
                         if key in lote_recalc:
                             if item["Status"] in ["CANCELADOS", "INUTILIZADOS"]: lote_recalc[key] = (item, is_p)
-                        else:
-                            lote_recalc[key] = (item, is_p)
+                        else: lote_recalc[key] = (item, is_p)
 
                     audit_map, canc_list, inut_list, aut_list, geral_list, div_list = {}, [], [], [], [], []
-                    
                     for k, (res, is_p) in lote_recalc.items():
                         status_final = res["Status"]
-                        obs = "Via XML"
-                        if res["Chave"] in auth_dict:
-                            status_excel = auth_dict[res["Chave"]]
-                            if "CANCEL" in status_excel:
-                                status_final = "CANCELADOS"
-                                obs = "Via Autenticidade"
-                                if res["Status"] == "NORMAIS":
-                                    div_list.append({"Chave": res["Chave"], "Nota": res["Número"], "Status XML": "AUTORIZADA", "Status Real": "CANCELADA"})
+                        if res["Chave"] in auth_dict and "CANCEL" in auth_dict[res["Chave"]]:
+                            status_final = "CANCELADOS"
+                            if res["Status"] == "NORMAIS":
+                                div_list.append({"Chave": res["Chave"], "Nota": res["Número"], "Status XML": "AUTORIZADA", "Status Real": "CANCELADA"})
 
-                        origem_txt = f"EMISSÃO PRÓPRIA ({res['Operacao']})" if is_p else f"TERCEIROS ({res['Operacao']})"
+                        origem_label = f"EMISSÃO PRÓPRIA ({res['Operacao']})" if is_p else f"TERCEIROS ({res['Operacao']})"
                         if status_final == "INUTILIZADOS":
                             r = res.get("Range", (res["Número"], res["Número"]))
                             for n in range(r[0], r[1] + 1):
-                                geral_list.append({"Origem": origem_txt, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": n, "Chave": res["Chave"], "Status Final": "INUTILIZADA", "Valor": 0.0})
+                                geral_list.append({"Origem": origem_label, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": n, "Chave": res["Chave"], "Status Final": "INUTILIZADA", "Valor": 0.0})
                         else:
-                            geral_list.append({"Origem": origem_txt, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"], "Status Final": status_final, "Valor": res["Valor"]})
+                            geral_list.append({"Origem": origem_label, "Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"], "Status Final": status_final, "Valor": res["Valor"]})
 
                         if is_p:
                             sk = (res["Tipo"], res["Série"])
@@ -506,26 +485,19 @@ if st.session_state['confirmado']:
                             if status_final == "INUTILIZADOS":
                                 r = res.get("Range", (res["Número"], res["Número"]))
                                 for n in range(r[0], r[1] + 1):
-                                    audit_map[sk]["nums"].add(n)
-                                    inut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": n})
+                                    audit_map[sk]["nums"].add(n); inut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": n})
                             else:
                                 if res["Número"] > 0:
                                     audit_map[sk]["nums"].add(res["Número"])
-                                    if status_final == "CANCELADOS":
-                                        canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"], "Obs": obs})
-                                    elif status_final == "NORMAIS":
-                                        aut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Valor": res["Valor"], "Chave": res["Chave"]})
+                                    if status_final == "CANCELADOS": canc_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Chave": res["Chave"]})
+                                    elif status_final == "NORMAIS": aut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": res["Número"], "Valor": res["Valor"], "Chave": res["Chave"]})
                                     audit_map[sk]["valor"] += res["Valor"]
 
                     st.session_state.update({
-                        'df_canceladas': pd.DataFrame(canc_list),
-                        'df_autorizadas': pd.DataFrame(aut_list),
-                        'df_inutilizadas': pd.DataFrame(inut_list),
-                        'df_geral': pd.DataFrame(geral_list),
-                        'df_divergencias': pd.DataFrame(div_list),
-                        'st_counts': {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list), "AUTORIZADAS": len(aut_list)}
+                        'df_canceladas': pd.DataFrame(canc_list), 'df_autorizadas': pd.DataFrame(aut_list),
+                        'df_inutilizadas': pd.DataFrame(inut_list), 'df_geral': pd.DataFrame(geral_list),
+                        'df_divergencias': pd.DataFrame(div_list), 'st_counts': {"CANCELADOS": len(canc_list), "INUTILIZADOS": len(inut_list), "AUTORIZADAS": len(aut_list)}
                     })
-                    st.success("✅ Validação concluída! Baixe o Excel atualizado abaixo.")
                     st.rerun()
                 except Exception as e: st.error(f"Erro: {e}")
 
@@ -538,8 +510,7 @@ if st.session_state['confirmado']:
             st.session_state['df_canceladas'].to_excel(writer, sheet_name='Canceladas', index=False)
             st.session_state['df_inutilizadas'].to_excel(writer, sheet_name='Inutilizadas', index=False)
             st.session_state['df_autorizadas'].to_excel(writer, sheet_name='Autorizadas', index=False)
-            if not st.session_state['df_divergencias'].empty:
-                st.session_state['df_divergencias'].to_excel(writer, sheet_name='Divergencias', index=False)
+            if not st.session_state['df_divergencias'].empty: st.session_state['df_divergencias'].to_excel(writer, sheet_name='Divergencias', index=False)
 
         col1, col2, col3 = st.columns(3)
         with col1: st.download_button("📂 BAIXAR ORGANIZADO (ZIP)", st.session_state['z_org'], "garimpo_organizado.zip", use_container_width=True)
