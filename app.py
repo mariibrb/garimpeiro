@@ -1255,46 +1255,60 @@ if st.session_state['confirmado']:
             limpar_arquivos_temp(); st.session_state.clear(); st.rerun()
 
         # =====================================================================
-        # BLOCO FINAL: CRUZAMENTO FALTANTES DOMÍNIO (COM ESTRUTURA DE PASTAS)
+        # BLOCO FINAL: CRUZAMENTO FALTANTES DOMÍNIO (CORREÇÃO DEFINITIVA)
         # =====================================================================
         st.divider()
         st.markdown("### 🔎 CRUZAMENTO FALTANTES DOMÍNIO SISTEMAS")
         with st.expander("Suba o relatório da Domínio para baixar os XMLs organizados por pastas"):
-            pdf_dominio = st.file_uploader("Relatório de notas não lançadas (PDF):", type=["pdf"], key="pdf_dom")
-            if pdf_dominio and st.button("🔎 BUSCAR XMLS NO LOTE"):
-                notas_pdf = extrair_notas_faltantes_dominio(pdf_dominio)
-                if notas_pdf:
-                    ch_encontradas = []
-                    df_base = st.session_state['df_geral']
-                    for n in notas_pdf:
-                        f = df_base[(df_base['Série'].astype(str) == n['Série']) & (df_base['Nota'] == n['Número']) & (df_base['Status Final'] == 'NORMAIS')]
-                        if not f.empty: ch_encontradas.append(f.iloc[0]['Chave'])
-                    st.session_state['ch_falt_dom'] = ch_encontradas
-                    if ch_encontradas: st.success(f"Encontrados {len(ch_encontradas)} XMLs correspondentes!")
-                    else: st.warning("Nenhum XML do lote corresponde às notas do PDF.")
+            pdf_dominio = st.file_uploader("Relatório de notas não lançadas (PDF):", type=["pdf"], key="pdf_dom_final")
             
+            if pdf_dominio and st.button("🔎 BUSCAR XMLS NO LOTE", key="btn_executar_busca"):
+                with st.spinner("Cruzando dados..."):
+                    notas_pdf = extrair_notas_faltantes_dominio(pdf_dominio)
+                    if notas_pdf:
+                        ch_encontradas = []
+                        df_base = st.session_state['df_geral']
+                        for n in notas_pdf:
+                            # Filtro rigoroso na sua base de dados processada
+                            f = df_base[(df_base['Série'].astype(str) == n['Série']) & 
+                                        (df_base['Nota'] == n['Número']) & 
+                                        (df_base['Status Final'] == 'NORMAIS')]
+                            if not f.empty: 
+                                ch_encontradas.append(f.iloc[0]['Chave'])
+                        
+                        st.session_state['ch_falt_dom'] = ch_encontradas
+                        if ch_encontradas: 
+                            st.success(f"✅ Encontrados {len(ch_encontradas)} XMLs correspondentes!")
+                        else:
+                            st.warning("⚠️ Nenhum XML correspondente encontrado no lote.")
+
+            # Se as chaves foram encontradas, preparamos o ZIP para o download
             if st.session_state.get('ch_falt_dom'):
                 z_dom_io = io.BytesIO()
                 ch_set = set(st.session_state['ch_falt_dom'])
+                
                 with zipfile.ZipFile(z_dom_io, "w", zipfile.ZIP_DEFLATED) as zf:
+                    # Varre os arquivos físicos que você salvou em TEMP_UPLOADS_DIR
                     for fn in os.listdir(TEMP_UPLOADS_DIR):
                         f_path = os.path.join(TEMP_UPLOADS_DIR, fn)
                         with open(f_path, "rb") as ft:
+                            # Reutiliza sua função original de recursividade
                             for name, data in extrair_recursivo(ft, fn):
+                                # Reutiliza seu motor de identificação XML
                                 res, _ = identify_xml_info(data, cnpj_limpo, name)
                                 if res and res["Chave"] in ch_set: 
-                                    # O PONTO CHAVE: Gravar com a estrutura de pastas fiscal (Pasta/Nome)
+                                    # Organiza na hierarquia de pastas que você definiu
                                     zf.writestr(f"{res['Pasta']}/{name}", data)
                 
-                z_dom_io.seek(0)
+                # Prepara o conteúdo final
+                conteudo_zip = z_dom_io.getvalue()
                 
+                # Botão de download com tratamento de dados garantido
                 st.download_button(
-                    label="📥 BAIXAR FALTANTES ORGANIZADOS (ZIP)",
-                    data=z_dom_io.getvalue(), 
+                    label="📥 BAIXAR XMLS PARA ESCRITURAÇÃO (ZIP)",
+                    data=conteudo_zip,
                     file_name="faltantes_dominio_organizados.zip",
                     mime="application/zip",
-                    key="btn_download_dominio_org",
+                    key="btn_download_final_estavel",
                     use_container_width=True
                 )
-else:
-    st.warning("👈 Insira o CNPJ lateral para começar.")
