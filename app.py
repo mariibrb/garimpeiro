@@ -15,6 +15,10 @@ Fluxo típico na view:
 Dependências: pandas (e openpyxl se exportar Excel noutro sítio).
 
 Não importa streamlit — seguro para manage.py / ASGI / WSGI.
+
+Deploy Streamlit (ex.: GitHub + Streamlit Cloud): o comando é sempre sobre um ficheiro
+com interface Streamlit (ex.: app.py). Este ficheiro não é esse ponto de entrada —
+é biblioteca Python para integrar num projeto Django (ou script próprio) com pasta de uploads.
 """
 
 from __future__ import annotations
