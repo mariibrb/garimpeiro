@@ -188,56 +188,6 @@ def aplicar_estilo_premium():
             min-height: 280px;
         }
 
-        .garim-dash-wrap {
-            background: linear-gradient(145deg, #fff8fc 0%, #ffffff 42%, #f6f8fc 100%);
-            border-radius: 22px;
-            padding: 1.35rem 1.5rem 1.5rem;
-            border: 1px solid rgba(255, 105, 180, 0.28);
-            margin: 0.75rem 0 1.25rem;
-            box-shadow: 0 12px 40px rgba(255, 105, 180, 0.11), 0 2px 8px rgba(0,0,0,0.04);
-        }
-        .garim-dash-title {
-            font-family: 'Montserrat', sans-serif;
-            font-weight: 800;
-            font-size: 1.15rem;
-            color: #ad1457 !important;
-            margin: 0 0 0.35rem 0;
-            letter-spacing: -0.02em;
-        }
-        .garim-dash-sub {
-            font-size: 0.82rem;
-            color: #6c757d;
-            margin: 0 0 1rem 0;
-        }
-        .garim-dash-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
-            gap: 12px;
-        }
-        .garim-dash-card {
-            background: #ffffff;
-            border-radius: 16px;
-            padding: 14px 12px;
-            border: 1px solid #fce4ec;
-            text-align: center;
-            box-shadow: 0 2px 12px rgba(255, 105, 180, 0.06);
-        }
-        .garim-dash-val {
-            font-size: 1.55rem;
-            font-weight: 800;
-            color: #c2185b !important;
-            font-family: 'Montserrat', sans-serif;
-            line-height: 1.2;
-        }
-        .garim-dash-lbl {
-            font-size: 0.72rem;
-            color: #868e96;
-            text-transform: uppercase;
-            letter-spacing: 0.07em;
-            margin-top: 6px;
-            font-weight: 600;
-        }
-
         [data-testid="stMetric"] {
             background: white !important;
             border-radius: 20px !important;
@@ -510,6 +460,88 @@ def dataframe_para_excel_bytes(df, sheet_name="Dados"):
     return buf.getvalue()
 
 
+# Limites de linhas por tabela no PDF do dashboard (evita ficheiros gigantes).
+_DASH_PDF_MAX = {"resumo": 100, "tabela": 90, "geral": 75}
+# Colunas preferidas no relatório geral no PDF (espelho legível do ecrã).
+_DASH_PDF_GERAL_COLS = [
+    "Modelo",
+    "Série",
+    "Nota",
+    "Data Emissão",
+    "Status Final",
+    "Valor",
+    "Origem",
+    "Chave",
+]
+
+
+def _format_celula_pdf_col(nome_col, val):
+    if val is None:
+        return "-"
+    try:
+        if pd.isna(val):
+            return "-"
+    except (TypeError, ValueError):
+        pass
+    nome = str(nome_col).strip().lower()
+    s = str(val).strip()
+    if nome == "chave" and len(s) > 18:
+        return f"...{s[-14:]}"
+    if len(s) > 48:
+        return s[:45] + "..."
+    return s
+
+
+def _preview_df_para_pdf(df, max_rows, colunas_preferidas=None, msg_se_vazio=None):
+    """
+    Prepara cabeçalhos e linhas para desenhar tabela no PDF.
+    Retorno: cols, rows (listas de str), total, truncated, empty_msg opcional.
+    """
+    if df is None or df.empty:
+        return {
+            "cols": [],
+            "rows": [],
+            "total": 0,
+            "truncated": False,
+            "empty_msg": msg_se_vazio,
+        }
+    d = df.reset_index(drop=True)
+    if colunas_preferidas:
+        existentes = [c for c in colunas_preferidas if c in d.columns]
+        if existentes:
+            d = d[existentes]
+        # se nenhuma coluna preferida existir, usa todas
+        elif not existentes:
+            pass
+    cols = [str(c) for c in d.columns]
+    total = len(d)
+    truncated = total > max_rows
+    sub = d.head(max_rows)
+    rows = []
+    for _, r in sub.iterrows():
+        rows.append([_format_celula_pdf_col(c, r[c]) for c in d.columns])
+    return {"cols": cols, "rows": rows, "total": total, "truncated": truncated, "empty_msg": None}
+
+
+def _preview_terceiros_para_pdf(terc_cnt):
+    if not terc_cnt:
+        return {
+            "cols": [],
+            "rows": [],
+            "total": 0,
+            "truncated": False,
+            "empty_msg": "Nenhum XML de terceiros no lote.",
+        }
+    rows = [[str(m), str(int(q))] for m, q in sorted(terc_cnt.items(), key=lambda x: x[0])]
+    return {
+        "cols": ["Modelo", "Quantidade"],
+        "rows": rows,
+        "total": len(rows),
+        "truncated": False,
+        "empty_msg": None,
+    }
+
+
 def coletar_kpis_dashboard():
     """Indicadores agregados para dashboard na app, Excel (folha Dashboard) e PDF."""
     rel = st.session_state.get("relatorio") or []
@@ -551,6 +583,43 @@ def coletar_kpis_dashboard():
         ("Referência último nº guardada", "Sim" if ref_ok else "Não"),
         ("Validação autenticidade (Etapa 2)", "Sim" if val_ok else "Não"),
     ]
+    df_inu = st.session_state.get("df_inutilizadas")
+    df_can = st.session_state.get("df_canceladas")
+    df_aut = st.session_state.get("df_autorizadas")
+    pdf_previews = {
+        "resumo": _preview_df_para_pdf(
+            df_r,
+            _DASH_PDF_MAX["resumo"],
+            msg_se_vazio="Sem linhas no resumo por série.",
+        ),
+        "terceiros": _preview_terceiros_para_pdf(dict(terc_cnt)),
+        "buracos": _preview_df_para_pdf(
+            df_f,
+            _DASH_PDF_MAX["tabela"],
+            msg_se_vazio="Tudo em ordem — nenhum buraco na auditoria.",
+        ),
+        "inutilizadas": _preview_df_para_pdf(
+            df_inu,
+            _DASH_PDF_MAX["tabela"],
+            msg_se_vazio="Nenhuma inutilizada listada neste detalhe.",
+        ),
+        "canceladas": _preview_df_para_pdf(
+            df_can,
+            _DASH_PDF_MAX["tabela"],
+            msg_se_vazio="Nenhuma cancelada listada neste detalhe.",
+        ),
+        "autorizadas": _preview_df_para_pdf(
+            df_aut,
+            _DASH_PDF_MAX["tabela"],
+            msg_se_vazio="Nenhuma autorizada listada neste detalhe.",
+        ),
+        "geral": _preview_df_para_pdf(
+            df_g,
+            _DASH_PDF_MAX["geral"],
+            _DASH_PDF_GERAL_COLS,
+            msg_se_vazio="Relatório geral vazio.",
+        ),
+    }
     return {
         "pares": pares,
         "n_geral": n_geral,
@@ -560,19 +629,84 @@ def coletar_kpis_dashboard():
         "status_dist": status_dist,
         "terc_cnt": dict(terc_cnt),
         "sc": sc,
+        "pdf_previews": pdf_previews,
     }
 
 
+def _excel_nome_folha_seguro(nome, usados):
+    """Nomes de folha Excel: máx. 31 caracteres; sem \\ / * ? : [ ]."""
+    inv = frozenset('[]:*?/\\')
+    base = "".join(c for c in str(nome) if c not in inv).strip()[:31] or "Sheet"
+    out = base
+    k = 2
+    while out in usados:
+        suf = f" ({k})"
+        out = (base[: max(1, 31 - len(suf))] + suf).strip()
+        k += 1
+    usados.add(out)
+    return out
+
+
+def _excel_escrever_folha_df(writer, df, nome_desejado, usados):
+    """Escreve um DataFrame na folha; se vazio, cabeçalhos ou nota curta."""
+    sn = _excel_nome_folha_seguro(nome_desejado, usados)
+    if df is None:
+        pd.DataFrame({"Nota": ["Sem dados nesta vista."]}).to_excel(
+            writer, sheet_name=sn, index=False
+        )
+        return
+    d = df.reset_index(drop=True)
+    if d.empty:
+        if len(d.columns) > 0:
+            d.to_excel(writer, sheet_name=sn, index=False)
+        else:
+            pd.DataFrame({"Nota": ["Sem registos nesta vista."]}).to_excel(
+                writer, sheet_name=sn, index=False
+            )
+    else:
+        d.to_excel(writer, sheet_name=sn, index=False)
+
+
 def excel_relatorio_geral_com_dashboard_bytes(df_geral):
-    """Folha Geral + folha Dashboard (KPIs, resumo séries, terceiros)."""
+    """
+    Excel com várias folhas alinhadas às abas do ecrã:
+    Geral, Buracos, Inutilizadas, Canceladas, Autorizadas, CT-e lidas, Terceiros lidas, Dashboard.
+    """
     if df_geral is None or df_geral.empty:
         return None
     kpi = coletar_kpis_dashboard()
     buf = io.BytesIO()
+    usados_nomes = set()
+
+    df_bur = st.session_state.get("df_faltantes")
+    df_inu = st.session_state.get("df_inutilizadas")
+    df_can = st.session_state.get("df_canceladas")
+    df_aut = st.session_state.get("df_autorizadas")
+
+    df_g = df_geral.reset_index(drop=True)
+    if "Modelo" in df_g.columns:
+        df_cte = df_g[df_g["Modelo"].astype(str).str.strip().eq("CT-e")].copy()
+    else:
+        df_cte = pd.DataFrame()
+    if "Origem" in df_g.columns:
+        df_terc_rows = df_g[
+            df_g["Origem"].astype(str).str.contains("TERCEIROS", case=False, na=False)
+        ].copy()
+    else:
+        df_terc_rows = pd.DataFrame()
+
     with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
-        df_geral.reset_index(drop=True).to_excel(writer, sheet_name="Geral", index=False)
+        _excel_escrever_folha_df(writer, df_g, "Geral", usados_nomes)
+        _excel_escrever_folha_df(writer, df_bur, "Buracos", usados_nomes)
+        _excel_escrever_folha_df(writer, df_inu, "Inutilizadas", usados_nomes)
+        _excel_escrever_folha_df(writer, df_can, "Canceladas", usados_nomes)
+        _excel_escrever_folha_df(writer, df_aut, "Autorizadas", usados_nomes)
+        _excel_escrever_folha_df(writer, df_cte, "CT-e lidas", usados_nomes)
+        _excel_escrever_folha_df(writer, df_terc_rows, "Terceiros lidas", usados_nomes)
+
         wb = writer.book
-        ws = wb.add_worksheet("Dashboard")
+        dash_sn = _excel_nome_folha_seguro("Dashboard", usados_nomes)
+        ws = wb.add_worksheet(dash_sn)
         title_f = wb.add_format(
             {"bold": True, "font_size": 16, "font_color": "#AD1457", "valign": "vcenter"}
         )
@@ -636,8 +770,185 @@ def _pdf_ascii_seguro(txt):
     )
 
 
+def _pdf_txt(pdf, s, use_dejavu):
+    if use_dejavu:
+        return str(s)
+    return _pdf_ascii_seguro(s)
+
+
+def _pdf_font(pdf, use_dejavu, style="", size=10):
+    fam = "DejaVu" if use_dejavu else "Helvetica"
+    try:
+        pdf.set_font(fam, style, size)
+    except Exception:
+        if use_dejavu and style == "B":
+            try:
+                pdf.set_font("DejaVu", "", min(size + 1.4, 16))
+            except Exception:
+                pdf.set_font("Helvetica", "B", size)
+        else:
+            pdf.set_font("Helvetica", "" if not style else "B", size)
+
+
+def _pdf_faixa_topo(pdf, titulo, subtitulo, use_dejavu):
+    """Faixa rosa/roxa no topo (estilo cartão / dashboard)."""
+    y = pdf.get_y()
+    w = pdf.w - pdf.l_margin - pdf.r_margin
+    pdf.set_fill_color(199, 62, 140)
+    pdf.rect(pdf.l_margin, y, w * 0.58, 16, "F")
+    pdf.set_fill_color(123, 31, 162)
+    pdf.rect(pdf.l_margin + w * 0.58, y, w * 0.42, 16, "F")
+    _pdf_font(pdf, use_dejavu, "B", 14)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_xy(pdf.l_margin + 2, y + 2.5)
+    pdf.cell(0, 6, _pdf_txt(pdf, titulo, use_dejavu), ln=True)
+    _pdf_font(pdf, use_dejavu, "", 8.5)
+    pdf.set_xy(pdf.l_margin + 2, y + 9.5)
+    st = subtitulo if use_dejavu else _pdf_ascii_seguro(subtitulo)
+    pdf.cell(0, 5, st, ln=True)
+    pdf.set_text_color(45, 45, 48)
+    pdf.set_y(y + 18)
+
+
+def _pdf_secao_titulo(pdf, titulo, use_dejavu, cor_barra=(214, 51, 132)):
+    pdf.ln(2.5)
+    y = pdf.get_y()
+    w = pdf.w - pdf.l_margin - pdf.r_margin
+    pdf.set_fill_color(*cor_barra)
+    pdf.rect(pdf.l_margin, y, w, 6.2, "F")
+    _pdf_font(pdf, use_dejavu, "B", 9)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_xy(pdf.l_margin + 1.8, y + 1.0)
+    pdf.cell(0, 4.5, _pdf_txt(pdf, titulo, use_dejavu), ln=False)
+    pdf.set_text_color(45, 45, 48)
+    pdf.set_xy(pdf.l_margin, y + 7.5)
+
+
+def _pdf_cartoes_tres_metricas(pdf, sc, use_dejavu):
+    aut = int(sc.get("AUTORIZADAS", 0) or 0)
+    can = int(sc.get("CANCELADOS", 0) or 0)
+    inu = int(sc.get("INUTILIZADOS", 0) or 0)
+    margin = pdf.l_margin
+    full = pdf.w - margin - pdf.r_margin
+    gap = 2.8
+    w = (full - 2 * gap) / 3
+    y0 = pdf.get_y()
+    specs = [
+        ("Autorizadas (próprias)", aut, (255, 245, 250), (194, 24, 91)),
+        ("Canceladas (próprias)", can, (255, 241, 243), (183, 28, 28)),
+        ("Inutilizadas (próprias)", inu, (248, 237, 255), (106, 27, 154)),
+    ]
+    for i, (label, val, bg, fg) in enumerate(specs):
+        x = margin + i * (w + gap)
+        pdf.set_fill_color(*bg)
+        pdf.set_draw_color(255, 182, 213)
+        pdf.rect(x, y0, w, 20, "DF")
+        _pdf_font(pdf, use_dejavu, "", 7)
+        pdf.set_text_color(90, 90, 98)
+        pdf.set_xy(x + 2.2, y0 + 2)
+        pdf.multi_cell(w - 4, 3.5, _pdf_txt(pdf, label, use_dejavu), align="L")
+        _pdf_font(pdf, use_dejavu, "B", 14)
+        pdf.set_text_color(*fg)
+        pdf.set_xy(x + 2.2, y0 + 12)
+        pdf.cell(w - 4, 7, str(val), ln=False)
+    pdf.set_text_color(45, 45, 48)
+    pdf.set_y(y0 + 22)
+
+
+def _pdf_tabela_preview(pdf, preview, use_dejavu, y_max=276):
+    cols = preview.get("cols") or []
+    rows = preview.get("rows") or []
+    em = preview.get("empty_msg")
+    if em and not cols:
+        _pdf_font(pdf, use_dejavu, "", 9)
+        pdf.set_text_color(95, 99, 110)
+        pdf.multi_cell(0, 4.8, _pdf_txt(pdf, em, use_dejavu))
+        pdf.set_text_color(45, 45, 48)
+        return
+    if not cols:
+        return
+    max_w = pdf.w - pdf.l_margin - pdf.r_margin
+    n = len(cols)
+    fs = 6.2 if n >= 8 else 7.2
+    row_h = 3.9
+    cw = max_w / n
+
+    def _cabecalho():
+        pdf.set_fill_color(248, 187, 208)
+        pdf.set_draw_color(236, 160, 188)
+        pdf.set_text_color(55, 55, 60)
+        _pdf_font(pdf, use_dejavu, "B", fs - 0.3)
+        for c in cols:
+            t = str(c)[:16] + ("…" if len(str(c)) > 16 else "")
+            pdf.cell(cw, row_h + 0.8, _pdf_txt(pdf, t, use_dejavu), border=1, align="C", fill=True)
+        pdf.ln()
+
+    _cabecalho()
+    pdf.set_fill_color(255, 255, 255)
+    pdf.set_draw_color(230, 230, 235)
+    _pdf_font(pdf, use_dejavu, "", fs)
+    for row in rows:
+        if pdf.get_y() > y_max:
+            pdf.add_page()
+            _cabecalho()
+            pdf.set_fill_color(255, 255, 255)
+            pdf.set_draw_color(230, 230, 235)
+            _pdf_font(pdf, use_dejavu, "", fs)
+        for j, cell in enumerate(row):
+            s = str(cell)
+            lim = 14 if cw < 22 else 22
+            if len(s) > lim:
+                s = s[: max(1, lim - 2)] + "…"
+            pdf.cell(cw, row_h, _pdf_txt(pdf, s, use_dejavu), border=1, align="L", fill=True)
+        pdf.ln()
+    pdf.set_text_color(45, 45, 48)
+    if preview.get("truncated"):
+        pdf.ln(1)
+        _pdf_font(pdf, use_dejavu, "", 7)
+        pdf.set_text_color(120, 120, 128)
+        tot = preview.get("total", 0)
+        most = len(rows)
+        msg = f"Mostrando as primeiras {most} de {tot} linhas (exporte Excel na app para a lista completa)."
+        pdf.multi_cell(0, 3.8, _pdf_txt(pdf, msg, use_dejavu))
+        pdf.set_text_color(45, 45, 48)
+
+
+def _pdf_barras_horizontais(pdf, titulo, pares_val, use_dejavu, cor_bar=(255, 143, 178), max_itens=10):
+    """pares_val: lista (rotulo, valor_int)."""
+    if not pares_val:
+        return
+    _pdf_secao_titulo(pdf, titulo, use_dejavu, cor_barra=(156, 39, 176))
+    pdf.ln(1)
+    total = sum(v for _, v in pares_val) or 1
+    max_bar = pdf.w - pdf.l_margin - pdf.r_margin - 52
+    _pdf_font(pdf, use_dejavu, "", 7.5)
+    for lab, val in pares_val[:max_itens]:
+        if pdf.get_y() > 272:
+            pdf.add_page()
+        pdf.set_x(pdf.l_margin)
+        rot = str(lab)[:28]
+        pdf.cell(48, 4.5, _pdf_txt(pdf, rot, use_dejavu), ln=False)
+        x0 = pdf.get_x()
+        y0 = pdf.get_y()
+        frac = min(1.0, val / total)
+        pdf.set_fill_color(252, 228, 236)
+        pdf.rect(x0, y0 + 0.4, max_bar, 3.6, "F")
+        pdf.set_fill_color(*cor_bar)
+        pdf.rect(x0, y0 + 0.4, max_bar * frac, 3.6, "F")
+        pdf.set_draw_color(210, 210, 218)
+        pdf.rect(x0, y0 + 0.4, max_bar, 3.6, "D")
+        pdf.set_xy(x0 + max_bar + 1.5, y0)
+        pdf.set_text_color(80, 80, 88)
+        pdf.cell(16, 4.5, str(int(val)), ln=True)
+    pdf.set_text_color(45, 45, 48)
+    pdf.ln(1)
+
+
 def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
-    """PDF resumido do dashboard (UTF-8 limitado — usa transliteração segura)."""
+    """
+    PDF do dashboard: espelha as secções do ecrã (métricas, resumo, terceiros, abas e indicadores),
+    com layout em cartões rosa/roxo. Tabelas longas são truncadas com nota (use Excel na app).
+    """
     try:
         from fpdf import FPDF
         import fpdf as _fpdf_mod
@@ -647,56 +958,135 @@ def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
         return None
 
     font_path = None
+    font_bold_path = None
     try:
-        _p = Path(_fpdf_mod.__file__).resolve().parent / "font" / "DejaVuSans.ttf"
+        _root = Path(_fpdf_mod.__file__).resolve().parent / "font"
+        _p = _root / "DejaVuSans.ttf"
         if _p.is_file():
             font_path = str(_p)
+        _pb = _root / "DejaVuSans-Bold.ttf"
+        if _pb.is_file():
+            font_bold_path = str(_pb)
     except Exception:
         font_path = None
+        font_bold_path = None
 
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.set_margins(12, 12, 12)
     pdf.add_page()
-    if font_path:
+
+    use_dejavu = bool(font_path)
+    if use_dejavu:
         pdf.add_font("DejaVu", "", font_path)
-        pdf.set_font("DejaVu", "", 11)
-        use_dejavu = True
-    else:
-        pdf.set_font("Helvetica", "B", 14)
-        use_dejavu = False
+        if font_bold_path:
+            pdf.add_font("DejaVu", "B", font_bold_path)
 
-    tit = "Garimpeiro — Dashboard" if use_dejavu else "Garimpeiro - Dashboard"
-    pdf.cell(0, 10, tit, ln=True)
-    if use_dejavu:
-        pdf.set_font("DejaVu", "", 9)
-    else:
-        pdf.set_font("Helvetica", "", 9)
+    sub = datetime.now().strftime("%d/%m/%Y %H:%M")
+    _pdf_faixa_topo(
+        pdf,
+        "O Garimpeiro — Dashboard do lote",
+        f"Resumo lúdico e organizado  |  {sub}",
+        use_dejavu,
+    )
     if cnpj_fmt:
-        pdf.cell(0, 6, f"CNPJ: {cnpj_fmt}" if use_dejavu else f"CNPJ: {_pdf_ascii_seguro(cnpj_fmt)}", ln=True)
-    pdf.ln(2)
+        _pdf_font(pdf, use_dejavu, "", 9)
+        pdf.multi_cell(0, 5, _pdf_txt(pdf, f"CNPJ emitente: {cnpj_fmt}", use_dejavu))
+        pdf.ln(0.5)
 
-    if use_dejavu:
-        pdf.set_font("DejaVu", "", 10)
-    else:
-        pdf.set_font("Helvetica", "", 10)
-    for lab, val in kpi["pares"]:
+    sc = kpi.get("sc") or {}
+    _pdf_cartoes_tres_metricas(pdf, sc, use_dejavu)
+
+    _pdf_secao_titulo(pdf, "Indicadores gerais", use_dejavu, cor_barra=(194, 24, 91))
+    pdf.ln(1)
+    _pdf_font(pdf, use_dejavu, "", 8)
+    for lab, val in kpi.get("pares", []):
         linha = f"{lab}: {val}"
-        if not use_dejavu:
-            linha = _pdf_ascii_seguro(linha)
-        pdf.multi_cell(0, 6, linha)
+        pdf.multi_cell(0, 4.5, _pdf_txt(pdf, linha, use_dejavu))
+    pdf.ln(0.5)
 
     sd = kpi.get("status_dist") or {}
     if sd:
-        pdf.ln(3)
-        pdf.set_font("Helvetica" if not use_dejavu else "DejaVu", "B", 10)
-        pdf.cell(0, 7, "Status (relatorio geral):" if not use_dejavu else "Status (relatório geral):", ln=True)
-        if use_dejavu:
-            pdf.set_font("DejaVu", "", 9)
-        else:
-            pdf.set_font("Helvetica", "", 9)
-        for k, v in sorted(sd.items(), key=lambda x: -x[1]):
-            t = f"  - {k}: {v}"
-            pdf.multi_cell(0, 5, t if use_dejavu else _pdf_ascii_seguro(t))
+        pares_sd = sorted(sd.items(), key=lambda x: -x[1])
+        _pdf_barras_horizontais(
+            pdf,
+            "Distribuição por status (relatório geral)",
+            [(str(k), int(v)) for k, v in pares_sd],
+            use_dejavu,
+        )
+
+    pv = kpi.get("pdf_previews") or {}
+
+    _pdf_secao_titulo(pdf, "Resumo por série (emissão própria)", use_dejavu)
+    _pdf_tabela_preview(pdf, pv.get("resumo") or {}, use_dejavu)
+
+    _pdf_secao_titulo(pdf, "Terceiros — total por tipo", use_dejavu, cor_barra=(123, 31, 162))
+    terc_prev = pv.get("terceiros") or {}
+    _pdf_tabela_preview(pdf, terc_prev, use_dejavu)
+    tc = kpi.get("terc_cnt") or {}
+    if tc:
+        soma = sum(int(x) for x in tc.values())
+        _pdf_font(pdf, use_dejavu, "", 7.5)
+        pdf.set_text_color(95, 95, 105)
+        pdf.multi_cell(
+            0,
+            4,
+            _pdf_txt(pdf, f"Somatório geral (documentos lidos): {soma}", use_dejavu),
+        )
+        pdf.set_text_color(45, 45, 48)
+        pdf.ln(0.5)
+
+    if pdf.get_y() > 210:
+        pdf.add_page()
+
+    _pdf_secao_titulo(pdf, "Buracos na sequência", use_dejavu, cor_barra=(230, 81, 0))
+    _pdf_tabela_preview(pdf, pv.get("buracos") or {}, use_dejavu)
+
+    _pdf_secao_titulo(pdf, "Inutilizadas (detalhe)", use_dejavu)
+    _pdf_tabela_preview(pdf, pv.get("inutilizadas") or {}, use_dejavu)
+
+    _pdf_secao_titulo(pdf, "Canceladas (detalhe)", use_dejavu)
+    _pdf_tabela_preview(pdf, pv.get("canceladas") or {}, use_dejavu)
+
+    _pdf_secao_titulo(pdf, "Autorizadas (detalhe)", use_dejavu)
+    _pdf_tabela_preview(pdf, pv.get("autorizadas") or {}, use_dejavu)
+
+    if pdf.get_y() > 230:
+        pdf.add_page()
+
+    _pdf_secao_titulo(
+        pdf,
+        "Relatório geral (colunas principais)",
+        use_dejavu,
+        cor_barra=(106, 27, 154),
+    )
+    _pdf_font(pdf, use_dejavu, "", 7.5)
+    pdf.set_text_color(95, 95, 105)
+    pdf.multi_cell(
+        0,
+        4,
+        _pdf_txt(
+            pdf,
+            "Mesmas linhas que na app; chaves abreviadas. Excel completo com folha Dashboard na exportação.",
+            use_dejavu,
+        ),
+    )
+    pdf.set_text_color(45, 45, 48)
+    pdf.ln(0.5)
+    _pdf_tabela_preview(pdf, pv.get("geral") or {}, use_dejavu)
+
+    pdf.ln(3)
+    _pdf_font(pdf, use_dejavu, "", 7)
+    pdf.set_text_color(130, 130, 138)
+    pdf.multi_cell(
+        0,
+        4,
+        _pdf_txt(
+            pdf,
+            "Garimpeiro — PDF gerado para arquivo. Dados completos: use os botoes Baixar Excel em cada tabela na aplicacao.",
+            use_dejavu,
+        ),
+    )
 
     raw = pdf.output(dest="S")
     if raw is None:
@@ -706,50 +1096,6 @@ def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
     if isinstance(raw, bytearray):
         return bytes(raw)
     return str(raw).encode("latin-1", "replace")
-
-
-def renderizar_dashboard_streamlit(kpi, cnpj_fmt=""):
-    """HTML + gráficos Streamlit."""
-    sub = (
-        f"CNPJ {cnpj_fmt} · síntese do que foi lido neste lote"
-        if cnpj_fmt
-        else "Síntese do que foi lido neste lote"
-    )
-    cards = [
-        ("Linhas geral", kpi["n_geral"]),
-        ("Autorizadas", int(kpi["sc"].get("AUTORIZADAS", 0) or 0)),
-        ("Canceladas", int(kpi["sc"].get("CANCELADOS", 0) or 0)),
-        ("Inutilizadas", int(kpi["sc"].get("INUTILIZADOS", 0) or 0)),
-        ("Buracos", kpi["n_bur"]),
-        ("Terceiros (itens)", kpi["n_terc"]),
-    ]
-    grid = "".join(
-        f'<div class="garim-dash-card"><div class="garim-dash-val">{v}</div>'
-        f'<div class="garim-dash-lbl">{lbl}</div></div>'
-        for lbl, v in cards
-    )
-    st.markdown(
-        f'<div class="garim-dash-wrap"><p class="garim-dash-title">Dashboard do garimpo</p>'
-        f'<p class="garim-dash-sub">{sub}</p><div class="garim-dash-grid">{grid}</div></div>',
-        unsafe_allow_html=True,
-    )
-    vf = float(kpi.get("valor") or 0)
-    st.caption(f"Valor contábil agregado no resumo por série: **R$ {vf:,.2f}**")
-
-    sd = kpi.get("status_dist") or {}
-    if sd:
-        st.markdown("**Distribuição por status** (relatório geral)")
-        df_sd = pd.DataFrame(
-            [{"Status": a, "Quantidade": b} for a, b in sorted(sd.items(), key=lambda x: -x[1])]
-        )
-        st.bar_chart(df_sd.set_index("Status"))
-    tc = kpi.get("terc_cnt") or {}
-    if tc:
-        st.markdown("**Terceiros — por modelo**")
-        df_t = pd.DataFrame(
-            [{"Modelo": a, "Qtd": b} for a, b in sorted(tc.items(), key=lambda x: x[0])]
-        )
-        st.bar_chart(df_t.set_index("Modelo"))
 
 
 def aplicar_compactacao_dfs_sessao():
@@ -2164,7 +2510,7 @@ PASSO A PASSO
 2. Envie ZIP ou XML soltos (volumes grandes são suportados). Depois do primeiro resultado, pode incluir mais ficheiros no topo da página, sem reiniciar o garimpo.
 3. Clique em Iniciar grande garimpo e aguarde a leitura.
 4. (Opcional) Lateral “Último nº por série”: **só muda os buracos** (âncora a partir do último nº + mês; evita buraco gigante se vier nota velha no meio). O **garimpo e o resumo** continuam **totais**. Sem **Guardar referência** com linhas válidas, buracos usam toda a numeração lida.
-5. (Opcional) Etapa 2: suba o Excel de autenticidade (coluna A = chave 44 dígitos; coluna F = status) para alinhar cancelamentos com a Sefaz.
+5. (Opcional) Etapa 2: suba um ou mais Excel de autenticidade (coluna A = chave 44 dígitos; coluna F = status) para alinhar cancelamentos com a Sefaz.
 6. Inutilizadas sem XML: **Dos buracos**, **Planilha** (Excel/CSV) ou **Faixa** — só vale para o que o garimpeiro já listou como buraco (não alarga intervalos).
 7. Etapa 3: filtros em cascata; ZIPs em partes de até 10 mil XML, cada ZIP já traz Excel do bloco em RELATORIO_GARIMPEI/; Excel com o filtro completo é opcional à parte.
 8. Exportar lista específica: Excel com **chaves**, Excel com **inicial/final/série**, **período**, **faixa** ou **uma nota**.
@@ -2197,7 +2543,7 @@ with st.container():
                 <li><b>Garimpo:</b> Iniciar grande garimpo e aguardar.</li>
                 <li><b>Mais ficheiros:</b> No <b>topo dos resultados</b>, inclua XML/ZIP extra <b>sem reiniciar</b>.</li>
                 <li><b>(Opcional)</b> Último nº + mês (lateral) → só **buracos** ancorados; leitura/resumo **sempre totais**.</li>
-                <li><b>(Opcional)</b> Etapa 2 — Excel de autenticidade (chave na col. A, status na col. F).</li>
+                <li><b>(Opcional)</b> Etapa 2 — um ou mais Excel de autenticidade (chave na col. A, status na col. F).</li>
                 <li><b>Inutilizadas sem XML:</b> Dos buracos, planilha Excel/CSV ou Faixa — só buracos já detectados.</li>
                 <li><b>Exportar:</b> Etapa 3 — ZIP em blocos de 10 000 XML (com Excel do bloco dentro); Excel do filtro completo opcional à parte; ou lista por chaves (col. A).</li>
             </ol>
@@ -2247,7 +2593,6 @@ keys_to_init = [
     'todos_zip_parts',
     'ch_falt_dom',
     'zip_dom_parts',
-    'dashboard_vis',
 ]
 
 for k in keys_to_init:
@@ -2649,29 +2994,23 @@ if st.session_state['confirmado']:
         c2.metric("❌ CANCELADAS (PRÓPRIAS)", sc.get("CANCELADOS", 0))
         c3.metric("🚫 INUTILIZADAS (PRÓPRIAS)", sc.get("INUTILIZADOS", 0))
 
-        st.markdown("### Painel executivo")
         _kpi_dash = coletar_kpis_dashboard()
         _cnpj_dash_fmt = format_cnpj_visual(cnpj_limpo) if len(cnpj_limpo) == 14 else ""
         _pdf_dash = pdf_dashboard_garimpeiro_bytes(_kpi_dash, _cnpj_dash_fmt)
-        _r1, _r2 = st.columns(2)
-        with _r1:
-            if st.button("Gerar / atualizar dashboard", key="btn_dash_gen", use_container_width=True):
-                st.session_state["dashboard_vis"] = True
-                st.rerun()
-        with _r2:
-            if _pdf_dash:
-                st.download_button(
-                    "Baixar PDF",
-                    data=_pdf_dash,
-                    file_name="dashboard_garimpeiro.pdf",
-                    mime="application/pdf",
-                    key="dl_dash_pdf",
-                    use_container_width=True,
-                )
-            else:
-                st.caption("PDF: instale **fpdf2** (`pip install fpdf2`) no ambiente.")
-        if st.session_state.get("dashboard_vis"):
-            renderizar_dashboard_streamlit(_kpi_dash, _cnpj_dash_fmt)
+        if _pdf_dash:
+            st.caption("Resumo do lote em PDF — só descarrega o ficheiro, sem alterar o ecrã.")
+            st.download_button(
+                "Baixar PDF do dashboard",
+                data=_pdf_dash,
+                file_name="dashboard_garimpeiro.pdf",
+                mime="application/pdf",
+                key="dl_dash_pdf",
+                use_container_width=True,
+            )
+        else:
+            st.caption(
+                "PDF do dashboard indisponível — instale **fpdf2** no ambiente (`pip install fpdf2`)."
+            )
 
         st.caption(
             "Se faltar XML ou ZIP, use o bloco abaixo sem reiniciar o garimpo: os totais e as tabelas atualizam na hora."
@@ -2834,7 +3173,8 @@ if st.session_state['confirmado']:
             st.markdown(f"#### 📋 Relatório geral ({_q_ger})")
             if not df_ger.empty:
                 st.caption(
-                    "Visão completa das colunas do garimpo; o **Excel** inclui também a folha **Dashboard** com indicadores."
+                    "O **Excel** inclui as folhas **Geral**, **Buracos**, **Inutilizadas**, **Canceladas**, **Autorizadas**, "
+                    "**CT-e lidas**, **Terceiros lidas** e **Dashboard** (indicadores e resumo por série)."
                 )
                 st.dataframe(df_ger, use_container_width=True, hide_index=True, height=420)
                 xlsx_g = excel_relatorio_geral_com_dashboard_bytes(df_ger)
@@ -3136,16 +3476,25 @@ if st.session_state['confirmado']:
                 st.success("✅ O status dos XMLs está alinhado com a SEFAZ.")
 
         with st.expander("Clique aqui para subir o Excel e atualizar o status real"):
-            auth_file = st.file_uploader("Suba o Excel (.xlsx) [Col A=Chave, Col F=Status]", type=["xlsx", "xls"], key="auth_up")
-            if auth_file and st.button("🔄 VALIDAR E ATUALIZAR"):
-                df_auth = pd.read_excel(auth_file)
+            auth_files = st.file_uploader(
+                "Suba um ou mais Excel (.xlsx / .xls) [Col A=Chave, Col F=Status]",
+                type=["xlsx", "xls"],
+                accept_multiple_files=True,
+                key="auth_up",
+            )
+            st.caption(
+                "Pode escolher vários relatórios de uma vez; as chaves são reunidas. "
+                "Se a mesma chave aparecer em mais do que um ficheiro, prevalece o status do **último** ficheiro processado."
+            )
+            if auth_files and st.button("🔄 VALIDAR E ATUALIZAR"):
                 auth_dict = {}
-                
-                for idx, row in df_auth.iterrows():
-                    chave_lida = str(row.iloc[0]).strip()
-                    status_lido = str(row.iloc[5]).strip().upper()
-                    if len(chave_lida) == 44:
-                        auth_dict[chave_lida] = status_lido
+                for auth_file in auth_files:
+                    df_auth = pd.read_excel(auth_file)
+                    for idx, row in df_auth.iterrows():
+                        chave_lida = str(row.iloc[0]).strip()
+                        status_lido = str(row.iloc[5]).strip().upper()
+                        if len(chave_lida) == 44:
+                            auth_dict[chave_lida] = status_lido
                         
                 lote_full = _lote_recalc_de_relatorio(st.session_state["relatorio"])
                 ref_ar, ref_mr, ref_map = buraco_ctx_sessao()
