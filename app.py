@@ -191,6 +191,24 @@ MAX_XML_PER_ZIP = 10000  # Máx. XMLs por ficheiro ZIP (lista específica e Etap
 # Assim evitamos milhões de "buracos" falsos (ex.: uma chave/XML errado com nº gigante ou duas séries distantes misturadas).
 MAX_SALTO_ENTRE_NOTAS_CONSECUTIVAS = 25000
 
+
+def format_cnpj_visual(digits: str) -> str:
+    """Máscara CNPJ (00.000.000/0000-00) a partir apenas de dígitos, até 14."""
+    d = "".join(c for c in str(digits) if c.isdigit())[:14]
+    if not d:
+        return ""
+    n = len(d)
+    if n <= 2:
+        return d
+    if n <= 5:
+        return f"{d[:2]}.{d[2:]}"
+    if n <= 8:
+        return f"{d[:2]}.{d[2:5]}.{d[5:]}"
+    if n <= 12:
+        return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:]}"
+    return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
+
+
 # --- MOTOR DE IDENTIFICAÇÃO ---
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
@@ -413,6 +431,26 @@ def compactar_dataframe_memoria(df):
     for col in out.select_dtypes(include=["int64"]).columns:
         out[col] = pd.to_numeric(out[col], downcast="integer")
     return out
+
+
+def dataframe_para_excel_bytes(df, sheet_name="Dados"):
+    """Excel com as mesmas colunas do DataFrame (para download alinhado à tabela na tela)."""
+    if df is None or df.empty:
+        return None
+    buf = io.BytesIO()
+    sn = (sheet_name or "Dados")[:31]
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+        df.reset_index(drop=True).to_excel(writer, sheet_name=sn, index=False)
+    return buf.getvalue()
+
+
+def dataframe_para_csv_pt_bytes(df):
+    """CSV com separador ; e UTF-8 BOM — abre bem no Excel em português, colunas separadas."""
+    if df is None or df.empty:
+        return None
+    buf = io.BytesIO()
+    df.reset_index(drop=True).to_csv(buf, index=False, encoding="utf-8-sig", sep=";")
+    return buf.getvalue()
 
 
 def aplicar_compactacao_dfs_sessao():
@@ -1026,6 +1064,12 @@ def v2_sanear_selecoes_contra_opcoes(
         novo = [x for x in cur if x in permitidos]
         if novo != cur:
             st.session_state[key] = novo
+
+
+def v2_callback_repor_filtros():
+    """Limpa multiselects da Etapa 3. Deve ser usado com on_click (antes dos widgets na mesma corrida)."""
+    for _kx in ("v2_f_orig", "v2_f_mes", "v2_f_mod", "v2_f_ser", "v2_f_stat", "v2_f_op"):
+        st.session_state[_kx] = []
 
 
 def rotulo_download_zip_parte(caminho_ficheiro):
@@ -1705,13 +1749,27 @@ if "seq_ref_rows" not in st.session_state:
         )
 if "seq_struct_v" not in st.session_state:
     st.session_state["seq_struct_v"] = 0
+if "cnpj_widget" not in st.session_state:
+    st.session_state["cnpj_widget"] = ""
 
 with st.sidebar:
     st.markdown("### 🔍 Configuração")
-    cnpj_input = st.text_input("CNPJ DO CLIENTE", placeholder="00.000.000/0001-00")
-    cnpj_limpo = "".join(filter(str.isdigit, cnpj_input))
-    
-    if cnpj_input and len(cnpj_limpo) != 14: 
+    st.caption("CNPJ: digite **só os 14 números** — pontos, barra e traço aparecem sozinhos.")
+    st.text_input(
+        "CNPJ DO CLIENTE",
+        key="cnpj_widget",
+        placeholder="só números, ex. 11222333000181",
+        help="Pode colar o CNPJ com ou sem máscara; guardamos só os dígitos e mostramos formatado.",
+    )
+    _cnpj_raw = st.session_state.get("cnpj_widget", "")
+    _cnpj_digs = "".join(c for c in str(_cnpj_raw) if c.isdigit())[:14]
+    _cnpj_fmt = format_cnpj_visual(_cnpj_digs)
+    if _cnpj_fmt != _cnpj_raw:
+        st.session_state["cnpj_widget"] = _cnpj_fmt
+        st.rerun()
+    cnpj_limpo = _cnpj_digs
+
+    if cnpj_limpo and len(cnpj_limpo) != 14:
         st.error("⚠️ CNPJ Inválido.")
         
     if len(cnpj_limpo) == 14:
@@ -2155,13 +2213,48 @@ if st.session_state['confirmado']:
             st.dataframe(_df_terc, use_container_width=True, hide_index=True)
 
         st.markdown("---")
-        col_audit, col_canc, col_inut = st.columns(3)
-        
-        with col_audit:
-            qtd_buracos = len(st.session_state['df_faltantes']) if not st.session_state['df_faltantes'].empty else 0
-            st.markdown(f"### ⚠️ BURACOS ({qtd_buracos})")
-            if not st.session_state['df_faltantes'].empty:
-                st.dataframe(st.session_state['df_faltantes'], use_container_width=True, hide_index=True)
+        st.markdown("### 📊 Relatório da leitura (abas)")
+        st.caption(
+            "Buracos, inutilizadas, canceladas, autorizadas e relatório geral — mesmas colunas que nas tabelas; use **Baixar Excel** ou **CSV (Excel PT)** para colunas separadas."
+        )
+        tab_bur, tab_inut, tab_canc, tab_aut, tab_geral = st.tabs(
+            ["⚠️ Buracos", "🚫 Inutilizadas", "❌ Canceladas", "✅ Autorizadas", "📋 Relatório geral"]
+        )
+
+        df_fal = st.session_state["df_faltantes"]
+        df_inu = st.session_state["df_inutilizadas"]
+        df_can = st.session_state["df_canceladas"]
+        df_aut = st.session_state["df_autorizadas"]
+        df_ger = st.session_state["df_geral"]
+
+        with tab_bur:
+            qtd_buracos = len(df_fal) if not df_fal.empty else 0
+            st.markdown(f"#### ⚠️ Buracos ({qtd_buracos})")
+            if not df_fal.empty:
+                st.dataframe(df_fal, use_container_width=True, hide_index=True)
+                xlsx_b = dataframe_para_excel_bytes(df_fal, "Buracos")
+                csv_b = dataframe_para_csv_pt_bytes(df_fal)
+                c_dl1, c_dl2 = st.columns(2)
+                with c_dl1:
+                    if xlsx_b:
+                        st.download_button(
+                            "⬇️ Baixar Excel (mesmas colunas da tabela)",
+                            data=xlsx_b,
+                            file_name="relatorio_buracos.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_rep_buracos_xlsx",
+                            use_container_width=True,
+                        )
+                with c_dl2:
+                    if csv_b:
+                        st.download_button(
+                            "⬇️ Baixar CSV (Excel PT, colunas separadas)",
+                            data=csv_b,
+                            file_name="relatorio_buracos.csv",
+                            mime="text/csv",
+                            key="dl_rep_buracos_csv",
+                            use_container_width=True,
+                        )
             else:
                 st.info("✅ Tudo em ordem.")
             with st.expander(
@@ -2175,30 +2268,131 @@ if st.session_state['confirmado']:
                     "Séries **não** listadas na referência: buracos em **todo** o intervalo dos XMLs. **Sem** referência guardada: mesmo comportamento antigo (intervalo completo; pode ser enorme). "
                     "Na **Etapa 3** escolhe o que exportar."
                 )
-                
-        with col_canc:
-            _q_canc = (
-                len(st.session_state["df_canceladas"])
-                if not st.session_state["df_canceladas"].empty
-                else 0
-            )
-            st.markdown(f"### ❌ CANCELADAS ({_q_canc})")
-            if not st.session_state['df_canceladas'].empty:
-                st.dataframe(st.session_state['df_canceladas'], use_container_width=True, hide_index=True)
-            else: 
+
+        with tab_inut:
+            _q_inut = len(df_inu) if not df_inu.empty else 0
+            st.markdown(f"#### 🚫 Inutilizadas ({_q_inut})")
+            if not df_inu.empty:
+                st.dataframe(df_inu, use_container_width=True, hide_index=True)
+                xlsx_i = dataframe_para_excel_bytes(df_inu, "Inutilizadas")
+                csv_i = dataframe_para_csv_pt_bytes(df_inu)
+                ci1, ci2 = st.columns(2)
+                with ci1:
+                    if xlsx_i:
+                        st.download_button(
+                            "⬇️ Baixar Excel",
+                            data=xlsx_i,
+                            file_name="relatorio_inutilizadas.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_rep_inut_xlsx",
+                            use_container_width=True,
+                        )
+                with ci2:
+                    if csv_i:
+                        st.download_button(
+                            "⬇️ Baixar CSV (Excel PT)",
+                            data=csv_i,
+                            file_name="relatorio_inutilizadas.csv",
+                            mime="text/csv",
+                            key="dl_rep_inut_csv",
+                            use_container_width=True,
+                        )
+            else:
                 st.info("ℹ️ Nenhuma nota.")
-                
-        with col_inut:
-            _q_inut = (
-                len(st.session_state["df_inutilizadas"])
-                if not st.session_state["df_inutilizadas"].empty
-                else 0
-            )
-            st.markdown(f"### 🚫 INUTILIZADAS ({_q_inut})")
-            if not st.session_state['df_inutilizadas'].empty:
-                st.dataframe(st.session_state['df_inutilizadas'], use_container_width=True, hide_index=True)
-            else: 
+
+        with tab_canc:
+            _q_canc = len(df_can) if not df_can.empty else 0
+            st.markdown(f"#### ❌ Canceladas ({_q_canc})")
+            if not df_can.empty:
+                st.dataframe(df_can, use_container_width=True, hide_index=True)
+                xlsx_c = dataframe_para_excel_bytes(df_can, "Canceladas")
+                csv_c = dataframe_para_csv_pt_bytes(df_can)
+                cc1, cc2 = st.columns(2)
+                with cc1:
+                    if xlsx_c:
+                        st.download_button(
+                            "⬇️ Baixar Excel",
+                            data=xlsx_c,
+                            file_name="relatorio_canceladas.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_rep_canc_xlsx",
+                            use_container_width=True,
+                        )
+                with cc2:
+                    if csv_c:
+                        st.download_button(
+                            "⬇️ Baixar CSV (Excel PT)",
+                            data=csv_c,
+                            file_name="relatorio_canceladas.csv",
+                            mime="text/csv",
+                            key="dl_rep_canc_csv",
+                            use_container_width=True,
+                        )
+            else:
                 st.info("ℹ️ Nenhuma nota.")
+
+        with tab_aut:
+            _q_aut = len(df_aut) if not df_aut.empty else 0
+            st.markdown(f"#### ✅ Autorizadas ({_q_aut})")
+            if not df_aut.empty:
+                st.dataframe(df_aut, use_container_width=True, hide_index=True)
+                xlsx_a = dataframe_para_excel_bytes(df_aut, "Autorizadas")
+                csv_a = dataframe_para_csv_pt_bytes(df_aut)
+                ca1, ca2 = st.columns(2)
+                with ca1:
+                    if xlsx_a:
+                        st.download_button(
+                            "⬇️ Baixar Excel",
+                            data=xlsx_a,
+                            file_name="relatorio_autorizadas.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_rep_aut_xlsx",
+                            use_container_width=True,
+                        )
+                with ca2:
+                    if csv_a:
+                        st.download_button(
+                            "⬇️ Baixar CSV (Excel PT)",
+                            data=csv_a,
+                            file_name="relatorio_autorizadas.csv",
+                            mime="text/csv",
+                            key="dl_rep_aut_csv",
+                            use_container_width=True,
+                        )
+            else:
+                st.info("ℹ️ Nenhuma nota autorizada na amostra.")
+
+        with tab_geral:
+            _q_ger = len(df_ger) if not df_ger.empty else 0
+            st.markdown(f"#### 📋 Relatório geral ({_q_ger})")
+            if not df_ger.empty:
+                st.caption("Visão completa das colunas do garimpo; para ficheiros muito grandes prefira o download.")
+                st.dataframe(df_ger, use_container_width=True, hide_index=True, height=420)
+                xlsx_g = dataframe_para_excel_bytes(df_ger, "Geral")
+                csv_g = dataframe_para_csv_pt_bytes(df_ger)
+                cg1, cg2 = st.columns(2)
+                with cg1:
+                    if xlsx_g:
+                        st.download_button(
+                            "⬇️ Baixar Excel",
+                            data=xlsx_g,
+                            file_name="relatorio_geral.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_rep_geral_xlsx",
+                            use_container_width=True,
+                        )
+                with cg2:
+                    if csv_g:
+                        st.download_button(
+                            "⬇️ Baixar CSV (Excel PT)",
+                            data=csv_g,
+                            file_name="relatorio_geral.csv",
+                            mime="text/csv",
+                            key="dl_rep_geral_csv",
+                            use_container_width=True,
+                        )
+            else:
+                st.info("Relatório geral vazio.")
 
         st.divider()
 
@@ -2614,10 +2808,11 @@ if st.session_state['confirmado']:
 
         _c_rep, _ = st.columns([1, 5])
         with _c_rep:
-            if st.button("Repor filtros", key="v2_pre_clr"):
-                for _kx in ["v2_f_orig", "v2_f_mes", "v2_f_mod", "v2_f_ser", "v2_f_stat", "v2_f_op"]:
-                    if _kx in st.session_state:
-                        st.session_state[_kx] = []
+            st.button(
+                "Repor filtros",
+                key="v2_pre_clr",
+                on_click=v2_callback_repor_filtros,
+            )
 
         aplicar_mes_so_na_propria = True
 
@@ -3220,4 +3415,5 @@ if st.session_state['confirmado']:
                                 )
 else:
     st.warning("👈 Insira o CNPJ lateral para começar.")
+
 
