@@ -761,9 +761,10 @@ def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
     mes_ref = datetime.now().strftime("%m/%Y")
     ref_txt = "Sim" if pm.get("Referência último nº guardada") == "Sim" else "Não"
     val_txt = "Sim" if pm.get("Validação autenticidade (Etapa 2)") == "Sim" else "Não"
-    try:
-        n_div = len(st.session_state.get("df_divergencias") or [])
-    except TypeError:
+    _df_div = st.session_state.get("df_divergencias")
+    if _df_div is not None and isinstance(_df_div, pd.DataFrame) and not _df_div.empty:
+        n_div = len(_df_div)
+    else:
         n_div = 0
 
     marrom = "#63233C"
