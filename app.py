@@ -718,6 +718,34 @@ def _excel_df_conta_par_modelo_serie(df, col_mod, col_ser):
     return d.groupby("_k").size().to_dict()
 
 
+def _excel_fmt_milhar_pt(n):
+    try:
+        return f"{int(n):,}".replace(",", ".")
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _excel_fmt_reais_pt_str(valor):
+    try:
+        v = float(valor)
+    except (TypeError, ValueError):
+        return "R$ 0,00"
+    neg = v < 0
+    v = abs(v)
+    cent = int(round(v * 100 + 1e-9))
+    inte, frac = divmod(cent, 100)
+    s = str(inte)
+    parts = []
+    while len(s) > 3:
+        parts.insert(0, s[-3:])
+        s = s[:-3]
+    if s:
+        parts.insert(0, s)
+    body = ".".join(parts)
+    out = f"R$ {body},{frac:02d}"
+    return f"- {out}" if neg else out
+
+
 def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
     """
     Folha estilo dashboard (grelha tipo Excel + gráficos nativos), alinhada ao mock «Painel Fiscal».
@@ -725,6 +753,11 @@ def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
     """
     sn = _excel_nome_folha_seguro("Painel Fiscal", usados_nomes)
     ws = wb.add_worksheet(sn)
+    # Parece mais “painel” / menos folha de cálculo (ideia de mock com Excel visual).
+    try:
+        ws.hide_gridlines(2)
+    except Exception:
+        pass
 
     pm = dict(kpi.get("pares") or [])
     sc = kpi.get("sc") or {}
@@ -743,6 +776,8 @@ def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
     valor = float(kpi.get("valor") or 0)
     n_bur = int(kpi.get("n_bur") or 0)
     terc_cnt = kpi.get("terc_cnt") or {}
+    if not isinstance(terc_cnt, dict):
+        terc_cnt = {}
 
     df_r = st.session_state.get("df_resumo")
     df_aut = st.session_state.get("df_autorizadas")
@@ -767,35 +802,96 @@ def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
     else:
         n_div = 0
 
-    marrom = "#63233C"
-    navy = "#1B2A4A"
-    cinza = "#EDE8EC"
+    cor_fundo = "#FDFBF7"
+    cor_vinho = "#5D1B36"
+    cor_borda = "#A1869E"
+    cor_texto = "#20232A"
+    marrom = cor_vinho
 
-    fmt_tit = wb.add_format(
+    fmt_fundo = wb.add_format({"bg_color": cor_fundo})
+    fmt_titulo_dash = wb.add_format(
         {
             "bold": True,
-            "font_size": 16,
-            "font_color": "#FFFFFF",
-            "bg_color": marrom,
-            "align": "center",
+            "font_color": cor_vinho,
+            "bg_color": cor_fundo,
+            "font_size": 14,
             "valign": "vcenter",
-            "border": 1,
+            "align": "center",
         }
     )
-    fmt_sub = wb.add_format(
-        {"italic": True, "font_size": 10, "font_color": "#555555", "text_wrap": True}
+    fmt_titulo_card = wb.add_format(
+        {
+            "bold": True,
+            "font_color": cor_texto,
+            "bg_color": "#FFFFFF",
+            "top": 2,
+            "left": 2,
+            "right": 2,
+            "top_color": cor_borda,
+            "left_color": cor_borda,
+            "right_color": cor_borda,
+            "font_size": 9,
+            "align": "center",
+            "valign": "vcenter",
+            "text_wrap": True,
+        }
+    )
+    fmt_valor_card = wb.add_format(
+        {
+            "bold": True,
+            "font_color": cor_texto,
+            "bg_color": "#FFFFFF",
+            "left": 2,
+            "right": 2,
+            "left_color": cor_borda,
+            "right_color": cor_borda,
+            "font_size": 16,
+            "align": "center",
+            "valign": "vcenter",
+        }
+    )
+    fmt_rodape_card = wb.add_format(
+        {
+            "font_color": cor_texto,
+            "bg_color": "#FFFFFF",
+            "bottom": 2,
+            "left": 2,
+            "right": 2,
+            "bottom_color": cor_borda,
+            "left_color": cor_borda,
+            "right_color": cor_borda,
+            "font_size": 9,
+            "align": "center",
+            "valign": "top",
+            "text_wrap": True,
+        }
     )
     fmt_kpi_t = wb.add_format(
-        {"bold": True, "font_size": 9, "bg_color": cinza, "border": 1, "text_wrap": True, "valign": "top"}
+        {
+            "bold": True,
+            "font_size": 10,
+            "font_color": cor_vinho,
+            "bg_color": cor_fundo,
+            "border": 1,
+            "border_color": cor_borda,
+            "text_wrap": True,
+            "valign": "vcenter",
+        }
     )
-    fmt_kpi_l = wb.add_format({"font_size": 9, "border": 1, "text_wrap": True})
-    fmt_kpi_n = wb.add_format({"bold": True, "font_size": 11, "border": 1, "num_format": "#,##0"})
-    fmt_kpi_r = wb.add_format({"bold": True, "font_size": 11, "border": 1, "num_format": 'R$ #,##0.00'})
+    fmt_kpi_l = wb.add_format(
+        {
+            "font_size": 9,
+            "border": 1,
+            "text_wrap": True,
+            "valign": "vcenter",
+            "bg_color": "#FFFFFF",
+        }
+    )
     fmt_tab_h = wb.add_format(
         {
             "bold": True,
             "font_color": "#FFFFFF",
-            "bg_color": navy,
+            "bg_color": marrom,
             "border": 1,
             "align": "center",
             "valign": "vcenter",
@@ -807,53 +903,57 @@ def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
     fmt_tab_ok = wb.add_format({"border": 1, "font_color": "#2E7D32"})
     fmt_foot = wb.add_format({"italic": True, "font_size": 9, "font_color": "#777777"})
 
-    ws.merge_range(0, 0, 0, 15, "GARIMPEIRO | PAINEL FISCAL", fmt_tit)
-    ws.set_row(0, 28)
-    ws.merge_range(1, 0, 1, 15, "Resumo visual do lote — exportado a partir dos dados do garimpo.", fmt_sub)
+    for row in range(0, 42):
+        ws.set_row(row, 20, fmt_fundo)
+    ws.set_row(0, 26)
     ws.set_row(1, 22)
+    ws.set_column(0, 0, 4, fmt_fundo)
+    ws.set_column(1, 12, 13, fmt_fundo)
 
-    # KPIs em 4 blocos (colunas 0-3, 4-7, 8-11, 12-15)
-    def _bloco_kpi(c0, titulo, linhas):
-        ws.merge_range(3, c0, 3, c0 + 3, titulo, fmt_kpi_t)
-        r = 4
-        for rot, val, is_money in linhas:
-            ws.write(r, c0, rot, fmt_kpi_l)
-            if is_money:
-                ws.write_number(r, c0 + 1, float(val), fmt_kpi_r)
-            else:
-                try:
-                    iv = int(val)
-                    ws.write_number(r, c0 + 1, iv, fmt_kpi_n)
-                except (TypeError, ValueError):
-                    ws.write(r, c0 + 1, str(val), fmt_kpi_n)
-            ws.merge_range(r, c0 + 2, r, c0 + 3, "", fmt_kpi_l)
-            r += 1
+    ws.merge_range(0, 1, 0, 12, "GARIMPEIRO | PAINEL FISCAL", fmt_titulo_dash)
+    ws.merge_range(1, 1, 1, 12, "Olá! Bem-vinda à sua boutique de dados.", fmt_titulo_dash)
 
-    _bloco_kpi(
-        0,
-        "TOTAL DE DOCUMENTOS LIDOS (NUM GERAL)",
-        [
-            ("Total", n_docs, False),
-            ("Próprios", n_prop, False),
-            ("Terceiros", n_terc_xml, False),
-        ],
+    terc_rodape = []
+    try:
+        itens = sorted(terc_cnt.items(), key=lambda x: int(x[1] or 0), reverse=True)
+        for mod, q in itens[:2]:
+            terc_rodape.append(f"{str(mod).strip()}: {_excel_fmt_milhar_pt(int(q or 0))}")
+    except Exception:
+        terc_rodape = []
+    if not terc_rodape:
+        terc_rodape = ["—"]
+
+    ws.merge_range(3, 1, 3, 3, "TOTAL DE DOCUMENTOS\nLIDOS (NUM GERAL)", fmt_titulo_card)
+    ws.merge_range(4, 1, 5, 3, _excel_fmt_milhar_pt(n_docs), fmt_valor_card)
+    ws.merge_range(
+        6,
+        1,
+        7,
+        3,
+        f"Próprios: {_excel_fmt_milhar_pt(n_prop)}\nTerceiros: {_excel_fmt_milhar_pt(n_terc_xml)}",
+        fmt_rodape_card,
     )
-    _bloco_kpi(
+
+    ws.merge_range(3, 4, 3, 6, "DETALHAMENTO\nEMISSÃO PRÓPRIA", fmt_titulo_card)
+    ws.merge_range(4, 4, 5, 6, f"{_excel_fmt_milhar_pt(aut)} Aut.", fmt_valor_card)
+    ws.merge_range(
+        6,
         4,
-        "DETALHAMENTO EMISSÃO PRÓPRIA",
-        [
-            ("Autorizadas", aut, False),
-            ("Canceladas", can, False),
-            ("Inutilizadas", inu, False),
-        ],
+        7,
+        6,
+        f"Canceladas: {_excel_fmt_milhar_pt(can)}\nInutilizadas: {_excel_fmt_milhar_pt(inu)}",
+        fmt_rodape_card,
     )
-    terc_linhas = []
-    for mod, q in sorted(terc_cnt.items(), key=lambda x: x[0])[:6]:
-        terc_linhas.append((str(mod), int(q), False))
-    if not terc_linhas:
-        terc_linhas.append(("(sem terceiros)", 0, False))
-    _bloco_kpi(8, "DETALHAMENTO DOCUMENTOS TERCEIROS", terc_linhas[:3])
-    _bloco_kpi(12, "VOLUME FINANCEIRO", [("Soma resumo séries (R$)", valor, True)])
+
+    ws.merge_range(3, 7, 3, 9, "DETALHAMENTO\nDOCUMENTOS TERCEIROS", fmt_titulo_card)
+    ws.merge_range(4, 7, 5, 9, f"{_excel_fmt_milhar_pt(n_terc_xml)} Terc.", fmt_valor_card)
+    ws.merge_range(6, 7, 7, 9, "\n".join(terc_rodape), fmt_rodape_card)
+
+    ws.merge_range(3, 10, 3, 12, "VOLUME\nFINANCEIRO", fmt_titulo_card)
+    ws.merge_range(4, 10, 5, 12, _excel_fmt_reais_pt_str(valor), fmt_valor_card)
+    ws.merge_range(6, 10, 7, 12, "", fmt_rodape_card)
+
+    chart_row = 10
 
     # Dados ocultos para gráficos (colunas Q-S = 16+)
     hid_c = 16
@@ -898,7 +998,7 @@ def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
     )
     ch1.set_title({"name": f"STATUS DE EMISSÃO PRÓPRIA ({mes_ref})"})
     ch1.set_style(10)
-    ws.insert_chart(7, 0, ch1, {"x_scale": 0.95, "y_scale": 0.95})
+    ws.insert_chart(chart_row, 0, ch1, {"x_scale": 0.95, "y_scale": 0.95})
 
     ch2 = wb.add_chart({"type": "doughnut"})
     last_tr = r1 + n_trows - 1
@@ -911,7 +1011,7 @@ def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
     )
     ch2.set_title({"name": f"DISTRIBUIÇÃO TERCEIROS POR MODELO ({mes_ref})"})
     ch2.set_style(10)
-    ws.insert_chart(7, 5, ch2, {"x_scale": 0.95, "y_scale": 0.95})
+    ws.insert_chart(chart_row, 5, ch2, {"x_scale": 0.95, "y_scale": 0.95})
 
     ch3 = wb.add_chart({"type": "area"})
     ch3.add_series(
@@ -919,13 +1019,13 @@ def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
             "name": "No lote",
             "categories": [sn, r2, hid_c, r2 + 1, hid_c],
             "values": [sn, r2, hid_c + 1, r2 + 1, hid_c + 1],
-            "fill": {"color": "#A1869E"},
-            "line": {"color": "#63233C"},
+            "fill": {"color": cor_borda},
+            "line": {"color": cor_vinho},
         }
     )
     ch3.set_title({"name": "RESUMO RÁPIDO (autorizadas própria vs XML terceiros)"})
     ch3.set_legend({"none": True})
-    ws.insert_chart(7, 10, ch3, {"x_scale": 0.95, "y_scale": 0.95})
+    ws.insert_chart(chart_row, 10, ch3, {"x_scale": 0.95, "y_scale": 0.95})
 
     # Alertas de série (séries com buracos) — à direita, acima dos gráficos
     alert_row = 3
@@ -950,8 +1050,8 @@ def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
     if n_div:
         ws.write(ctx_r + 2, 14, f"Divergências XML×Sefaz: {n_div}", fmt_tab_warn)
 
-    # Tabela totalizador
-    t_row = 22
+    # Tabela totalizador (abaixo dos gráficos)
+    t_row = chart_row + 16
     ws.merge_range(
         t_row,
         0,
@@ -1015,10 +1115,10 @@ def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
     ws.merge_range(t_row, 0, t_row, 8, "Garimpeiro · Painel gerado a partir do lote atual (mesmos dados que na app).", fmt_foot)
 
     ws.set_column(0, 0, 12)
-    ws.set_column(1, 1, 8)
-    ws.set_column(2, 2, 22)
-    ws.set_column(3, 8, 12)
-    ws.set_column(14, 15, 18)
+    ws.set_column(1, 1, 10)
+    ws.set_column(2, 2, 24)
+    ws.set_column(3, 8, 11)
+    ws.set_column(14, 15, 20)
 
 
 def excel_relatorio_geral_com_dashboard_bytes(df_geral):
