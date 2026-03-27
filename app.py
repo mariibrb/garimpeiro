@@ -15,6 +15,7 @@ from datetime import date, datetime
 import unicodedata
 import sys
 from pathlib import Path
+import html as html_escape
 
 
 def _instrucoes_instalar_fpdf2_markdown():
@@ -223,6 +224,124 @@ def aplicar_estilo_premium():
             border-radius: 20px !important;
             border: 1px solid #FFDEEF !important;
             padding: 15px !important;
+        }
+
+        /* Painel do lote — faixa executiva (coerente com Excel «Painel Fiscal») */
+        .garim-hero {
+            background: linear-gradient(145deg, #FDFBF7 0%, #faf6ef 45%, #f5efe6 100%);
+            border: 1px solid #e5d9cf;
+            border-radius: 18px;
+            padding: 1.2rem 1.3rem 1.35rem;
+            margin-bottom: 1.1rem;
+            box-shadow: 0 10px 40px rgba(93, 27, 54, 0.07);
+        }
+        .garim-hero-head {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 800;
+            font-size: 1.28rem;
+            color: #5D1B36 !important;
+            letter-spacing: 0.06em;
+            margin: 0 0 0.2rem 0;
+            text-align: left !important;
+            line-height: 1.2;
+        }
+        .garim-hero-sub {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.92rem;
+            color: #4a3d45;
+            margin: 0 0 1rem 0;
+            line-height: 1.5;
+        }
+        .garim-kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 0.7rem;
+        }
+        @media (max-width: 1100px) {
+            .garim-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+        @media (max-width: 600px) {
+            .garim-kpi-grid { grid-template-columns: 1fr; }
+        }
+        .garim-kpi-card {
+            background: #FFFFFF;
+            border: 2px solid #A1869E;
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            min-height: 170px;
+        }
+        .garim-kpi-card .k-tit {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-weight: 700;
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: #20232A;
+            text-align: center;
+            padding: 0.5rem 0.45rem;
+            border-bottom: 1px solid rgba(161, 134, 158, 0.5);
+            line-height: 1.35;
+            white-space: pre-line;
+        }
+        .garim-kpi-card .k-val {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 800;
+            font-size: clamp(1.05rem, 2.2vw, 1.42rem);
+            color: #20232A;
+            padding: 0.55rem 0.4rem;
+            text-align: center;
+            line-height: 1.15;
+        }
+        .garim-kpi-card .k-foot {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.76rem;
+            color: #3d3540;
+            text-align: center;
+            padding: 0.45rem 0.4rem 0.55rem;
+            border-top: 1px solid rgba(161, 134, 158, 0.38);
+            line-height: 1.45;
+            white-space: pre-line;
+            min-height: 3.1rem;
+        }
+        .garim-strip-counts {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+            margin-top: 0.8rem;
+            padding-top: 0.85rem;
+            border-top: 1px dashed rgba(161, 134, 158, 0.55);
+        }
+        .garim-pill {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.78rem;
+            font-weight: 600;
+            background: rgba(255, 255, 255, 0.92);
+            border: 1px solid #d4c4cf;
+            color: #5D1B36;
+            border-radius: 999px;
+            padding: 0.32rem 0.72rem;
+        }
+        h3.garim-sec {
+            font-family: 'Montserrat', sans-serif !important;
+            font-weight: 800 !important;
+            font-size: 1.02rem !important;
+            color: #5D1B36 !important;
+            text-align: left !important;
+            margin: 1.25rem 0 0.45rem 0 !important;
+            letter-spacing: 0.02em;
+            border-left: 4px solid #A1869E;
+            padding: 0.15rem 0 0.15rem 0.65rem;
+        }
+        section.main [data-testid="stDataFrame"] {
+            border-radius: 12px;
+            border: 1px solid rgba(161, 134, 158, 0.28);
+            overflow: hidden;
         }
         </style>
     """, unsafe_allow_html=True)
@@ -744,6 +863,90 @@ def _excel_fmt_reais_pt_str(valor):
     body = ".".join(parts)
     out = f"R$ {body},{frac:02d}"
     return f"- {out}" if neg else out
+
+
+def _streamlit_painel_hero_html(kpi, cnpj_fmt: str = "") -> str:
+    """HTML (escapado) da faixa superior do painel — mesma leitura que o Excel «Painel Fiscal»."""
+    pm = dict(kpi.get("pares") or [])
+    try:
+        n_prop = int(pm.get("XML emissão própria (itens)", 0) or 0)
+    except (TypeError, ValueError):
+        n_prop = 0
+    try:
+        n_terc_xml = int(pm.get("XML terceiros (itens)", 0) or 0)
+    except (TypeError, ValueError):
+        n_terc_xml = 0
+    n_docs = int(kpi.get("n_docs") or 0)
+    sc = kpi.get("sc") or {}
+    aut = int(sc.get("AUTORIZADAS", 0) or 0)
+    can = int(sc.get("CANCELADOS", 0) or 0)
+    inu = int(sc.get("INUTILIZADOS", 0) or 0)
+    valor = float(kpi.get("valor") or 0.0)
+    terc_cnt = kpi.get("terc_cnt") or {}
+    if not isinstance(terc_cnt, dict):
+        terc_cnt = {}
+    terc_rodape = []
+    try:
+        itens = sorted(terc_cnt.items(), key=lambda x: int(x[1] or 0), reverse=True)
+        for mod, q in itens[:2]:
+            terc_rodape.append(
+                f"{html_escape.escape(str(mod).strip())}: {_excel_fmt_milhar_pt(int(q or 0))}"
+            )
+    except Exception:
+        terc_rodape = []
+    if not terc_rodape:
+        terc_rodape = [html_escape.escape("—")]
+    terc_foot = "\n".join(terc_rodape)
+
+    sub_bits = ["Olá! Bem-vinda à sua boutique de dados.", "Os totais abaixo espelham o export Excel / PDF."]
+    if cnpj_fmt:
+        sub_bits.insert(0, f"CNPJ {html_escape.escape(cnpj_fmt)} ·")
+    sub = " ".join(sub_bits)
+
+    def card(tit: str, val: str, foot: str) -> str:
+        return (
+            '<div class="garim-kpi-card">'
+            f'<div class="k-tit">{html_escape.escape(tit)}</div>'
+            f'<div class="k-val">{html_escape.escape(val)}</div>'
+            f'<div class="k-foot">{foot}</div>'
+            "</div>"
+        )
+
+    c1 = card(
+        "TOTAL DE DOCUMENTOS\nLIDOS (NUM GERAL)",
+        _excel_fmt_milhar_pt(n_docs),
+        html_escape.escape(f"Próprios: {_excel_fmt_milhar_pt(n_prop)}\nTerceiros: {_excel_fmt_milhar_pt(n_terc_xml)}"),
+    )
+    c2 = card(
+        "DETALHAMENTO\nEMISSÃO PRÓPRIA",
+        f"{_excel_fmt_milhar_pt(aut)} Aut.",
+        html_escape.escape(f"Canceladas: {_excel_fmt_milhar_pt(can)}\nInutilizadas: {_excel_fmt_milhar_pt(inu)}"),
+    )
+    c3 = card(
+        "DETALHAMENTO\nDOCUMENTOS TERCEIROS",
+        f"{_excel_fmt_milhar_pt(n_terc_xml)} Terc.",
+        terc_foot,
+    )
+    c4 = card(
+        "VOLUME\nFINANCEIRO",
+        _excel_fmt_reais_pt_str(valor),
+        "\u00a0",
+    )
+
+    pills = (
+        f'<span class="garim-pill">Autorizadas próprias · {_excel_fmt_milhar_pt(aut)}</span>'
+        f'<span class="garim-pill">Canceladas · {_excel_fmt_milhar_pt(can)}</span>'
+        f'<span class="garim-pill">Inutilizadas · {_excel_fmt_milhar_pt(inu)}</span>'
+    )
+
+    return (
+        '<div class="garim-hero">'
+        '<p class="garim-hero-head">GARIMPEIRO · PAINEL DO LOTE</p>'
+        f'<p class="garim-hero-sub">{html_escape.escape(sub)}</p>'
+        f'<div class="garim-kpi-grid">{c1}{c2}{c3}{c4}</div>'
+        f'<div class="garim-strip-counts">{pills}</div>'
+        "</div>"
+    )
 
 
 def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
@@ -3606,12 +3809,10 @@ if st.session_state['confirmado']:
             aplicar_compactacao_dfs_sessao()
             st.rerun()
     else:
-        # --- RESULTADOS TELA INICIAL ---
-        sc = st.session_state['st_counts']
-        c1, c2, c3 = st.columns(3)
-        c1.metric("📦 AUTORIZADAS (PRÓPRIAS)", sc.get("AUTORIZADAS", 0))
-        c2.metric("❌ CANCELADAS (PRÓPRIAS)", sc.get("CANCELADOS", 0))
-        c3.metric("🚫 INUTILIZADAS (PRÓPRIAS)", sc.get("INUTILIZADOS", 0))
+        # --- RESULTADOS TELA INICIAL (painel executivo + detalhe) ---
+        _kpi_main = coletar_kpis_dashboard()
+        _cnpj_hero = format_cnpj_visual(cnpj_limpo) if len(cnpj_limpo) == 14 else ""
+        st.markdown(_streamlit_painel_hero_html(_kpi_main, _cnpj_hero), unsafe_allow_html=True)
 
         st.caption(
             "Se faltar XML ou ZIP, use o bloco abaixo sem reiniciar o garimpo: os totais e as tabelas atualizam na hora."
@@ -3652,10 +3853,14 @@ if st.session_state['confirmado']:
                     reconstruir_dataframes_relatorio_simples()
                 st.rerun()
 
-        st.markdown("### 📊 RESUMO POR SÉRIE")
+        st.markdown(
+            '<h3 class="garim-sec">📊 Resumo por série</h3>', unsafe_allow_html=True
+        )
         st.dataframe(st.session_state['df_resumo'], use_container_width=True, hide_index=True)
 
-        st.markdown("### 📥 TERCEIROS — TOTAL POR TIPO")
+        st.markdown(
+            '<h3 class="garim-sec">📥 Terceiros — total por tipo</h3>', unsafe_allow_html=True
+        )
         _rels_terc = [
             r
             for r in st.session_state["relatorio"]
@@ -3672,7 +3877,9 @@ if st.session_state['confirmado']:
             st.dataframe(_df_terc, use_container_width=True, hide_index=True)
 
         st.markdown("---")
-        st.markdown("### 📊 Relatório da leitura (abas)")
+        st.markdown(
+            '<h3 class="garim-sec">📊 Relatório da leitura (abas)</h3>', unsafe_allow_html=True
+        )
         st.caption(
             "Buracos, inutilizadas, canceladas, autorizadas e relatório geral — mesmas colunas que nas tabelas; use **Baixar Excel** abaixo de cada tabela."
         )
