@@ -15,7 +15,6 @@ from datetime import date, datetime
 import unicodedata
 import sys
 from pathlib import Path
-import html as html_escape
 
 
 def _instrucoes_instalar_fpdf2_markdown():
@@ -226,107 +225,6 @@ def aplicar_estilo_premium():
             padding: 15px !important;
         }
 
-        /* Painel do lote — faixa executiva (coerente com Excel «Painel Fiscal») */
-        .garim-hero {
-            background: linear-gradient(145deg, #FDFBF7 0%, #faf6ef 45%, #f5efe6 100%);
-            border: 1px solid #e5d9cf;
-            border-radius: 18px;
-            padding: 1.2rem 1.3rem 1.35rem;
-            margin-bottom: 1.1rem;
-            box-shadow: 0 10px 40px rgba(93, 27, 54, 0.07);
-        }
-        .garim-hero-head {
-            font-family: 'Montserrat', sans-serif;
-            font-weight: 800;
-            font-size: 1.28rem;
-            color: #5D1B36 !important;
-            letter-spacing: 0.06em;
-            margin: 0 0 0.2rem 0;
-            text-align: left !important;
-            line-height: 1.2;
-        }
-        .garim-hero-sub {
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            font-size: 0.92rem;
-            color: #4a3d45;
-            margin: 0 0 1rem 0;
-            line-height: 1.5;
-        }
-        .garim-kpi-grid {
-            display: grid;
-            grid-template-columns: repeat(4, minmax(0, 1fr));
-            gap: 0.7rem;
-        }
-        @media (max-width: 1100px) {
-            .garim-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-        }
-        @media (max-width: 600px) {
-            .garim-kpi-grid { grid-template-columns: 1fr; }
-        }
-        .garim-kpi-card {
-            background: #FFFFFF;
-            border: 2px solid #A1869E;
-            border-radius: 12px;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
-            min-height: 170px;
-        }
-        .garim-kpi-card .k-tit {
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            font-weight: 700;
-            font-size: 0.7rem;
-            text-transform: uppercase;
-            letter-spacing: 0.07em;
-            color: #20232A;
-            text-align: center;
-            padding: 0.5rem 0.45rem;
-            border-bottom: 1px solid rgba(161, 134, 158, 0.5);
-            line-height: 1.35;
-            white-space: pre-line;
-        }
-        .garim-kpi-card .k-val {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-family: 'Montserrat', sans-serif;
-            font-weight: 800;
-            font-size: clamp(1.05rem, 2.2vw, 1.42rem);
-            color: #20232A;
-            padding: 0.55rem 0.4rem;
-            text-align: center;
-            line-height: 1.15;
-        }
-        .garim-kpi-card .k-foot {
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            font-size: 0.76rem;
-            color: #3d3540;
-            text-align: center;
-            padding: 0.45rem 0.4rem 0.55rem;
-            border-top: 1px solid rgba(161, 134, 158, 0.38);
-            line-height: 1.45;
-            white-space: pre-line;
-            min-height: 3.1rem;
-        }
-        .garim-strip-counts {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.55rem;
-            margin-top: 0.8rem;
-            padding-top: 0.85rem;
-            border-top: 1px dashed rgba(161, 134, 158, 0.55);
-        }
-        .garim-pill {
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            font-size: 0.78rem;
-            font-weight: 600;
-            background: rgba(255, 255, 255, 0.92);
-            border: 1px solid #d4c4cf;
-            color: #5D1B36;
-            border-radius: 999px;
-            padding: 0.32rem 0.72rem;
-        }
         h3.garim-sec {
             font-family: 'Montserrat', sans-serif !important;
             font-weight: 800 !important;
@@ -863,90 +761,6 @@ def _excel_fmt_reais_pt_str(valor):
     body = ".".join(parts)
     out = f"R$ {body},{frac:02d}"
     return f"- {out}" if neg else out
-
-
-def _streamlit_painel_hero_html(kpi, cnpj_fmt: str = "") -> str:
-    """HTML (escapado) da faixa superior do painel — mesma leitura que o Excel «Painel Fiscal»."""
-    pm = dict(kpi.get("pares") or [])
-    try:
-        n_prop = int(pm.get("XML emissão própria (itens)", 0) or 0)
-    except (TypeError, ValueError):
-        n_prop = 0
-    try:
-        n_terc_xml = int(pm.get("XML terceiros (itens)", 0) or 0)
-    except (TypeError, ValueError):
-        n_terc_xml = 0
-    n_docs = int(kpi.get("n_docs") or 0)
-    sc = kpi.get("sc") or {}
-    aut = int(sc.get("AUTORIZADAS", 0) or 0)
-    can = int(sc.get("CANCELADOS", 0) or 0)
-    inu = int(sc.get("INUTILIZADOS", 0) or 0)
-    valor = float(kpi.get("valor") or 0.0)
-    terc_cnt = kpi.get("terc_cnt") or {}
-    if not isinstance(terc_cnt, dict):
-        terc_cnt = {}
-    terc_rodape = []
-    try:
-        itens = sorted(terc_cnt.items(), key=lambda x: int(x[1] or 0), reverse=True)
-        for mod, q in itens[:2]:
-            terc_rodape.append(
-                f"{html_escape.escape(str(mod).strip())}: {_excel_fmt_milhar_pt(int(q or 0))}"
-            )
-    except Exception:
-        terc_rodape = []
-    if not terc_rodape:
-        terc_rodape = [html_escape.escape("—")]
-    terc_foot = "\n".join(terc_rodape)
-
-    sub_bits = ["Olá! Bem-vinda à sua boutique de dados.", "Os totais abaixo espelham o export Excel / PDF."]
-    if cnpj_fmt:
-        sub_bits.insert(0, f"CNPJ {html_escape.escape(cnpj_fmt)} ·")
-    sub = " ".join(sub_bits)
-
-    def card(tit: str, val: str, foot: str) -> str:
-        return (
-            '<div class="garim-kpi-card">'
-            f'<div class="k-tit">{html_escape.escape(tit)}</div>'
-            f'<div class="k-val">{html_escape.escape(val)}</div>'
-            f'<div class="k-foot">{foot}</div>'
-            "</div>"
-        )
-
-    c1 = card(
-        "TOTAL DE DOCUMENTOS\nLIDOS (NUM GERAL)",
-        _excel_fmt_milhar_pt(n_docs),
-        html_escape.escape(f"Próprios: {_excel_fmt_milhar_pt(n_prop)}\nTerceiros: {_excel_fmt_milhar_pt(n_terc_xml)}"),
-    )
-    c2 = card(
-        "DETALHAMENTO\nEMISSÃO PRÓPRIA",
-        f"{_excel_fmt_milhar_pt(aut)} Aut.",
-        html_escape.escape(f"Canceladas: {_excel_fmt_milhar_pt(can)}\nInutilizadas: {_excel_fmt_milhar_pt(inu)}"),
-    )
-    c3 = card(
-        "DETALHAMENTO\nDOCUMENTOS TERCEIROS",
-        f"{_excel_fmt_milhar_pt(n_terc_xml)} Terc.",
-        terc_foot,
-    )
-    c4 = card(
-        "VOLUME\nFINANCEIRO",
-        _excel_fmt_reais_pt_str(valor),
-        "\u00a0",
-    )
-
-    pills = (
-        f'<span class="garim-pill">Autorizadas próprias · {_excel_fmt_milhar_pt(aut)}</span>'
-        f'<span class="garim-pill">Canceladas · {_excel_fmt_milhar_pt(can)}</span>'
-        f'<span class="garim-pill">Inutilizadas · {_excel_fmt_milhar_pt(inu)}</span>'
-    )
-
-    return (
-        '<div class="garim-hero">'
-        '<p class="garim-hero-head">GARIMPEIRO · PAINEL DO LOTE</p>'
-        f'<p class="garim-hero-sub">{html_escape.escape(sub)}</p>'
-        f'<div class="garim-kpi-grid">{c1}{c2}{c3}{c4}</div>'
-        f'<div class="garim-strip-counts">{pills}</div>'
-        "</div>"
-    )
 
 
 def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
@@ -1616,6 +1430,146 @@ def _pdf_faixa_buracos_executivo(pdf, n_bur, use_dejavu):
     pdf.set_xy(pdf.l_margin, y + h + 3)
 
 
+def _pdf_serie_cards_emissao_propria(pdf, df_resumo, use_dejavu):
+    """Cartões no mesmo padrão dos KPI: cada série da emissão própria com faixa inicial–final."""
+    pdf.ln(1)
+    _pdf_font(pdf, use_dejavu, "B", 9)
+    pdf.set_text_color(93, 27, 54)
+    pdf.set_x(pdf.l_margin)
+    pdf.cell(0, 5, _pdf_txt(pdf, "Emissão própria — séries e faixas de numeração", use_dejavu), ln=True)
+    _pdf_font(pdf, use_dejavu, "", 7)
+    pdf.set_text_color(90, 75, 85)
+    pdf.set_x(pdf.l_margin)
+    pdf.cell(
+        0,
+        4,
+        _pdf_txt(
+            pdf,
+            "Um cartão por modelo e série: primeiro e último número encontrados nos XML do lote.",
+            use_dejavu,
+        ),
+        ln=True,
+    )
+    pdf.ln(1.5)
+
+    if df_resumo is None or not isinstance(df_resumo, pd.DataFrame) or df_resumo.empty:
+        _pdf_font(pdf, use_dejavu, "", 8)
+        pdf.set_text_color(130, 115, 125)
+        pdf.set_x(pdf.l_margin)
+        pdf.cell(0, 5, _pdf_txt(pdf, "Sem linhas no resumo por série.", use_dejavu), ln=True)
+        pdf.ln(2)
+        return
+
+    doc_col = "Documento" if "Documento" in df_resumo.columns else None
+    ser_col = "Série" if "Série" in df_resumo.columns else ("Serie" if "Serie" in df_resumo.columns else None)
+    if not doc_col or not ser_col:
+        _pdf_font(pdf, use_dejavu, "", 8)
+        pdf.set_text_color(180, 90, 90)
+        pdf.set_x(pdf.l_margin)
+        pdf.cell(
+            0,
+            5,
+            _pdf_txt(pdf, "Resumo sem colunas Documento/Série — cartões não gerados.", use_dejavu),
+            ln=True,
+        )
+        pdf.ln(2)
+        return
+
+    ini_col = "Início" if "Início" in df_resumo.columns else ("Inicio" if "Inicio" in df_resumo.columns else None)
+    fim_col = "Fim" if "Fim" in df_resumo.columns else None
+    qtd_col = "Quantidade" if "Quantidade" in df_resumo.columns else None
+    val_col = "Valor Contábil (R$)" if "Valor Contábil (R$)" in df_resumo.columns else None
+
+    margin = pdf.l_margin
+    full = pdf.w - margin - pdf.r_margin
+    gap_h = 2.4
+    gap_v = 2.8
+    ncols = 2
+    cw = (full - gap_h * (ncols - 1)) / ncols
+    card_h = 33.0
+    title_h = 10.0
+    foot_h = 10.5
+    val_h = card_h - title_h - foot_h
+    bor = (161, 134, 158)
+    sep = (210, 195, 205)
+
+    recs = [row for _, row in df_resumo.iterrows()]
+    idx = 0
+    while idx < len(recs):
+        y0 = pdf.get_y()
+        if y0 + card_h > 275:
+            pdf.add_page()
+            y0 = pdf.get_y()
+        for col in range(ncols):
+            if idx >= len(recs):
+                break
+            row = recs[idx]
+            x = margin + col * (cw + gap_h)
+            doc = str(row.get(doc_col, "") or "").strip()
+            ser = str(row.get(ser_col, "") or "").strip()
+            if len(doc) > 24:
+                doc = doc[:22] + "…"
+            tit_a = doc if doc else "—"
+            tit_b = f"Série {ser}" if ser else "Série —"
+            ini = row.get(ini_col, "") if ini_col else ""
+            fim = row.get(fim_col, "") if fim_col else ""
+            val_mid = f"{ini} – {fim}" if (str(ini) != "" or str(fim) != "") else "—"
+            foot_lines = []
+            if qtd_col is not None and row.get(qtd_col, "") != "" and str(row.get(qtd_col)).strip() != "":
+                try:
+                    qv = int(row[qtd_col])
+                    foot_lines.append(f"Quantidade: {_excel_fmt_milhar_pt(qv)}")
+                except (TypeError, ValueError):
+                    foot_lines.append(f"Quantidade: {row.get(qtd_col)}")
+            if val_col is not None:
+                try:
+                    vv = float(row[val_col])
+                    foot_lines.append(_excel_fmt_reais_pt_str(vv))
+                except (TypeError, ValueError):
+                    pass
+
+            pdf.set_line_width(0.45)
+            pdf.set_fill_color(255, 255, 255)
+            pdf.set_draw_color(*bor)
+            pdf.rect(x, y0, cw, card_h, "D")
+            pdf.set_draw_color(*sep)
+            pdf.set_line_width(0.15)
+            pdf.line(x, y0 + title_h, x + cw, y0 + title_h)
+            pdf.line(x, y0 + title_h + val_h, x + cw, y0 + title_h + val_h)
+            pdf.set_line_width(0.45)
+
+            _pdf_font(pdf, use_dejavu, "B", 6.5)
+            pdf.set_text_color(32, 35, 42)
+            yl = y0 + 2.0
+            pdf.set_xy(x + 1.5, yl)
+            pdf.cell(cw - 3, 3.3, _pdf_txt(pdf, tit_a, use_dejavu), align="C", ln=False)
+            yl += 3.5
+            pdf.set_xy(x + 1.5, yl)
+            pdf.cell(cw - 3, 3.3, _pdf_txt(pdf, tit_b, use_dejavu), align="C", ln=False)
+
+            vm = str(val_mid)
+            fs_val = 11.0 if len(vm) < 20 else (9.0 if len(vm) < 28 else 7.5)
+            _pdf_font(pdf, use_dejavu, "B", fs_val)
+            pdf.set_text_color(32, 35, 42)
+            pdf.set_xy(x + 1.5, y0 + title_h + 3.5)
+            pdf.cell(cw - 3, val_h - 4, _pdf_txt(pdf, vm, use_dejavu), align="C", ln=False)
+
+            _pdf_font(pdf, use_dejavu, "", 5.8)
+            pdf.set_text_color(61, 53, 64)
+            yf = y0 + title_h + val_h + 1.8
+            for fl in foot_lines[:2]:
+                if not str(fl).strip():
+                    continue
+                pdf.set_xy(x + 1.5, yf)
+                pdf.cell(cw - 3, 3.0, _pdf_txt(pdf, fl, use_dejavu), align="C", ln=False)
+                yf += 3.05
+
+            idx += 1
+        pdf.set_xy(margin, y0 + card_h + gap_v)
+
+    pdf.ln(1)
+
+
 def _pdf_lista_rosa(pdf, titulo, pares, use_dejavu, subtitulo=None):
     """Lista rótulo → número com linhas em grelha suave (folha 1, como no PDF de referência)."""
     if not pares:
@@ -1783,9 +1737,9 @@ def _pdf_tabela_preview(pdf, preview, use_dejavu, y_max=276, estilo_moderno=Fals
         pdf.set_text_color(30, 41, 59)
 
 
-def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
+def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt="", df_resumo=None):
     """
-    PDF: folha 1 = cabeçalho executivo + quatro cartões KPI (igual ao ecrã / Painel Fiscal), faixa de buracos,
+    PDF: folha 1 = cabeçalho executivo + quatro cartões KPI, faixa de buracos, cartões por série (emissão própria),
     listas terceiros / extras; folhas seguintes = indicadores detalhados em tabelas com bordas.
     """
     try:
@@ -1825,6 +1779,7 @@ def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
     _pdf_cabecalho_executivo_painel(pdf, use_dejavu, linha_cnpj)
     _pdf_quatro_kpi_cards_executivo(pdf, kpi, use_dejavu)
     _pdf_faixa_buracos_executivo(pdf, int(kpi.get("n_bur") or 0), use_dejavu)
+    _pdf_serie_cards_emissao_propria(pdf, df_resumo, use_dejavu)
 
     tc = kpi.get("terc_cnt") or {}
     if tc:
@@ -2640,7 +2595,10 @@ def excel_bytes_relatorio_bloco(df_filtrado: pd.DataFrame, chaves_bloco: set):
     """Bytes de um .xlsx só com as linhas cujas Chave aparecem no bloco de XML (máx. 10k ficheiros)."""
     if df_filtrado is None or df_filtrado.empty or not chaves_bloco:
         return None
-    dfp = df_filtrado[df_filtrado["Chave"].isin(chaves_bloco)]
+    if "Chave" not in df_filtrado.columns:
+        return None
+    _norm = df_filtrado["Chave"].map(_chave_para_conjunto_export)
+    dfp = df_filtrado.loc[_norm.isin(chaves_bloco)]
     if dfp.empty:
         return None
     buf = io.BytesIO()
@@ -3232,6 +3190,30 @@ def _chave44_de_linha(row):
     return None
 
 
+def _chave_para_conjunto_export(ch):
+    """
+    Normaliza Chave para cruzar df_geral com identify_xml_info ao gerar ZIPs (Etapa 3).
+    Evita falhas por float/.0 na coluna, notação científica parcial ou espaços — casos em que
+    `res['Chave'] in set(df['Chave'])` nunca era verdadeiro.
+    """
+    if ch is None:
+        return None
+    try:
+        if pd.isna(ch):
+            return None
+    except (TypeError, ValueError):
+        pass
+    t = str(ch).strip()
+    if not t or t.lower() == "nan":
+        return None
+    if t.startswith("INUT_"):
+        return t
+    d = "".join(filter(str.isdigit, t))
+    if len(d) >= 44:
+        return d[:44]
+    return None
+
+
 def _nota_int_linha(row):
     n = row.get("Nota")
     if n is None or (isinstance(n, float) and pd.isna(n)):
@@ -3669,7 +3651,8 @@ with st.sidebar:
             )
             _kpi_sb = coletar_kpis_dashboard()
             _cnpj_sb = format_cnpj_visual(cnpj_limpo) if len(cnpj_limpo) == 14 else ""
-            _pdf_sb = pdf_dashboard_garimpeiro_bytes(_kpi_sb, _cnpj_sb)
+            _df_res_pdf = st.session_state.get("df_resumo")
+            _pdf_sb = pdf_dashboard_garimpeiro_bytes(_kpi_sb, _cnpj_sb, _df_res_pdf)
             if _pdf_sb:
                 st.download_button(
                     "⬇️ Baixar PDF do dashboard",
@@ -3862,11 +3845,7 @@ if st.session_state['confirmado']:
             aplicar_compactacao_dfs_sessao()
             st.rerun()
     else:
-        # --- RESULTADOS TELA INICIAL (painel executivo + detalhe) ---
-        _kpi_main = coletar_kpis_dashboard()
-        _cnpj_hero = format_cnpj_visual(cnpj_limpo) if len(cnpj_limpo) == 14 else ""
-        st.markdown(_streamlit_painel_hero_html(_kpi_main, _cnpj_hero), unsafe_allow_html=True)
-
+        # --- RESULTADOS TELA INICIAL (painel em cartões só no PDF; aqui tabelas e abas) ---
         st.caption(
             "Se faltar XML ou ZIP, use o bloco abaixo sem reiniciar o garimpo: os totais e as tabelas atualizam na hora."
         )
@@ -4737,7 +4716,14 @@ if st.session_state['confirmado']:
                             except OSError:
                                 pass
 
-                    filtro_chaves = set(df_geral_filtrado["Chave"].tolist())
+                    filtro_chaves = {
+                        k
+                        for k in (
+                            _chave_para_conjunto_export(x)
+                            for x in df_geral_filtrado["Chave"].tolist()
+                        )
+                        if k
+                    }
                     Z = {
                         "z_org": None,
                         "z_todos": None,
@@ -4749,6 +4735,7 @@ if st.session_state['confirmado']:
                         "curr_todos_part": 1,
                         "chaves_bloco": set(),
                         "seq_bloco": 1,
+                        "xml_matched": 0,
                     }
 
                     def _fechar_bloco_zip():
@@ -4809,8 +4796,14 @@ if st.session_state['confirmado']:
                             with open(f_path, "rb") as f_temp:
                                 for name, xml_data in extrair_recursivo(f_temp, f_name):
                                     res, _ = identify_xml_info(xml_data, cnpj_limpo, name)
-                                    if res and res["Chave"] in filtro_chaves:
-                                        Z["chaves_bloco"].add(res["Chave"])
+                                    ck = (
+                                        _chave_para_conjunto_export(res["Chave"])
+                                        if res
+                                        else None
+                                    )
+                                    if res and ck and ck in filtro_chaves:
+                                        Z["xml_matched"] += 1
+                                        Z["chaves_bloco"].add(ck)
                                         if v2_zip_org and Z["z_org"] is not None:
                                             Z["z_org"].writestr(
                                                 f"{res['Pasta']}/{name}", xml_data
@@ -4876,6 +4869,16 @@ if st.session_state['confirmado']:
                             pass
                         todos_parts = []
 
+                    if (v2_zip_org or v2_zip_plano) and Z.get("xml_matched", 0) == 0:
+                        st.session_state["v2_export_sem_xml"] = (
+                            "Nenhum XML em disco correspondeu às chaves do filtro. "
+                            "Causas frequentes: pasta do garimpo apagada (use **Reset** só depois de exportar), "
+                            "filtros a excluir todas as linhas com chave válida, ou chaves na tabela em formato "
+                            "que não bate com o lido dos ficheiros — tente exportação completa sem filtros."
+                        )
+                    else:
+                        st.session_state.pop("v2_export_sem_xml", None)
+
                     st.session_state.update(
                         {
                             "org_zip_parts": org_parts if v2_zip_org else [],
@@ -4887,6 +4890,9 @@ if st.session_state['confirmado']:
                 st.rerun()
 
         if st.session_state.get("export_ready"):
+            _sem = st.session_state.pop("v2_export_sem_xml", None)
+            if _sem:
+                st.warning(_sem)
             st.success("Geração concluída. Use **Baixar XML** para cada ZIP e **Baixar Excel** para o relatório completo, se existir.")
             _parts_o = st.session_state.get("org_zip_parts") or []
             _parts_t = st.session_state.get("todos_zip_parts") or []
@@ -5234,5 +5240,4 @@ if st.session_state['confirmado']:
                                 )
 else:
     st.warning("👈 Insira o CNPJ lateral para começar.")
-
 
