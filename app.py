@@ -10,6 +10,7 @@ import shutil
 from collections import Counter, defaultdict
 from calendar import monthrange
 from datetime import date, datetime
+import unicodedata
 
 # --- CONFIGURAÇÃO E ESTILO (CLONE ABSOLUTO DO DIAMOND TAX) ---
 st.set_page_config(page_title="Garimpeiro", layout="wide", page_icon="⛏️")
@@ -747,6 +748,129 @@ def parse_numeros_um_por_linha(text):
         try:
             out.append(int(d))
         except ValueError:
+            continue
+    return out
+
+
+def _norm_cab_inutil_col(c):
+    s = unicodedata.normalize("NFD", str(c).strip().lower())
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+    return s.replace(" ", "_")
+
+
+def triplas_inutil_de_dataframe(df):
+    """
+    Cabeçalhos flexíveis → lista (modelo, série, nota).
+    Modelo: modelo, documento, tipo, doc… | Série: série, serie, ser… | Nota: nota, número, num, num_faltante…
+    """
+    if df is None or df.empty:
+        return None, "A planilha está vazia."
+    df = df.dropna(how="all")
+    if df.empty:
+        return None, "A planilha está vazia."
+    ren = {c: _norm_cab_inutil_col(c) for c in df.columns}
+    d2 = df.rename(columns=ren)
+
+    def col(*aliases):
+        for a in aliases:
+            if a in d2.columns:
+                return a
+        return None
+
+    cm = col("modelo", "documento", "tipo", "doc", "document")
+    cs = col("serie", "ser")
+    cn = col("nota", "numero", "num", "num_faltante", "n", "numeracao", "no")
+    if not cm or not cs or not cn:
+        return (
+            None,
+            "Faltam colunas reconhecíveis. Use **Modelo** (ou Documento/Tipo), **Série** e **Nota** "
+            "(ou Número / Num_Faltante).",
+        )
+    out = []
+    for _, row in d2.iterrows():
+        m = row.get(cm)
+        s = row.get(cs)
+        nraw = row.get(cn)
+        if (m is None or pd.isna(m)) and (s is None or pd.isna(s)) and (nraw is None or pd.isna(nraw)):
+            continue
+        if m is None or pd.isna(m) or s is None or pd.isna(s) or nraw is None or pd.isna(nraw):
+            continue
+        mod = str(m).strip()
+        ser = str(s).strip()
+        if not mod or not ser:
+            continue
+        if isinstance(nraw, (int, float)) and not pd.isna(nraw):
+            try:
+                n = int(float(nraw))
+            except (TypeError, ValueError):
+                continue
+        else:
+            d = "".join(filter(str.isdigit, str(nraw)))
+            if not d:
+                continue
+            try:
+                n = int(d)
+            except ValueError:
+                continue
+        if n <= 0:
+            continue
+        out.append((mod, ser, n))
+    if not out:
+        return None, "Nenhuma linha válida (modelo, série e nota preenchidos)."
+    return out, None
+
+
+def dataframe_de_upload_inutil(uploaded_file, max_linhas=50000):
+    """Lê CSV ou Excel enviado pelo utilizador."""
+    if uploaded_file is None:
+        return None, None
+    nome = (getattr(uploaded_file, "name", None) or "").lower()
+    raw = uploaded_file.read()
+    try:
+        uploaded_file.seek(0)
+    except Exception:
+        pass
+    if nome.endswith(".csv"):
+        for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+            try:
+                df = pd.read_csv(io.BytesIO(raw), sep=None, engine="python", encoding=enc)
+                break
+            except Exception:
+                df = None
+        if df is None:
+            return None, "Não foi possível ler o CSV (tente UTF-8 ou separador `;` / `,`)."
+    elif nome.endswith((".xlsx", ".xls")):
+        try:
+            df = pd.read_excel(io.BytesIO(raw))
+        except Exception as e:
+            return None, f"Erro ao ler Excel: {e}"
+    else:
+        return None, "Use ficheiro **.csv**, **.xlsx** ou **.xls**."
+    if len(df) > max_linhas:
+        return None, f"No máximo {max_linhas} linhas por ficheiro."
+    return df, None
+
+
+def conjunto_triplas_buracos(df_faltantes):
+    """{(Tipo, série_str, Num_Faltante)} a partir da tabela de buracos do garimpeiro."""
+    if df_faltantes is None or df_faltantes.empty:
+        return set()
+    d = df_faltantes.copy()
+    if "Serie" in d.columns and "Série" not in d.columns:
+        d = d.rename(columns={"Serie": "Série"})
+    if not {"Tipo", "Série", "Num_Faltante"}.issubset(d.columns):
+        return set()
+    out = set()
+    for _, row in d.iterrows():
+        try:
+            out.add(
+                (
+                    str(row["Tipo"]).strip(),
+                    str(row["Série"]).strip(),
+                    int(row["Num_Faltante"]),
+                )
+            )
+        except (TypeError, ValueError):
             continue
     return out
 
@@ -1731,7 +1855,7 @@ PASSO A PASSO
 3. Clique em Iniciar grande garimpo e aguarde a leitura.
 4. (Opcional) Lateral “Último nº por série”: **só muda os buracos** (âncora a partir do último nº + mês; evita buraco gigante se vier nota velha no meio). O **garimpo e o resumo** continuam **totais**. Sem **Guardar referência** com linhas válidas, buracos usam toda a numeração lida.
 5. (Opcional) Etapa 2: suba o Excel de autenticidade (coluna A = chave 44 dígitos; coluna F = status) para alinhar cancelamentos com a Sefaz.
-6. Inutilizadas sem XML: **Dos buracos** (marcação ou colar números) ou **Faixa** — só vale para números que o garimpeiro já listou como buraco (não alarga intervalos).
+6. Inutilizadas sem XML: **Dos buracos**, **Planilha** (Excel/CSV) ou **Faixa** — só vale para o que o garimpeiro já listou como buraco (não alarga intervalos).
 7. Etapa 3: filtros em cascata; ZIPs em partes de até 10 mil XML, cada ZIP já traz Excel do bloco em RELATORIO_GARIMPEI/; Excel com o filtro completo é opcional à parte.
 8. Exportar lista específica: Excel com **chaves**, Excel com **inicial/final/série**, **período**, **faixa** ou **uma nota**.
 
@@ -1764,7 +1888,7 @@ with st.container():
                 <li><b>Mais ficheiros:</b> No <b>topo dos resultados</b>, inclua XML/ZIP extra <b>sem reiniciar</b>.</li>
                 <li><b>(Opcional)</b> Último nº + mês (lateral) → só **buracos** ancorados; leitura/resumo **sempre totais**.</li>
                 <li><b>(Opcional)</b> Etapa 2 — Excel de autenticidade (chave na col. A, status na col. F).</li>
-                <li><b>Inutilizadas sem XML:</b> Dos buracos (ou colar lista no mesmo sítio) ou Faixa — só buracos já detectados.</li>
+                <li><b>Inutilizadas sem XML:</b> Dos buracos, planilha Excel/CSV ou Faixa — só buracos já detectados.</li>
                 <li><b>Exportar:</b> Etapa 3 — ZIP em blocos de 10 000 XML (com Excel do bloco dentro); Excel do filtro completo opcional à parte; ou lista por chaves (col. A).</li>
             </ol>
         </div>
@@ -2473,9 +2597,10 @@ if st.session_state['confirmado']:
         ):
             st.caption(
                 "Só vale para **buracos** que o garimpeiro já listou: não cria novos buracos nem alarga intervalos. "
-                "**Dos buracos:** multiselect ou colar números (mesmo modelo/série). **Faixa:** só aplica notas que forem buraco nesse intervalo."
+                "**Dos buracos:** multiselect ou colar números. **Planilha:** Excel/CSV com modelo, série e nota (várias séries num ficheiro). "
+                "**Faixa:** só aplica notas que forem buraco nesse intervalo."
             )
-            tab_b, tab_f = st.tabs(["Dos buracos", "Faixa de números"])
+            tab_b, tab_p, tab_f = st.tabs(["Dos buracos", "Planilha (Excel/CSV)", "Faixa de números"])
 
             with tab_b:
                 df_b = st.session_state["df_faltantes"].copy()
@@ -2557,6 +2682,71 @@ if st.session_state['confirmado']:
                                 else:
                                     st.success(f"Incluídos **{len(_ok)}** registo(s).")
                                 st.rerun()
+
+            with tab_p:
+                st.markdown("**Subir tabela** com inutilizadas a declarar")
+                st.caption(
+                    "Colunas reconhecidas (cabeçalho na 1.ª linha): **Modelo** ou Documento/Tipo; **Série**; "
+                    "**Nota** ou Número / Num_Faltante. Cada linha é uma nota. "
+                    "Só entram linhas que o garimpeiro já marcou como **buraco** (o resto é ignorado)."
+                )
+                _up_inut = st.file_uploader(
+                    "Ficheiro .csv, .xlsx ou .xls",
+                    type=["csv", "xlsx", "xls"],
+                    key="inut_planilha_up",
+                )
+                if st.button("Importar planilha (só buracos)", type="primary", key="inut_planilha_go"):
+                    if _up_inut is None:
+                        st.warning("Escolha um ficheiro primeiro.")
+                    else:
+                        _df_up, _err_up = dataframe_de_upload_inutil(_up_inut)
+                        if _err_up:
+                            st.error(_err_up)
+                        else:
+                            _tri, _err_tr = triplas_inutil_de_dataframe(_df_up)
+                            if _err_tr:
+                                st.warning(_err_tr)
+                            else:
+                                _df_bu = st.session_state["df_faltantes"].copy()
+                                _bur_t = conjunto_triplas_buracos(_df_bu)
+                                if not _bur_t:
+                                    st.warning(
+                                        "Não há buracos na auditoria — nada a aplicar. Faça o garimpeiro primeiro."
+                                    )
+                                else:
+                                    _aplic_rows = []
+                                    _ign = 0
+                                    _seen = set()
+                                    for _mod, _ser, _nota in _tri:
+                                        _k = (_mod.strip(), str(_ser).strip(), int(_nota))
+                                        if _k not in _bur_t:
+                                            _ign += 1
+                                            continue
+                                        if _k in _seen:
+                                            continue
+                                        _seen.add(_k)
+                                        _aplic_rows.append((_mod.strip(), str(_ser).strip(), int(_nota)))
+                                    if not _aplic_rows:
+                                        st.warning(
+                                            "Nenhuma linha da planilha coincide com buraco listado pelo garimpeiro."
+                                        )
+                                    else:
+                                        with st.spinner("A atualizar…"):
+                                            for _mod, _ser, _nota in _aplic_rows:
+                                                st.session_state["relatorio"].append(
+                                                    item_registro_manual_inutilizado(
+                                                        cnpj_limpo, _mod, _ser, _nota
+                                                    )
+                                                )
+                                            reconstruir_dataframes_relatorio_simples()
+                                        st.success(
+                                            f"Incluídos **{len(_aplic_rows)}** registo(s) que eram buraco."
+                                        )
+                                        if _ign > 0:
+                                            st.info(
+                                                f"**{_ign}** linha(s) ignoradas (não eram buraco neste garimpo)."
+                                            )
+                                        st.rerun()
 
             with tab_f:
                 _mf = st.selectbox("Modelo", ["NF-e", "NFC-e", "CT-e", "MDF-e"], key="inut_f_mod")
