@@ -11,7 +11,22 @@ from collections import Counter, defaultdict
 from calendar import monthrange
 from datetime import date, datetime
 import unicodedata
+import sys
 from pathlib import Path
+
+
+def _instrucoes_instalar_fpdf2_markdown():
+    """Streamlit corre com o interpretador em sys.executable — fpdf2 tem de estar aí."""
+    exe = sys.executable or "python"
+    cmd = f'"{exe}" -m pip install fpdf2'
+    return (
+        "O pacote **fpdf2** não está instalado no **mesmo Python** que está a executar o Streamlit.\n\n"
+        f"No terminal, corra:\n\n`{cmd}`\n\n"
+        "Se usa **ambiente virtual**, ative-o antes desse comando, instale e **volte a iniciar** a app "
+        "(`streamlit run …`). O ficheiro **requirements.txt** já inclui `fpdf2` — também pode usar "
+        "`pip install -r requirements.txt` nesse ambiente."
+    )
+
 
 # --- CONFIGURAÇÃO E ESTILO (CLONE ABSOLUTO DO DIAMOND TAX) ---
 st.set_page_config(page_title="Garimpeiro", layout="wide", page_icon="⛏️")
@@ -2824,7 +2839,7 @@ with st.sidebar:
                     use_container_width=True,
                 )
             else:
-                st.caption("PDF indisponível — `pip install fpdf2`")
+                st.markdown(_instrucoes_instalar_fpdf2_markdown())
 
     st.divider()
     
@@ -3032,9 +3047,7 @@ if st.session_state['confirmado']:
                     use_container_width=True,
                 )
             else:
-                st.caption(
-                    "PDF do dashboard indisponível — instale **fpdf2** no ambiente (`pip install fpdf2`)."
-                )
+                st.markdown(_instrucoes_instalar_fpdf2_markdown())
 
         st.caption(
             "Se faltar XML ou ZIP, use o bloco abaixo sem reiniciar o garimpo: os totais e as tabelas atualizam na hora."
