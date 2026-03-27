@@ -2806,7 +2806,26 @@ with st.sidebar:
                     f"{int(st.session_state['seq_ref_mes']):02d} — "
                     f"{len(st.session_state['seq_ref_ultimos'])} série(s)."
                 )
-            
+
+        if st.session_state.get("garimpo_ok") and st.session_state.get("relatorio"):
+            st.divider()
+            st.markdown("#### 📄 PDF do dashboard")
+            _kpi_sb = coletar_kpis_dashboard()
+            _cnpj_sb = format_cnpj_visual(cnpj_limpo) if len(cnpj_limpo) == 14 else ""
+            _pdf_sb = pdf_dashboard_garimpeiro_bytes(_kpi_sb, _cnpj_sb)
+            if _pdf_sb:
+                st.caption("Mesmo PDF da área principal — útil se estiver longe do topo.")
+                st.download_button(
+                    "⬇️ Baixar PDF do dashboard",
+                    data=_pdf_sb,
+                    file_name="dashboard_garimpeiro.pdf",
+                    mime="application/pdf",
+                    key="dl_dash_pdf_sidebar",
+                    use_container_width=True,
+                )
+            else:
+                st.caption("PDF indisponível — `pip install fpdf2`")
+
     st.divider()
     
     if st.button("🗑️ RESETAR SISTEMA"):
@@ -2994,23 +3013,28 @@ if st.session_state['confirmado']:
         c2.metric("❌ CANCELADAS (PRÓPRIAS)", sc.get("CANCELADOS", 0))
         c3.metric("🚫 INUTILIZADAS (PRÓPRIAS)", sc.get("INUTILIZADOS", 0))
 
+        st.markdown("### 📄 Dashboard em PDF")
         _kpi_dash = coletar_kpis_dashboard()
         _cnpj_dash_fmt = format_cnpj_visual(cnpj_limpo) if len(cnpj_limpo) == 14 else ""
         _pdf_dash = pdf_dashboard_garimpeiro_bytes(_kpi_dash, _cnpj_dash_fmt)
-        if _pdf_dash:
-            st.caption("Resumo do lote em PDF — só descarrega o ficheiro, sem alterar o ecrã.")
-            st.download_button(
-                "Baixar PDF do dashboard",
-                data=_pdf_dash,
-                file_name="dashboard_garimpeiro.pdf",
-                mime="application/pdf",
-                key="dl_dash_pdf",
-                use_container_width=True,
-            )
-        else:
-            st.caption(
-                "PDF do dashboard indisponível — instale **fpdf2** no ambiente (`pip install fpdf2`)."
-            )
+        with st.container(border=True):
+            if _pdf_dash:
+                st.caption(
+                    "Gera um PDF com o resumo do lote (métricas, tabelas e gráficos simples). "
+                    "Só descarrega o ficheiro — **não muda** o que vê no ecrã."
+                )
+                st.download_button(
+                    "⬇️ Baixar PDF do dashboard",
+                    data=_pdf_dash,
+                    file_name="dashboard_garimpeiro.pdf",
+                    mime="application/pdf",
+                    key="dl_dash_pdf",
+                    use_container_width=True,
+                )
+            else:
+                st.caption(
+                    "PDF do dashboard indisponível — instale **fpdf2** no ambiente (`pip install fpdf2`)."
+                )
 
         st.caption(
             "Se faltar XML ou ZIP, use o bloco abaixo sem reiniciar o garimpo: os totais e as tabelas atualizam na hora."
