@@ -875,6 +875,36 @@ def conjunto_triplas_buracos(df_faltantes):
     return out
 
 
+def _dataframe_modelo_planilha_inutil_sem_xml():
+    """Linhas de exemplo; o utilizador substitui ou apaga conforme o lote."""
+    return pd.DataFrame(
+        [
+            {"Modelo": "NF-e", "Série": "1", "Nota": 1520},
+            {"Modelo": "NF-e", "Série": "1", "Nota": 1521},
+            {"Modelo": "NFC-e", "Série": "2", "Nota": 100},
+        ]
+    )
+
+
+def bytes_modelo_planilha_inutil_sem_xml_xlsx():
+    df = _dataframe_modelo_planilha_inutil_sem_xml()
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+        df.to_excel(writer, sheet_name="Inutil_sem_XML", index=False)
+        ws = writer.sheets["Inutil_sem_XML"]
+        ws.set_column(0, 0, 14)
+        ws.set_column(1, 1, 10)
+        ws.set_column(2, 2, 12)
+    return buf.getvalue()
+
+
+def bytes_modelo_planilha_inutil_sem_xml_csv():
+    df = _dataframe_modelo_planilha_inutil_sem_xml()
+    buf = io.BytesIO()
+    df.to_csv(buf, index=False, encoding="utf-8-sig", sep=";")
+    return buf.getvalue()
+
+
 def _item_inutil_manual_sem_xml(res):
     """Inutilização «sem XML» inserida pelo utilizador (não vem de ficheiro)."""
     return (
@@ -2689,6 +2719,28 @@ if st.session_state['confirmado']:
                     "Colunas reconhecidas (cabeçalho na 1.ª linha): **Modelo** ou Documento/Tipo; **Série**; "
                     "**Nota** ou Número / Num_Faltante. Cada linha é uma nota. "
                     "Só entram linhas que o garimpeiro já marcou como **buraco** (o resto é ignorado)."
+                )
+                _dmx, _dmc = st.columns(2)
+                with _dmx:
+                    st.download_button(
+                        "⬇️ Baixar modelo Excel (.xlsx)",
+                        data=bytes_modelo_planilha_inutil_sem_xml_xlsx(),
+                        file_name="MODELO_inutilizadas_sem_XML_garimpeiro.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_modelo_inut_xlsx",
+                        use_container_width=True,
+                    )
+                with _dmc:
+                    st.download_button(
+                        "⬇️ Baixar modelo CSV (.csv)",
+                        data=bytes_modelo_planilha_inutil_sem_xml_csv(),
+                        file_name="MODELO_inutilizadas_sem_XML_garimpeiro.csv",
+                        mime="text/csv",
+                        key="dl_modelo_inut_csv",
+                        use_container_width=True,
+                    )
+                st.caption(
+                    "No modelo: cabeçalhos **Modelo**, **Série**, **Nota** — substitua ou apague as linhas de exemplo e guarde antes de importar."
                 )
                 _up_inut = st.file_uploader(
                     "Ficheiro .csv, .xlsx ou .xls",
