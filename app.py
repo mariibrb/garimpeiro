@@ -1631,7 +1631,7 @@ TEXTO_GUIA_GARIMPEIRO = """
 Garimpeiro — Guia rápido (para copiar)
 
 PASSO A PASSO
-1. Na barra lateral: informe o CNPJ do emitente (cliente) e clique em Liberar operação.
+1. Na barra lateral: digite **só os 14 números** do CNPJ do emitente (cliente); pontos, barra e traço são colocados automaticamente (também pode colar já formatado). Depois clique em Liberar operação.
 2. Envie ZIP ou XML soltos (volumes grandes são suportados). Depois do primeiro resultado, pode incluir mais ficheiros no topo da página, sem reiniciar o garimpo.
 3. Clique em Iniciar grande garimpo e aguarde a leitura.
 4. (Opcional) Lateral “Último nº por série”: **só muda os buracos** (âncora a partir do último nº + mês; evita buraco gigante se vier nota velha no meio). O **garimpo e o resumo** continuam **totais**. Sem **Guardar referência** com linhas válidas, buracos usam toda a numeração lida.
@@ -1646,6 +1646,7 @@ O QUE O SISTEMA FAZ
 • Um mesmo documento pode gerar mais do que um XML no disco (ex.: nota e evento) — o mesmo número de chaves pode corresponder a vários ficheiros.
 
 DICAS
+• CNPJ na lateral: apenas dígitos ou colar com máscara — a app normaliza e mostra 00.000.000/0000-00.
 • Resetar sistema limpa sessão e temporários; use se trocar de cliente ou quiser recomeçar do zero.
 • Modelos na app: NF-e, NFC-e, CT-e, MDF-e (use estes nomes nas tabelas e colagens).
 • Etapa 3: lista vazia num critério = esse critério não corta nada. Seleções que deixam de existir após mudar outro filtro são limpas automaticamente.
@@ -1662,7 +1663,7 @@ with st.container():
         <div class="instrucoes-card">
             <h3>📖 Como usar (passo a passo)</h3>
             <ol>
-                <li><b>CNPJ:</b> Na lateral, o CNPJ do <b>emitente</b> (cliente) → Liberar operação.</li>
+                <li><b>CNPJ:</b> Na lateral, <b>só os 14 números</b> do emitente (cliente); a máscara preenche sozinha → Liberar operação.</li>
                 <li><b>Lote:</b> Envie ZIP ou XML. Grandes volumes são suportados.</li>
                 <li><b>Garimpo:</b> Iniciar grande garimpo e aguardar.</li>
                 <li><b>Mais ficheiros:</b> No <b>topo dos resultados</b>, inclua XML/ZIP extra <b>sem reiniciar</b>.</li>
@@ -1693,7 +1694,7 @@ with st.container():
             "Guia",
             value=TEXTO_GUIA_GARIMPEIRO,
             height=320,
-            key="garimpeiro_guia_copiar",
+            key="garimpeiro_guia_copiar_v2",
             label_visibility="collapsed",
         )
 
@@ -1755,19 +1756,20 @@ if "cnpj_widget" not in st.session_state:
 with st.sidebar:
     st.markdown("### 🔍 Configuração")
     st.caption("CNPJ: digite **só os 14 números** — pontos, barra e traço aparecem sozinhos.")
+    # Normalizar máscara *antes* do text_input: depois do widget o Streamlit bloqueia
+    # `session_state["cnpj_widget"] = ...` na mesma execução (StreamlitAPIException).
+    _cnpj_key = "cnpj_widget"
+    _cnpj_raw = st.session_state.get(_cnpj_key, "")
+    cnpj_limpo = "".join(c for c in str(_cnpj_raw) if c.isdigit())[:14]
+    _cnpj_fmt = format_cnpj_visual(cnpj_limpo)
+    if _cnpj_fmt != str(_cnpj_raw):
+        st.session_state[_cnpj_key] = _cnpj_fmt
     st.text_input(
         "CNPJ DO CLIENTE",
-        key="cnpj_widget",
+        key=_cnpj_key,
         placeholder="só números, ex. 11222333000181",
         help="Pode colar o CNPJ com ou sem máscara; guardamos só os dígitos e mostramos formatado.",
     )
-    _cnpj_raw = st.session_state.get("cnpj_widget", "")
-    _cnpj_digs = "".join(c for c in str(_cnpj_raw) if c.isdigit())[:14]
-    _cnpj_fmt = format_cnpj_visual(_cnpj_digs)
-    if _cnpj_fmt != _cnpj_raw:
-        st.session_state["cnpj_widget"] = _cnpj_fmt
-        st.rerun()
-    cnpj_limpo = _cnpj_digs
 
     if cnpj_limpo and len(cnpj_limpo) != 14:
         st.error("⚠️ CNPJ Inválido.")
