@@ -710,10 +710,320 @@ def _excel_escrever_folha_df(writer, df, nome_desejado, usados):
         d.to_excel(writer, sheet_name=sn, index=False)
 
 
+def _excel_df_conta_par_modelo_serie(df, col_mod, col_ser):
+    if df is None or df.empty or col_mod not in df.columns or col_ser not in df.columns:
+        return {}
+    d = df[[col_mod, col_ser]].copy()
+    d["_k"] = d[col_mod].astype(str).str.strip() + "|" + d[col_ser].astype(str).str.strip()
+    return d.groupby("_k").size().to_dict()
+
+
+def _excel_escrever_painel_fiscal(wb, kpi, usados_nomes):
+    """
+    Folha estilo dashboard (grelha tipo Excel + gráficos nativos), alinhada ao mock «Painel Fiscal».
+    Dados reais do kpi / dataframes em sessão.
+    """
+    sn = _excel_nome_folha_seguro("Painel Fiscal", usados_nomes)
+    ws = wb.add_worksheet(sn)
+
+    pm = dict(kpi.get("pares") or [])
+    sc = kpi.get("sc") or {}
+    n_docs = int(kpi.get("n_docs") or 0)
+    try:
+        n_prop = int(pm.get("XML emissão própria (itens)", 0) or 0)
+    except (TypeError, ValueError):
+        n_prop = 0
+    try:
+        n_terc_xml = int(pm.get("XML terceiros (itens)", 0) or 0)
+    except (TypeError, ValueError):
+        n_terc_xml = 0
+    aut = int(sc.get("AUTORIZADAS", 0) or 0)
+    can = int(sc.get("CANCELADOS", 0) or 0)
+    inu = int(sc.get("INUTILIZADOS", 0) or 0)
+    valor = float(kpi.get("valor") or 0)
+    n_bur = int(kpi.get("n_bur") or 0)
+    terc_cnt = kpi.get("terc_cnt") or {}
+
+    df_r = st.session_state.get("df_resumo")
+    df_aut = st.session_state.get("df_autorizadas")
+    df_can = st.session_state.get("df_canceladas")
+    df_inu = st.session_state.get("df_inutilizadas")
+    df_bur = st.session_state.get("df_faltantes")
+    if df_bur is not None and not df_bur.empty:
+        if "Serie" in df_bur.columns and "Série" not in df_bur.columns:
+            df_bur = df_bur.rename(columns={"Serie": "Série"})
+
+    c_aut = _excel_df_conta_par_modelo_serie(df_aut, "Modelo", "Série")
+    c_can = _excel_df_conta_par_modelo_serie(df_can, "Modelo", "Série")
+    c_inu = _excel_df_conta_par_modelo_serie(df_inu, "Modelo", "Série")
+    c_bur = _excel_df_conta_par_modelo_serie(df_bur, "Tipo", "Série")
+
+    mes_ref = datetime.now().strftime("%m/%Y")
+    ref_txt = "Sim" if pm.get("Referência último nº guardada") == "Sim" else "Não"
+    val_txt = "Sim" if pm.get("Validação autenticidade (Etapa 2)") == "Sim" else "Não"
+    try:
+        n_div = len(st.session_state.get("df_divergencias") or [])
+    except TypeError:
+        n_div = 0
+
+    marrom = "#63233C"
+    navy = "#1B2A4A"
+    cinza = "#EDE8EC"
+
+    fmt_tit = wb.add_format(
+        {
+            "bold": True,
+            "font_size": 16,
+            "font_color": "#FFFFFF",
+            "bg_color": marrom,
+            "align": "center",
+            "valign": "vcenter",
+            "border": 1,
+        }
+    )
+    fmt_sub = wb.add_format(
+        {"italic": True, "font_size": 10, "font_color": "#555555", "text_wrap": True}
+    )
+    fmt_kpi_t = wb.add_format(
+        {"bold": True, "font_size": 9, "bg_color": cinza, "border": 1, "text_wrap": True, "valign": "top"}
+    )
+    fmt_kpi_l = wb.add_format({"font_size": 9, "border": 1, "text_wrap": True})
+    fmt_kpi_n = wb.add_format({"bold": True, "font_size": 11, "border": 1, "num_format": "#,##0"})
+    fmt_kpi_r = wb.add_format({"bold": True, "font_size": 11, "border": 1, "num_format": 'R$ #,##0.00'})
+    fmt_tab_h = wb.add_format(
+        {
+            "bold": True,
+            "font_color": "#FFFFFF",
+            "bg_color": navy,
+            "border": 1,
+            "align": "center",
+            "valign": "vcenter",
+            "text_wrap": True,
+        }
+    )
+    fmt_tab_c = wb.add_format({"border": 1, "valign": "vcenter"})
+    fmt_tab_warn = wb.add_format({"border": 1, "font_color": "#C62828", "bold": True})
+    fmt_tab_ok = wb.add_format({"border": 1, "font_color": "#2E7D32"})
+    fmt_foot = wb.add_format({"italic": True, "font_size": 9, "font_color": "#777777"})
+
+    ws.merge_range(0, 0, 0, 15, "GARIMPEIRO | PAINEL FISCAL", fmt_tit)
+    ws.set_row(0, 28)
+    ws.merge_range(1, 0, 1, 15, "Resumo visual do lote — exportado a partir dos dados do garimpo.", fmt_sub)
+    ws.set_row(1, 22)
+
+    # KPIs em 4 blocos (colunas 0-3, 4-7, 8-11, 12-15)
+    def _bloco_kpi(c0, titulo, linhas):
+        ws.merge_range(3, c0, 3, c0 + 3, titulo, fmt_kpi_t)
+        r = 4
+        for rot, val, is_money in linhas:
+            ws.write(r, c0, rot, fmt_kpi_l)
+            if is_money:
+                ws.write_number(r, c0 + 1, float(val), fmt_kpi_r)
+            else:
+                try:
+                    iv = int(val)
+                    ws.write_number(r, c0 + 1, iv, fmt_kpi_n)
+                except (TypeError, ValueError):
+                    ws.write(r, c0 + 1, str(val), fmt_kpi_n)
+            ws.merge_range(r, c0 + 2, r, c0 + 3, "", fmt_kpi_l)
+            r += 1
+
+    _bloco_kpi(
+        0,
+        "TOTAL DE DOCUMENTOS LIDOS (NUM GERAL)",
+        [
+            ("Total", n_docs, False),
+            ("Próprios", n_prop, False),
+            ("Terceiros", n_terc_xml, False),
+        ],
+    )
+    _bloco_kpi(
+        4,
+        "DETALHAMENTO EMISSÃO PRÓPRIA",
+        [
+            ("Autorizadas", aut, False),
+            ("Canceladas", can, False),
+            ("Inutilizadas", inu, False),
+        ],
+    )
+    terc_linhas = []
+    for mod, q in sorted(terc_cnt.items(), key=lambda x: x[0])[:6]:
+        terc_linhas.append((str(mod), int(q), False))
+    if not terc_linhas:
+        terc_linhas.append(("(sem terceiros)", 0, False))
+    _bloco_kpi(8, "DETALHAMENTO DOCUMENTOS TERCEIROS", terc_linhas[:3])
+    _bloco_kpi(12, "VOLUME FINANCEIRO", [("Soma resumo séries (R$)", valor, True)])
+
+    # Dados ocultos para gráficos (colunas Q-S = 16+)
+    hid_c = 16
+    r0 = 40
+    ws.write(r0, hid_c, "Categoria", fmt_kpi_l)
+    ws.write(r0, hid_c + 1, "Valor", fmt_kpi_l)
+    ws.write(r0 + 1, hid_c, "Autorizadas")
+    ws.write_number(r0 + 1, hid_c + 1, max(0, aut))
+    ws.write(r0 + 2, hid_c, "Canceladas")
+    ws.write_number(r0 + 2, hid_c + 1, max(0, can))
+    ws.write(r0 + 3, hid_c, "Inutilizadas")
+    ws.write_number(r0 + 3, hid_c + 1, max(0, inu))
+
+    r1 = r0 + 5
+    terc_items = sorted(terc_cnt.items(), key=lambda x: -x[1])[:8]
+    if not terc_items:
+        ws.write(r1, hid_c, "—")
+        ws.write_number(r1, hid_c + 1, 1)
+        n_trows = 1
+    else:
+        n_trows = 0
+        for mod, q in terc_items:
+            ws.write(r1 + n_trows, hid_c, str(mod))
+            ws.write_number(r1 + n_trows, hid_c + 1, int(q))
+            n_trows += 1
+
+    r2 = r1 + max(n_trows, 1) + 2
+    ws.write(r2, hid_c, "Própria (aut.)")
+    ws.write_number(r2, hid_c + 1, max(0, aut))
+    ws.write(r2 + 1, hid_c, "Terceiros (XML)")
+    ws.write_number(r2 + 1, hid_c + 1, max(0, n_terc_xml))
+
+    ws.set_column(hid_c, hid_c + 1, None, None, {"hidden": True})
+
+    ch1 = wb.add_chart({"type": "doughnut"})
+    ch1.add_series(
+        {
+            "name": "Emissão própria",
+            "categories": [sn, r0 + 1, hid_c, r0 + 3, hid_c],
+            "values": [sn, r0 + 1, hid_c + 1, r0 + 3, hid_c + 1],
+        }
+    )
+    ch1.set_title({"name": f"STATUS DE EMISSÃO PRÓPRIA ({mes_ref})"})
+    ch1.set_style(10)
+    ws.insert_chart(7, 0, ch1, {"x_scale": 0.95, "y_scale": 0.95})
+
+    ch2 = wb.add_chart({"type": "doughnut"})
+    last_tr = r1 + n_trows - 1
+    ch2.add_series(
+        {
+            "name": "Terceiros",
+            "categories": [sn, r1, hid_c, last_tr, hid_c],
+            "values": [sn, r1, hid_c + 1, last_tr, hid_c + 1],
+        }
+    )
+    ch2.set_title({"name": f"DISTRIBUIÇÃO TERCEIROS POR MODELO ({mes_ref})"})
+    ch2.set_style(10)
+    ws.insert_chart(7, 5, ch2, {"x_scale": 0.95, "y_scale": 0.95})
+
+    ch3 = wb.add_chart({"type": "area"})
+    ch3.add_series(
+        {
+            "name": "No lote",
+            "categories": [sn, r2, hid_c, r2 + 1, hid_c],
+            "values": [sn, r2, hid_c + 1, r2 + 1, hid_c + 1],
+            "fill": {"color": "#A1869E"},
+            "line": {"color": "#63233C"},
+        }
+    )
+    ch3.set_title({"name": "RESUMO RÁPIDO (autorizadas própria vs XML terceiros)"})
+    ch3.set_legend({"none": True})
+    ws.insert_chart(7, 10, ch3, {"x_scale": 0.95, "y_scale": 0.95})
+
+    # Alertas de série (séries com buracos) — à direita, acima dos gráficos
+    alert_row = 3
+    ws.write(alert_row, 14, "ALERTAS DE SÉRIE", fmt_kpi_t)
+    if df_bur is not None and not df_bur.empty and "Tipo" in df_bur.columns and "Série" in df_bur.columns:
+        gb = df_bur.groupby(["Tipo", "Série"]).size().reset_index(name="n")
+        gb = gb.sort_values("n", ascending=False).head(8)
+        ar = alert_row + 1
+        for _, rr in gb.iterrows():
+            ws.write(ar, 14, f"{rr['Tipo']} sér. {rr['Série']}: {int(rr['n'])} buraco(s)", fmt_tab_warn)
+            ar += 1
+            if ar > alert_row + 6:
+                break
+        if ar == alert_row + 1:
+            ws.write(ar, 14, "Nenhum buraco listado.", fmt_tab_ok)
+    else:
+        ws.write(alert_row + 1, 14, "Sem buracos ou dados indisponíveis.", fmt_tab_ok)
+
+    ctx_r = alert_row + 10
+    ws.write(ctx_r, 14, f"Último nº guardado: {ref_txt}", fmt_kpi_l)
+    ws.write(ctx_r + 1, 14, f"Etapa 2: {val_txt}", fmt_kpi_l)
+    if n_div:
+        ws.write(ctx_r + 2, 14, f"Divergências XML×Sefaz: {n_div}", fmt_tab_warn)
+
+    # Tabela totalizador
+    t_row = 22
+    ws.merge_range(
+        t_row,
+        0,
+        t_row,
+        8,
+        f"TOTALIZADOR DE SÉRIE E FAIXAS ({mes_ref})",
+        fmt_kpi_t,
+    )
+    t_row += 1
+    headers = [
+        "Modelo",
+        "Série",
+        "Faixa (início–fim)",
+        "Qtd lidos",
+        "Autorizadas",
+        "Canceladas",
+        "Inutilizadas",
+        "Buracos",
+        "OK?",
+    ]
+    for c, h in enumerate(headers):
+        ws.write(t_row, c, h, fmt_tab_h)
+    t_row += 1
+
+    if df_r is not None and not df_r.empty:
+        doc_col = "Documento" if "Documento" in df_r.columns else None
+        ser_col = "Série" if "Série" in df_r.columns else None
+        if doc_col and ser_col:
+            for _, row in df_r.iterrows():
+                mod = str(row.get(doc_col, "")).strip()
+                ser = str(row.get(ser_col, "")).strip()
+                k = f"{mod}|{ser}"
+                ini = row.get("Início", "")
+                fim = row.get("Fim", "")
+                faixa = f"{ini} – {fim}"
+                qtd = row.get("Quantidade", "")
+                na = int(c_aut.get(k, 0))
+                nc = int(c_can.get(k, 0))
+                ni = int(c_inu.get(k, 0))
+                nb = int(c_bur.get(k, 0))
+                ok = "✓" if nb == 0 else "▲"
+                fmt_end = fmt_tab_ok if nb == 0 else fmt_tab_warn
+                ws.write(t_row, 0, mod, fmt_tab_c)
+                ws.write(t_row, 1, ser, fmt_tab_c)
+                ws.write(t_row, 2, faixa, fmt_tab_c)
+                ws.write(t_row, 3, qtd, fmt_tab_c)
+                ws.write_number(t_row, 4, na, fmt_tab_c)
+                ws.write_number(t_row, 5, nc, fmt_tab_c)
+                ws.write_number(t_row, 6, ni, fmt_tab_c)
+                ws.write_number(t_row, 7, nb, fmt_tab_c)
+                ws.write(t_row, 8, ok, fmt_end)
+                t_row += 1
+        else:
+            ws.merge_range(t_row, 0, t_row, 8, "Resumo por série sem colunas esperadas.", fmt_tab_c)
+            t_row += 1
+    else:
+        ws.merge_range(t_row, 0, t_row, 8, "Sem resumo por série neste lote.", fmt_tab_c)
+        t_row += 1
+
+    t_row += 1
+    ws.merge_range(t_row, 0, t_row, 8, "Garimpeiro · Painel gerado a partir do lote atual (mesmos dados que na app).", fmt_foot)
+
+    ws.set_column(0, 0, 12)
+    ws.set_column(1, 1, 8)
+    ws.set_column(2, 2, 22)
+    ws.set_column(3, 8, 12)
+    ws.set_column(14, 15, 18)
+
+
 def excel_relatorio_geral_com_dashboard_bytes(df_geral):
     """
     Excel com várias folhas alinhadas às abas do ecrã:
-    Geral, Buracos, Inutilizadas, Canceladas, Autorizadas, CT-e lidas, Terceiros lidas, Dashboard.
+    Geral, Buracos, Inutilizadas, Canceladas, Autorizadas, CT-e lidas, Terceiros lidas, Dashboard, Painel Fiscal.
     """
     if df_geral is None or df_geral.empty:
         return None
@@ -801,300 +1111,9 @@ def excel_relatorio_geral_com_dashboard_bytes(df_geral):
         ws.set_column(0, 0, 42)
         ws.set_column(1, 1, 22)
 
+        _excel_escrever_painel_fiscal(wb, kpi, usados_nomes)
+
     return buf.getvalue()
-
-
-def _fmt_br_reais_pdf(val: float) -> str:
-    """Formata valor para texto no PDF (milhares com ponto, decimais com vírgula)."""
-    try:
-        v = float(val)
-    except (TypeError, ValueError):
-        return "0,00"
-    neg = v < 0
-    v = abs(v)
-    cent = int(round(v * 100 + 1e-9))
-    inte, frac = divmod(cent, 100)
-    s = str(inte)
-    parts = []
-    while len(s) > 3:
-        parts.insert(0, s[-3:])
-        s = s[:-3]
-    if s:
-        parts.insert(0, s)
-    body = ".".join(parts)
-    out = f"{body},{frac:02d}"
-    return f"-{out}" if neg else out
-
-
-def _dashboard_resumo_figure_bytes(kpi):
-    """Gera PNG com donut + barras + painel de totais (estilo dashboard moderno). Sem matplotlib → None."""
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        return None
-    from io import BytesIO
-
-    sc = kpi.get("sc") or {}
-    aut = int(sc.get("AUTORIZADAS", 0) or 0)
-    can = int(sc.get("CANCELADOS", 0) or 0)
-    inu = int(sc.get("INUTILIZADOS", 0) or 0)
-    bur = int(kpi.get("n_bur") or 0)
-    n_docs = int(kpi.get("n_docs") or 0)
-    tc = kpi.get("terc_cnt") or {}
-    tsd = kpi.get("terc_status_dist") or {}
-    pm = dict(kpi.get("pares") or [])
-    valor = float(kpi.get("valor") or 0)
-    terc_total = sum(int(v) for v in tc.values()) if tc else 0
-
-    plt.rcParams.update(
-        {
-            "font.family": "sans-serif",
-            "font.sans-serif": ["DejaVu Sans", "Arial", "Helvetica", "sans-serif"],
-            "axes.facecolor": "#faf7fd",
-            "figure.facecolor": "#f3ebfa",
-        }
-    )
-
-    fig, axs = plt.subplots(2, 2, figsize=(7.8, 4.05), facecolor="#f3ebfa")
-    colors_ep = ["#c2185b", "#e57373", "#8e24aa", "#ff9800"]
-    labels_ep = ["Autorizadas", "Canceladas", "Inutilizadas", "Buracos"]
-    vals_ep = [aut, can, inu, bur]
-
-    ax = axs[0, 0]
-    total_ep = sum(vals_ep)
-    if total_ep > 0:
-        wedges, _texts = ax.pie(
-            vals_ep,
-            colors=colors_ep,
-            startangle=90,
-            wedgeprops=dict(width=0.55, edgecolor="white", linewidth=1.2),
-            labels=None,
-        )
-        pct = [100 * v / total_ep for v in vals_ep]
-        leg = [f"{l}: {v} ({p:.0f}%)" for l, v, p in zip(labels_ep, vals_ep, pct)]
-        ax.legend(
-            wedges,
-            leg,
-            loc="center left",
-            bbox_to_anchor=(0.05, 0.5),
-            fontsize=6.0,
-            frameon=False,
-        )
-    else:
-        ax.text(0.5, 0.5, "Sem dados de\nemissão própria", ha="center", va="center", fontsize=9, color="#6a1b9a")
-    ax.set_title("Emissão própria", fontsize=11, fontweight="bold", color="#4a148c", pad=6)
-    ax.axis("equal")
-
-    ax = axs[0, 1]
-    if tc:
-        items = sorted(tc.items(), key=lambda x: -x[1])[:7]
-        names = []
-        for k, _ in items:
-            sk = str(k)
-            names.append(sk[:13] + ("…" if len(sk) > 13 else ""))
-        counts = [int(v) for _, v in items]
-        yp = list(range(len(names)))
-        ax.barh(yp, counts, color="#e91e63", height=0.62, edgecolor="white", linewidth=0.6)
-        ax.set_yticks(yp, labels=names, fontsize=7)
-        ax.set_xlabel("Quantidade", fontsize=8, color="#5e35b1")
-        ax.invert_yaxis()
-    else:
-        ax.text(0.5, 0.5, "Sem XML de terceiros", ha="center", va="center", fontsize=9, color="#6a1b9a")
-    ax.set_title("Terceiros por tipo", fontsize=11, fontweight="bold", color="#4a148c", pad=6)
-
-    ax = axs[1, 0]
-    if tsd:
-        items = sorted(tsd.items(), key=lambda x: -x[1])[:7]
-        names = [str(k)[:14] for k, _ in items]
-        counts = [int(v) for _, v in items]
-        x = list(range(len(names)))
-        ax.bar(x, counts, color="#ba68c8", edgecolor="white", linewidth=0.6)
-        ax.set_xticks(x, labels=names, rotation=28, ha="right", fontsize=6.5)
-        ax.set_ylabel("Qtd", fontsize=8, color="#5e35b1")
-    else:
-        ax.text(
-            0.5,
-            0.5,
-            "Sem status de terceiros\n(relatório geral)",
-            ha="center",
-            va="center",
-            fontsize=8,
-            color="#6a1b9a",
-        )
-    ax.set_title("Terceiros por status", fontsize=11, fontweight="bold", color="#4a148c", pad=6)
-
-    ax = axs[1, 1]
-    ax.axis("off")
-    lines = [
-        f"Documentos lidos: {n_docs}",
-        f"Terceiros (soma tipos): {terc_total}",
-        f"Linhas relatório geral: {pm.get('Linhas no relatório geral', '—')}",
-        f"Itens relatório bruto: {pm.get('Itens no lote (relatório bruto)', '—')}",
-        f"Valor contábil (resumo): R$ {_fmt_br_reais_pdf(valor)}",
-        f"XML própria / terceiros: {pm.get('XML emissão própria (itens)', '—')} / {pm.get('XML terceiros (itens)', '—')}",
-        f"Último nº guardado: {pm.get('Referência último nº guardada', '—')} · Etapa 2: {pm.get('Validação autenticidade (Etapa 2)', '—')}",
-    ]
-    yp = 0.94
-    for ln in lines:
-        ax.text(0.04, yp, ln, fontsize=7.8, color="#4a148c", transform=ax.transAxes, va="top")
-        yp -= 0.122
-
-    fig.tight_layout(pad=0.75, rect=[0, 0.02, 1, 0.98])
-    buf = BytesIO()
-    try:
-        fig.savefig(buf, format="png", dpi=112, bbox_inches="tight", facecolor=fig.get_facecolor())
-    except Exception:
-        plt.close(fig)
-        return None
-    plt.close(fig)
-    buf.seek(0)
-    return buf.getvalue()
-
-
-def _pdf_fallback_barras_resumo(pdf, kpi, use_dejavu):
-    """Se matplotlib não existir: barras simples em FPdf (mesma leitura de dados)."""
-    full = pdf.w - pdf.l_margin - pdf.r_margin
-    sc = kpi.get("sc") or {}
-    vals = [
-        int(sc.get("AUTORIZADAS", 0) or 0),
-        int(sc.get("CANCELADOS", 0) or 0),
-        int(sc.get("INUTILIZADOS", 0) or 0),
-        int(kpi.get("n_bur") or 0),
-    ]
-    labels = ["Autorizadas", "Canceladas", "Inutilizadas", "Buracos"]
-    colors = [(194, 24, 91), (229, 115, 115), (142, 36, 170), (251, 140, 0)]
-    mx = max(vals) if vals and max(vals) > 0 else 1
-    pdf.ln(2)
-    _pdf_font(pdf, use_dejavu, "B", 9)
-    pdf.set_text_color(74, 20, 140)
-    pdf.set_x(pdf.l_margin)
-    pdf.cell(0, 5, _pdf_txt(pdf, "Emissão própria (barras)", use_dejavu), ln=True)
-    bar_max_w = full - 42
-    for lab, v, rgb in zip(labels, vals, colors):
-        y = pdf.get_y()
-        pdf.ln(0.5)
-        y = pdf.get_y()
-        frac = min(1.0, v / mx) if mx else 0
-        pdf.set_fill_color(237, 231, 246)
-        pdf.rect(pdf.l_margin + 38, y + 0.8, bar_max_w, 5.2, "F")
-        pdf.set_fill_color(*rgb)
-        pdf.rect(pdf.l_margin + 38, y + 0.8, bar_max_w * frac, 5.2, "F")
-        _pdf_font(pdf, use_dejavu, "", 7.5)
-        pdf.set_text_color(80, 50, 100)
-        pdf.set_xy(pdf.l_margin, y + 1)
-        pdf.cell(36, 5, _pdf_txt(pdf, f"{lab[:12]}", use_dejavu), ln=False)
-        _pdf_font(pdf, use_dejavu, "B", 8)
-        pdf.set_text_color(74, 20, 140)
-        pdf.set_xy(pdf.w - pdf.r_margin - 14, y + 1)
-        pdf.cell(12, 5, str(v), ln=False, align="R")
-        pdf.set_xy(pdf.l_margin, y + 7)
-    tc = kpi.get("terc_cnt") or {}
-    if tc:
-        pdf.ln(2)
-        _pdf_font(pdf, use_dejavu, "B", 9)
-        pdf.set_text_color(74, 20, 140)
-        pdf.set_x(pdf.l_margin)
-        pdf.cell(0, 5, _pdf_txt(pdf, "Terceiros por tipo", use_dejavu), ln=True)
-        items = sorted(tc.items(), key=lambda x: -x[1])[:6]
-        mx2 = max(int(v) for _, v in items) if items else 1
-        mx2 = mx2 if mx2 > 0 else 1
-        for k, q in items:
-            y = pdf.get_y()
-            pdf.ln(0.5)
-            y = pdf.get_y()
-            qv = int(q)
-            frac = min(1.0, qv / mx2)
-            sk = str(k)[:18] + ("…" if len(str(k)) > 18 else "")
-            pdf.set_fill_color(252, 228, 236)
-            pdf.rect(pdf.l_margin + 38, y + 0.8, bar_max_w, 4.8, "F")
-            pdf.set_fill_color(233, 30, 99)
-            pdf.rect(pdf.l_margin + 38, y + 0.8, bar_max_w * frac, 4.8, "F")
-            _pdf_font(pdf, use_dejavu, "", 7)
-            pdf.set_text_color(90, 55, 95)
-            pdf.set_xy(pdf.l_margin, y + 1)
-            pdf.cell(36, 4, _pdf_txt(pdf, sk, use_dejavu), ln=False)
-            pdf.set_xy(pdf.w - pdf.r_margin - 12, y + 1)
-            pdf.cell(10, 4, str(qv), ln=False, align="R")
-            pdf.set_xy(pdf.l_margin, y + 6.2)
-
-
-def _pdf_folha1_resumao_visual(pdf, kpi, use_dejavu, linha_cnpj):
-    """Só a 1.ª folha: resumo em números grandes + gráficos (PNG ou barras FPdf)."""
-    from io import BytesIO
-
-    pdf.set_fill_color(243, 235, 250)
-    pdf.rect(0, 0, pdf.w, pdf.h, "F")
-    pdf.set_xy(pdf.l_margin, pdf.t_margin)
-
-    full = pdf.w - pdf.l_margin - pdf.r_margin
-    y0 = pdf.get_y()
-    pdf.set_fill_color(255, 255, 255)
-    pdf.rect(pdf.l_margin, y0, full, 19, "F")
-    pdf.set_fill_color(186, 104, 200)
-    pdf.rect(pdf.l_margin, y0, 3.5, 19, "F")
-    _pdf_font(pdf, use_dejavu, "B", 17)
-    pdf.set_text_color(74, 20, 140)
-    pdf.set_xy(pdf.l_margin + 7, y0 + 4)
-    pdf.cell(110, 8, _pdf_txt(pdf, "Garimpeiro", use_dejavu), ln=False)
-    _pdf_font(pdf, use_dejavu, "", 9)
-    pdf.set_text_color(106, 27, 154)
-    pdf.set_xy(pdf.l_margin + 7, y0 + 11)
-    pdf.cell(130, 6, _pdf_txt(pdf, "Resumo visual do lote", use_dejavu), ln=False)
-    sub = datetime.now().strftime("%d/%m/%Y  %H:%M")
-    _pdf_font(pdf, use_dejavu, "", 8)
-    pdf.set_text_color(120, 90, 140)
-    try:
-        tw = pdf.get_string_width(_pdf_txt(pdf, sub, use_dejavu))
-    except Exception:
-        tw = 44.0
-    pdf.set_xy(pdf.w - pdf.r_margin - tw - 5, y0 + 7)
-    pdf.cell(tw + 2, 5, _pdf_txt(pdf, sub, use_dejavu), ln=False)
-    pdf.set_y(y0 + 21)
-    if linha_cnpj:
-        _pdf_font(pdf, use_dejavu, "", 8.5)
-        pdf.set_text_color(90, 60, 110)
-        pdf.set_x(pdf.l_margin)
-        pdf.cell(0, 5, _pdf_txt(pdf, linha_cnpj, use_dejavu), ln=True)
-    pdf.ln(2)
-
-    n_docs = int(kpi.get("n_docs") or 0)
-    y = pdf.get_y()
-    h_hero = 30
-    pdf.set_fill_color(255, 251, 254)
-    pdf.rect(pdf.l_margin, y, full, h_hero, "F")
-    pdf.set_fill_color(233, 30, 99)
-    pdf.rect(pdf.l_margin, y, 4.2, h_hero, "F")
-    _pdf_font(pdf, use_dejavu, "", 8.5)
-    pdf.set_text_color(123, 31, 162)
-    pdf.set_xy(pdf.l_margin + 9, y + 4)
-    pdf.cell(full - 16, 5, _pdf_txt(pdf, "DOCUMENTOS LIDOS (XML / chaves neste garimpo)", use_dejavu), ln=False)
-    _pdf_font(pdf, use_dejavu, "B", 34)
-    pdf.set_text_color(136, 14, 79)
-    pdf.set_xy(pdf.l_margin + 9, y + 11)
-    pdf.cell(full - 16, 16, _pdf_txt(pdf, str(n_docs), use_dejavu), ln=False)
-    pdf.set_xy(pdf.l_margin, y + h_hero + 2)
-
-    png = _dashboard_resumo_figure_bytes(kpi)
-    if png:
-        try:
-            pdf.image(BytesIO(png), x=pdf.l_margin, w=full)
-        except Exception:
-            _pdf_fallback_barras_resumo(pdf, kpi, use_dejavu)
-    else:
-        _pdf_fallback_barras_resumo(pdf, kpi, use_dejavu)
-
-    pdf.ln(2)
-    _pdf_font(pdf, use_dejavu, "", 7.5)
-    pdf.set_text_color(110, 85, 130)
-    _pdf_multi_texto_largura_total(
-        pdf,
-        3.7,
-        "Nas páginas seguintes: tabelas detalhadas com o mesmo significado do ecrã (resumo por série, terceiros e cada aba do relatório).",
-        use_dejavu,
-    )
 
 
 def _pdf_ascii_seguro(txt):
@@ -1137,132 +1156,139 @@ def _pdf_multi_texto_largura_total(pdf, altura_linha, texto, use_dejavu):
 
 
 def _pdf_cabecalho_ludico_rosa(pdf, use_dejavu, linha_extra=None):
-    """Topo tipo app: bloco suave, muito espaço em branco, sem moldura de relatório."""
+    """Cabeçalho rosa/lilás — igual ao PDF «dashboard» de referência (folha 1)."""
     y = pdf.get_y()
     w = pdf.w - pdf.l_margin - pdf.r_margin
-    pdf.set_fill_color(255, 240, 248)
-    pdf.rect(pdf.l_margin, y, w, 22, "F")
-    _pdf_font(pdf, use_dejavu, "B", 16)
-    pdf.set_text_color(183, 28, 106)
-    pdf.set_xy(pdf.l_margin + 6, y + 5)
-    pdf.cell(w - 12, 8, _pdf_txt(pdf, "Garimpeiro", use_dejavu), ln=False)
-    _pdf_font(pdf, use_dejavu, "", 8.5)
-    pdf.set_text_color(140, 85, 120)
-    pdf.set_xy(pdf.l_margin + 6, y + 13)
-    pdf.cell(w * 0.55, 5, _pdf_txt(pdf, "Resumo do lote", use_dejavu), ln=False)
-    sub = datetime.now().strftime("%d/%m/%Y  %H:%M")
+    pdf.set_fill_color(255, 192, 220)
+    pdf.rect(pdf.l_margin, y, w * 0.52, 19, "F")
+    pdf.set_fill_color(235, 200, 255)
+    pdf.rect(pdf.l_margin + w * 0.52, y, w * 0.48, 19, "F")
+    _pdf_font(pdf, use_dejavu, "B", 15)
+    pdf.set_text_color(136, 14, 79)
+    pdf.set_xy(pdf.l_margin + 5, y + 4)
+    pdf.cell(120, 7, _pdf_txt(pdf, "Garimpeiro", use_dejavu), ln=False)
     _pdf_font(pdf, use_dejavu, "", 8)
-    pdf.set_text_color(160, 110, 140)
+    pdf.set_text_color(122, 45, 95)
+    pdf.set_xy(pdf.l_margin + 5, y + 11)
+    pdf.cell(130, 5, _pdf_txt(pdf, "Dashboard do lote", use_dejavu), ln=False)
+    sub = datetime.now().strftime("%d/%m/%Y · %H:%M")
+    _pdf_font(pdf, use_dejavu, "", 7.5)
+    pdf.set_text_color(150, 80, 120)
     try:
         tw = pdf.get_string_width(_pdf_txt(pdf, sub, use_dejavu))
     except Exception:
-        tw = 42.0
-    pdf.set_xy(pdf.w - pdf.r_margin - tw - 6, y + 13)
+        tw = 40.0
+    pdf.set_xy(pdf.w - pdf.r_margin - tw - 3, y + 6)
     pdf.cell(tw + 2, 5, _pdf_txt(pdf, sub, use_dejavu), ln=False)
-    pdf.set_text_color(70, 45, 60)
-    pdf.set_y(y + 25)
+    pdf.set_text_color(60, 40, 55)
+    pdf.set_y(y + 21)
     if linha_extra:
         _pdf_font(pdf, use_dejavu, "", 8.5)
-        pdf.set_text_color(130, 90, 115)
+        pdf.set_text_color(130, 75, 110)
         pdf.set_x(pdf.l_margin)
         pdf.cell(0, 5, _pdf_txt(pdf, linha_extra, use_dejavu), ln=True)
-    pdf.ln(3)
-
-
-def _pdf_tile_app(pdf, rotulo, valor, use_dejavu, cor_barra=(255, 143, 188), altura=12):
-    """Linha tipo lista de telemóvel: barra lateral + fundo suave, sem contorno de tabela."""
-    if pdf.get_y() > 268:
-        pdf.add_page()
-    y = pdf.get_y()
-    pdf.ln(1.2)
-    y = pdf.get_y()
-    full = pdf.w - pdf.l_margin - pdf.r_margin
-    pdf.set_fill_color(*cor_barra)
-    pdf.rect(pdf.l_margin, y, 3.2, altura, "F")
-    pdf.set_fill_color(255, 253, 255)
-    pdf.rect(pdf.l_margin + 3.8, y, full - 3.8, altura, "F")
-    _pdf_font(pdf, use_dejavu, "", 7)
-    pdf.set_text_color(130, 95, 120)
-    pdf.set_xy(pdf.l_margin + 7, y + 1.8)
-    pdf.cell(full * 0.55, 4, _pdf_txt(pdf, str(rotulo), use_dejavu), ln=False)
-    _pdf_font(pdf, use_dejavu, "B", 13)
-    pdf.set_text_color(173, 31, 99)
-    vs = str(valor)
-    if len(vs) > 22:
-        vs = vs[:19] + "…"
-    try:
-        twv = pdf.get_string_width(_pdf_txt(pdf, vs, use_dejavu))
-    except Exception:
-        twv = 20.0
-    pdf.set_xy(pdf.w - pdf.r_margin - twv - 4, y + 3.5)
-    pdf.cell(twv + 2, 7, _pdf_txt(pdf, vs, use_dejavu), ln=False)
-    pdf.set_xy(pdf.l_margin, y + altura)
-
-
-def _pdf_secao_app(pdf, titulo, use_dejavu, subtitulo=None):
-    """Título de secção estilo app (rótulo discreto, subtítulo opcional)."""
     pdf.ln(2)
-    _pdf_font(pdf, use_dejavu, "B", 7.5)
-    pdf.set_text_color(160, 120, 145)
-    pdf.set_x(pdf.l_margin)
-    pdf.cell(0, 4, _pdf_txt(pdf, str(titulo), use_dejavu), ln=True)
-    if subtitulo:
-        _pdf_font(pdf, use_dejavu, "", 7)
-        pdf.set_text_color(140, 110, 130)
-        _pdf_multi_texto_largura_total(pdf, 3.4, subtitulo, use_dejavu)
-    pdf.ln(1)
 
 
 def _pdf_card_documentos_lidos_rosa(pdf, n_docs, use_dejavu):
-    """Hero card — número grande, estilo widget de app."""
-    _pdf_secao_app(pdf, "Volume do garimpo", use_dejavu)
+    """Destaque principal: documentos (XML) lidos — texto como no PDF de referência."""
     y = pdf.get_y()
     full = pdf.w - pdf.l_margin - pdf.r_margin
-    h = 28
-    pdf.set_fill_color(255, 182, 210)
-    pdf.rect(pdf.l_margin, y, 4, h, "F")
     pdf.set_fill_color(255, 248, 252)
-    pdf.rect(pdf.l_margin + 4.5, y, full - 4.5, h, "F")
-    _pdf_font(pdf, use_dejavu, "", 8)
-    pdf.set_text_color(130, 80, 110)
-    pdf.set_xy(pdf.l_margin + 9, y + 4)
-    pdf.cell(full - 14, 4, _pdf_txt(pdf, "Documentos lidos", use_dejavu), ln=False)
-    _pdf_font(pdf, use_dejavu, "B", 26)
-    pdf.set_text_color(194, 24, 91)
-    pdf.set_xy(pdf.l_margin + 9, y + 10)
-    pdf.cell(full - 14, 12, _pdf_txt(pdf, str(int(n_docs)), use_dejavu), ln=False)
-    _pdf_font(pdf, use_dejavu, "", 7)
-    pdf.set_text_color(155, 115, 135)
-    pdf.set_xy(pdf.l_margin + 9, y + 22)
-    pdf.cell(full - 14, 4, _pdf_txt(pdf, "XML / chaves neste lote", use_dejavu), ln=False)
-    pdf.set_xy(pdf.l_margin, y + h + 1)
+    pdf.set_draw_color(255, 143, 188)
+    pdf.rect(pdf.l_margin, y, full, 20, "D")
+    _pdf_font(pdf, use_dejavu, "B", 8.5)
+    pdf.set_text_color(173, 60, 110)
+    pdf.set_xy(pdf.l_margin + 4, y + 3)
+    pdf.cell(full - 8, 5, _pdf_txt(pdf, "Documentos lidos", use_dejavu), ln=False)
+    _pdf_font(pdf, use_dejavu, "B", 22)
+    pdf.set_text_color(199, 21, 133)
+    pdf.set_xy(pdf.l_margin + 4, y + 9)
+    pdf.cell(full - 8, 10, _pdf_txt(pdf, str(int(n_docs)), use_dejavu), ln=False)
+    _pdf_font(pdf, use_dejavu, "", 6.5)
+    pdf.set_text_color(160, 100, 130)
+    pdf.set_xy(pdf.l_margin + 4, y + 15)
+    pdf.cell(full - 8, 4, _pdf_txt(pdf, "ficheiros XML contados no garimpo (chaves no lote)", use_dejavu), ln=False)
+    pdf.set_xy(pdf.l_margin, y + 22)
 
 
 def _pdf_quatro_emissao_propria_rosa(pdf, sc, n_bur, use_dejavu):
-    """Quatro linhas empilhadas (feed), em vez de grelha 2×2 tipo folha de cálculo."""
+    """Emissão própria: grelha 2×2 pastel com borda (como no PDF de referência)."""
     aut = int(sc.get("AUTORIZADAS", 0) or 0)
     can = int(sc.get("CANCELADOS", 0) or 0)
     inu = int(sc.get("INUTILIZADOS", 0) or 0)
     bur = int(n_bur or 0)
-    _pdf_secao_app(
-        pdf,
-        "Emissão própria",
-        use_dejavu,
-        subtitulo="Toques na mesma lógica do ecrã: autorizadas, canceladas, inutilizadas e buracos.",
-    )
-    _pdf_tile_app(pdf, "Autorizadas", aut, use_dejavu, (255, 143, 188))
-    _pdf_tile_app(pdf, "Canceladas", can, use_dejavu, (255, 160, 176))
-    _pdf_tile_app(pdf, "Inutilizadas", inu, use_dejavu, (230, 190, 255))
-    _pdf_tile_app(pdf, "Buracos na sequência", bur, use_dejavu, (255, 210, 170))
+    pdf.ln(1)
+    _pdf_font(pdf, use_dejavu, "B", 9)
+    pdf.set_text_color(173, 20, 87)
+    pdf.set_x(pdf.l_margin)
+    pdf.cell(0, 5, _pdf_txt(pdf, "Emissão própria — totais", use_dejavu), ln=True)
+    _pdf_font(pdf, use_dejavu, "", 7)
+    pdf.set_text_color(140, 85, 115)
+    pdf.set_x(pdf.l_margin)
+    pdf.cell(0, 4, _pdf_txt(pdf, "Notas da sua empresa + buracos na sequência numérica.", use_dejavu), ln=True)
+    pdf.ln(1)
+    margin = pdf.l_margin
+    full = pdf.w - margin - pdf.r_margin
+    gap = 3
+    cw = (full - gap) / 2
+    rh = 24
+    specs = [
+        (0, 0, "Autorizadas", aut, (255, 240, 246), (233, 30, 99)),
+        (1, 0, "Canceladas", can, (255, 235, 238), (211, 47, 47)),
+        (0, 1, "Inutilizadas", inu, (243, 229, 245), (123, 31, 162)),
+        (1, 1, "Buracos", bur, (255, 249, 230), (230, 126, 34)),
+    ]
+    y0 = pdf.get_y()
+    for col, row, label, val, bg, fg in specs:
+        x = margin + col * (cw + gap)
+        y = y0 + row * (rh + gap)
+        pdf.set_fill_color(*bg)
+        pdf.set_draw_color(255, 182, 204)
+        pdf.rect(x, y, cw, rh, "D")
+        _pdf_font(pdf, use_dejavu, "", 7)
+        pdf.set_text_color(120, 70, 95)
+        pdf.set_xy(x + 3, y + 2)
+        pdf.cell(cw - 6, 4, _pdf_txt(pdf, label, use_dejavu), ln=False)
+        _pdf_font(pdf, use_dejavu, "B", 18)
+        pdf.set_text_color(*fg)
+        pdf.set_xy(x + 3, y + 9)
+        pdf.cell(cw - 6, 12, str(val), ln=False)
+    pdf.set_xy(pdf.l_margin, y0 + 2 * (rh + gap) + 1)
 
 
 def _pdf_lista_rosa(pdf, titulo, pares, use_dejavu, subtitulo=None):
-    """Lista em cartões empilhados (sem linhas de tabela)."""
+    """Lista rótulo → número com linhas em grelha suave (folha 1, como no PDF de referência)."""
     if not pares:
         return
-    _pdf_secao_app(pdf, titulo, use_dejavu, subtitulo=subtitulo)
+    pdf.ln(2)
+    _pdf_font(pdf, use_dejavu, "B", 9)
+    pdf.set_text_color(173, 20, 87)
+    pdf.set_x(pdf.l_margin)
+    pdf.cell(0, 5, _pdf_txt(pdf, titulo, use_dejavu), ln=True)
+    if subtitulo:
+        _pdf_font(pdf, use_dejavu, "", 7)
+        pdf.set_text_color(130, 85, 115)
+        _pdf_multi_texto_largura_total(pdf, 3.5, subtitulo, use_dejavu)
+    pdf.ln(1)
+    full = pdf.w - pdf.l_margin - pdf.r_margin
+    row_h = 6
     for lab, val in pares:
-        _pdf_tile_app(pdf, lab, val, use_dejavu, (244, 176, 210))
+        if pdf.get_y() > 268:
+            pdf.add_page()
+        y = pdf.get_y()
+        pdf.set_fill_color(255, 252, 254)
+        pdf.set_draw_color(255, 192, 216)
+        pdf.rect(pdf.l_margin, y, full, row_h, "D")
+        _pdf_font(pdf, use_dejavu, "", 8)
+        pdf.set_text_color(95, 55, 80)
+        pdf.set_xy(pdf.l_margin + 3, y + 1.3)
+        pdf.cell(full * 0.62, row_h - 2, _pdf_txt(pdf, str(lab), use_dejavu), ln=False)
+        _pdf_font(pdf, use_dejavu, "B", 9.5)
+        pdf.set_text_color(199, 21, 133)
+        pdf.set_xy(pdf.l_margin + full * 0.65, y + 1)
+        pdf.cell(full * 0.32, row_h - 2, _pdf_txt(pdf, str(val), use_dejavu), ln=False, align="R")
+        pdf.set_xy(pdf.l_margin, y + row_h)
     pdf.ln(0.5)
 
 
@@ -1400,8 +1426,8 @@ def _pdf_tabela_preview(pdf, preview, use_dejavu, y_max=276, estilo_moderno=Fals
 
 def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
     """
-    PDF: 1.ª folha = resumo visual (número hero + gráficos matplotlib ou barras FPdf); folhas seguintes =
-    descritivo em tabelas com bordas (como no ecrã), rosa/lúdico, sem barras de comparação de períodos.
+    PDF: folha 1 = resumo do lote (cabeçalho, documentos lidos, grelha emissão própria, listas) como no
+    dashboard de referência; folhas seguintes = indicadores detalhados em tabelas com bordas.
     """
     try:
         from fpdf import FPDF
@@ -1437,7 +1463,36 @@ def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
             pdf.add_font("DejaVu", "B", font_bold_path)
 
     linha_cnpj = f"Emitente · {cnpj_fmt}" if cnpj_fmt else None
-    _pdf_folha1_resumao_visual(pdf, kpi, use_dejavu, linha_cnpj)
+    _pdf_cabecalho_ludico_rosa(pdf, use_dejavu, linha_cnpj)
+
+    sc = kpi.get("sc") or {}
+    _pdf_card_documentos_lidos_rosa(pdf, int(kpi.get("n_docs") or 0), use_dejavu)
+    _pdf_quatro_emissao_propria_rosa(pdf, sc, int(kpi.get("n_bur") or 0), use_dejavu)
+
+    tc = kpi.get("terc_cnt") or {}
+    if tc:
+        pares_tc = sorted(tc.items(), key=lambda x: x[0])
+        _pdf_lista_rosa(
+            pdf,
+            "Terceiros · por tipo de documento",
+            [(str(m), str(int(q))) for m, q in pares_tc],
+            use_dejavu,
+            subtitulo="Contagem de XML recebidos de terceiros (NF-e, NFC-e, CT-e, MDF-e…).",
+        )
+
+    tsd = kpi.get("terc_status_dist") or {}
+    if tsd:
+        pares_st = sorted(tsd.items(), key=lambda x: -x[1])
+        _pdf_lista_rosa(
+            pdf,
+            "Terceiros · por status (como na emissão própria)",
+            [(str(k), str(int(v))) for k, v in pares_st],
+            use_dejavu,
+            subtitulo="Situação das linhas de terceiros no relatório geral: normal, cancelada, inutilizada, etc.",
+        )
+
+    _pdf_extras_lote_lista_rosa(pdf, kpi, use_dejavu)
+    _pdf_contexto_lista_rosa(pdf, kpi.get("pares", []), use_dejavu)
 
     pv = kpi.get("pdf_previews") or {}
 
