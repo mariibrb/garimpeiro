@@ -50,32 +50,46 @@ def aplicar_estilo_premium():
             background-color: #FFFFFF !important;
             border-right: 1px solid #FFDEEF !important;
             min-width: min(312px, 100vw) !important;
-            max-width: min(400px, 100vw) !important;
+            max-width: min(460px, 100vw) !important;
+        }
+        /* Colunas na lateral: sem min-width por defeito do flex = conteúdo cortado */
+        [data-testid="stSidebar"] [data-testid="column"] {
+            min-width: 0 !important;
+        }
+        [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div {
+            min-width: 0 !important;
         }
         /* Tabela do editor na lateral: evita cortar conteúdo */
         [data-testid="stSidebar"] [data-testid="stDataFrame"],
         [data-testid="stSidebar"] [data-testid="stDataEditor"] {
             overflow-x: auto !important;
         }
-        /* Último nº por série: cartões em vez de “planilha” */
+        /* Último nº por série: cartões; scroll horizontal se ainda faltar espaço */
         [data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"] {
             background: linear-gradient(160deg, #fffafd 0%, #ffffff 50%, #fff8fc 100%) !important;
             border: 1px solid rgba(255, 105, 180, 0.35) !important;
             border-radius: 14px !important;
-            padding: 0.4rem 0.55rem 0.55rem !important;
+            padding: 0.5rem 0.65rem 0.6rem !important;
             margin-bottom: 0.5rem !important;
             box-shadow: 0 2px 12px rgba(255, 105, 180, 0.07) !important;
+            overflow-x: auto !important;
+            overflow-y: visible !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
         }
         [data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="select"] > div {
             border-radius: 10px !important;
             border-color: #f8bbd0 !important;
             min-height: 2.15rem !important;
+            max-width: 100% !important;
         }
         [data-testid="stSidebar"] div[data-testid="stVerticalBlockBorderWrapper"] input {
             border-radius: 10px !important;
             border-color: #f5c6d8 !important;
             min-height: 2.15rem !important;
             font-family: 'Plus Jakarta Sans', sans-serif !important;
+            max-width: 100% !important;
+            box-sizing: border-box !important;
         }
         p.garim-seq-head {
             font-family: 'Plus Jakarta Sans', sans-serif !important;
@@ -720,50 +734,125 @@ def _inutil_sem_xml_manual(res):
     ).startswith("MANUAL_INUT_")
 
 
-def parse_linhas_inutil_manual(text):
-    """Linhas: MODELO|SÉRIE|NÚMERO (pipes opcionais com espaços)."""
-    triplas = []
+def parse_numeros_um_por_linha(text):
+    """Um inteiro por linha (só dígitos na linha são usados)."""
+    out = []
     for raw in (text or "").splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        parts = [p.strip() for p in line.split("|")]
-        if len(parts) < 3:
-            continue
-        mod, ser, num = parts[0], parts[1], parts[2]
-        d = "".join(filter(str.isdigit, num))
+        d = "".join(filter(str.isdigit, line))
         if not d:
             continue
         try:
-            n = int(d)
+            out.append(int(d))
         except ValueError:
             continue
-        if n <= 0 or not mod or not ser:
+    return out
+
+
+def _item_inutil_manual_sem_xml(res):
+    """Inutilização «sem XML» inserida pelo utilizador (não vem de ficheiro)."""
+    return (
+        res.get("Status") == "INUTILIZADOS"
+        and _inutil_sem_xml_manual(res)
+        and "EMITIDOS_CLIENTE" in res.get("Pasta", "")
+    )
+
+
+def _lote_recalc_de_relatorio(relatorio_list):
+    """Mesma deduplicação por Chave que reconstruir_dataframes_relatorio_simples."""
+    lote = {}
+    for item in relatorio_list:
+        key = item["Chave"]
+        is_p = "EMITIDOS_CLIENTE" in item["Pasta"]
+        if key in lote:
+            if item["Status"] in ["CANCELADOS", "INUTILIZADOS"]:
+                lote[key] = (item, is_p)
+        else:
+            lote[key] = (item, is_p)
+    return lote
+
+
+def _conjunto_buracos_sem_inutil_manual(lote_recalc, ref_ar, ref_mr, ref_map):
+    """
+    Buracos atuais ignorando inutilizações manuais «sem XML».
+    Tuplas (Tipo, série_str, número) para cruzar com o que o utilizador declara.
+    """
+    audit_map = {}
+    for k, (res, is_p) in lote_recalc.items():
+        if not is_p:
             continue
-        triplas.append((mod, ser, n))
-    return triplas
+        if _item_inutil_manual_sem_xml(res):
+            continue
+        sk = (res["Tipo"], res["Série"])
+        if sk not in audit_map:
+            audit_map[sk] = {"nums": set(), "nums_buraco": set(), "valor": 0.0}
+        ult_u = ultimo_ref_lookup(ref_map, res["Tipo"], res["Série"])
+        if res["Status"] == "INUTILIZADOS":
+            r = res.get("Range", (res["Número"], res["Número"]))
+            for n in range(r[0], r[1] + 1):
+                audit_map[sk]["nums"].add(n)
+                if incluir_numero_no_conjunto_buraco(
+                    res["Ano"], res["Mes"], n, ref_ar, ref_mr, ult_u
+                ):
+                    audit_map[sk]["nums_buraco"].add(n)
+        else:
+            if res["Número"] > 0:
+                audit_map[sk]["nums"].add(res["Número"])
+                if incluir_numero_no_conjunto_buraco(
+                    res["Ano"],
+                    res["Mes"],
+                    res["Número"],
+                    ref_ar,
+                    ref_mr,
+                    ult_u,
+                ):
+                    audit_map[sk]["nums_buraco"].add(res["Número"])
+                audit_map[sk]["valor"] += res["Valor"]
+
+    H = set()
+    for (t, s), dados in audit_map.items():
+        ult_lookup = ultimo_ref_lookup(ref_map, t, s) if ref_ar is not None else None
+        for row in falhas_buraco_por_serie(dados["nums_buraco"], t, s, ult_lookup):
+            H.add((row["Tipo"], str(row["Série"]).strip(), int(row["Num_Faltante"])))
+    return H
 
 
 def reconstruir_dataframes_relatorio_simples():
     """Recalcula tabelas a partir de st.session_state['relatorio'] (status no próprio item)."""
-    lote_recalc = {}
-    for item in st.session_state["relatorio"]:
-        key = item["Chave"]
-        is_p = "EMITIDOS_CLIENTE" in item["Pasta"]
-        if key in lote_recalc:
-            if item["Status"] in ["CANCELADOS", "INUTILIZADOS"]:
-                lote_recalc[key] = (item, is_p)
-        else:
-            lote_recalc[key] = (item, is_p)
-
+    rel_list = list(st.session_state["relatorio"])
     ref_ar, ref_mr, ref_map = buraco_ctx_sessao()
+
+    lote_full = _lote_recalc_de_relatorio(rel_list)
+    lote_sem_manual = {
+        k: v
+        for k, v in lote_full.items()
+        if not _item_inutil_manual_sem_xml(v[0])
+    }
+    H = _conjunto_buracos_sem_inutil_manual(lote_sem_manual, ref_ar, ref_mr, ref_map)
+
+    drop_ch = set()
+    for k, (res, is_p) in lote_full.items():
+        if not _item_inutil_manual_sem_xml(res):
+            continue
+        r = res.get("Range", (res["Número"], res["Número"]))
+        ra, rb = int(r[0]), int(r[1])
+        ser_s = str(res["Série"]).strip()
+        if not any((res["Tipo"], ser_s, n) in H for n in range(ra, rb + 1)):
+            drop_ch.add(k)
+    if drop_ch:
+        st.session_state["relatorio"] = [x for x in rel_list if x["Chave"] not in drop_ch]
+        rel_list = list(st.session_state["relatorio"])
+        lote_full = _lote_recalc_de_relatorio(rel_list)
+
     audit_map = {}
     canc_list = []
     inut_list = []
     aut_list = []
     geral_list = []
 
-    for k, (res, is_p) in lote_recalc.items():
+    for k, (res, is_p) in lote_full.items():
         if is_p:
             origem_label = f"EMISSÃO PRÓPRIA ({res['Operacao']})"
         else:
@@ -789,30 +878,36 @@ def reconstruir_dataframes_relatorio_simples():
 
         if res["Status"] == "INUTILIZADOS":
             r = res.get("Range", (res["Número"], res["Número"]))
-            for n in range(r[0], r[1] + 1):
+            ra, rb = int(r[0]), int(r[1])
+            _man_inut = _inutil_sem_xml_manual(res)
+            for n in range(ra, rb + 1):
+                if _man_inut:
+                    if (res["Tipo"], str(res["Série"]).strip(), n) not in H:
+                        continue
                 item_inut = registro_detalhado.copy()
                 item_inut.update({"Nota": n, "Status Final": "INUTILIZADA", "Valor": 0.0})
                 geral_list.append(item_inut)
+                if is_p:
+                    sk = (res["Tipo"], res["Série"])
+                    if sk not in audit_map:
+                        audit_map[sk] = {"nums": set(), "nums_buraco": set(), "valor": 0.0}
+                    ult_u = ultimo_ref_lookup(ref_map, res["Tipo"], res["Série"])
+                    audit_map[sk]["nums"].add(n)
+                    if _man_inut:
+                        audit_map[sk]["nums_buraco"].add(n)
+                    else:
+                        if incluir_numero_no_conjunto_buraco(
+                            res["Ano"], res["Mes"], n, ref_ar, ref_mr, ult_u
+                        ):
+                            audit_map[sk]["nums_buraco"].add(n)
+                    inut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": n})
         else:
             geral_list.append(registro_detalhado)
-
-        if is_p:
-            sk = (res["Tipo"], res["Série"])
-            if sk not in audit_map:
-                audit_map[sk] = {"nums": set(), "nums_buraco": set(), "valor": 0.0}
-            ult_u = ultimo_ref_lookup(ref_map, res["Tipo"], res["Série"])
-
-            if res["Status"] == "INUTILIZADOS":
-                r = res.get("Range", (res["Número"], res["Número"]))
-                _man_inut = _inutil_sem_xml_manual(res)
-                for n in range(r[0], r[1] + 1):
-                    audit_map[sk]["nums"].add(n)
-                    if _man_inut or incluir_numero_no_conjunto_buraco(
-                        res["Ano"], res["Mes"], n, ref_ar, ref_mr, ult_u
-                    ):
-                        audit_map[sk]["nums_buraco"].add(n)
-                    inut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": n})
-            else:
+            if is_p:
+                sk = (res["Tipo"], res["Série"])
+                if sk not in audit_map:
+                    audit_map[sk] = {"nums": set(), "nums_buraco": set(), "valor": 0.0}
+                ult_u = ultimo_ref_lookup(ref_map, res["Tipo"], res["Série"])
                 if res["Número"] > 0:
                     audit_map[sk]["nums"].add(res["Número"])
                     if incluir_numero_no_conjunto_buraco(
@@ -1636,7 +1731,7 @@ PASSO A PASSO
 3. Clique em Iniciar grande garimpo e aguarde a leitura.
 4. (Opcional) Lateral “Último nº por série”: **só muda os buracos** (âncora a partir do último nº + mês; evita buraco gigante se vier nota velha no meio). O **garimpo e o resumo** continuam **totais**. Sem **Guardar referência** com linhas válidas, buracos usam toda a numeração lida.
 5. (Opcional) Etapa 2: suba o Excel de autenticidade (coluna A = chave 44 dígitos; coluna F = status) para alinhar cancelamentos com a Sefaz.
-6. Inutilizadas sem XML: use as abas Dos buracos (filtro por modelo/série), Faixa de números ou Colar lista.
+6. Inutilizadas sem XML: **Dos buracos** (marcação ou colar números) ou **Faixa** — só vale para números que o garimpeiro já listou como buraco (não alarga intervalos).
 7. Etapa 3: filtros em cascata; ZIPs em partes de até 10 mil XML, cada ZIP já traz Excel do bloco em RELATORIO_GARIMPEI/; Excel com o filtro completo é opcional à parte.
 8. Exportar lista específica: Excel com **chaves**, Excel com **inicial/final/série**, **período**, **faixa** ou **uma nota**.
 
@@ -1669,7 +1764,7 @@ with st.container():
                 <li><b>Mais ficheiros:</b> No <b>topo dos resultados</b>, inclua XML/ZIP extra <b>sem reiniciar</b>.</li>
                 <li><b>(Opcional)</b> Último nº + mês (lateral) → só **buracos** ancorados; leitura/resumo **sempre totais**.</li>
                 <li><b>(Opcional)</b> Etapa 2 — Excel de autenticidade (chave na col. A, status na col. F).</li>
-                <li><b>Inutilizadas sem XML:</b> Abas Dos buracos, Faixa ou Colar lista.</li>
+                <li><b>Inutilizadas sem XML:</b> Dos buracos (ou colar lista no mesmo sítio) ou Faixa — só buracos já detectados.</li>
                 <li><b>Exportar:</b> Etapa 3 — ZIP em blocos de 10 000 XML (com Excel do bloco dentro); Excel do filtro completo opcional à parte; ou lista por chaves (col. A).</li>
             </ol>
         </div>
@@ -1839,15 +1934,6 @@ with st.sidebar:
                 )
 
             st.markdown('<p class="garim-seq-head">Séries do cliente</p>', unsafe_allow_html=True)
-            st.markdown(
-                '<div style="display:flex;gap:6px;font-size:0.65rem;font-weight:700;color:#ad1457;'
-                'text-transform:uppercase;letter-spacing:0.07em;margin:0 0 6px 0;opacity:0.92;'
-                'font-family:Plus Jakarta Sans,sans-serif;">'
-                '<span style="flex:0.95;min-width:0;">Documento</span>'
-                '<span style="flex:0.5;min-width:0;">Sér.</span>'
-                '<span style="flex:1.2;min-width:0;">Últ.</span></div>',
-                unsafe_allow_html=True,
-            )
 
             for i, row in enumerate(_recs):
                 modelo_raw = row.get("Modelo")
@@ -1875,30 +1961,29 @@ with st.sidebar:
                     ult_cur = str(ult_raw).strip()
 
                 with st.container(border=True):
-                    c1, c2, c3 = st.columns([0.95, 0.5, 1.3], gap="small")
-                    with c1:
-                        st.selectbox(
-                            "Documento",
-                            opts_row,
-                            index=idx,
-                            key=f"sr_{v}_{i}_m",
-                            label_visibility="collapsed",
-                        )
-                    with c2:
+                    st.selectbox(
+                        "Tipo de documento",
+                        opts_row,
+                        index=idx,
+                        key=f"sr_{v}_{i}_m",
+                        label_visibility="visible",
+                    )
+                    c_ser, c_ult = st.columns(2, gap="small")
+                    with c_ser:
                         st.text_input(
                             "Série",
                             value=ser_cur,
                             key=f"sr_{v}_{i}_s",
-                            label_visibility="collapsed",
+                            label_visibility="visible",
                             max_chars=10,
-                            placeholder="1",
+                            placeholder="ex. 1",
                         )
-                    with c3:
+                    with c_ult:
                         st.text_input(
-                            "Últ. nº",
+                            "Último nº",
                             value=ult_cur,
                             key=f"sr_{v}_{i}_u",
-                            label_visibility="collapsed",
+                            label_visibility="visible",
                             max_chars=18,
                             placeholder="nº",
                         )
@@ -1941,26 +2026,6 @@ with st.sidebar:
                     )
                 if st.session_state.get("garimpo_ok") and st.session_state.get("relatorio"):
                     reconstruir_dataframes_relatorio_simples()
-
-            with st.expander("Colar lista (várias séries de uma vez)", expanded=False):
-                st.caption("Uma linha por série: `NF-e|1|1520` (modelo | série | último nº).")
-                seq_paste = st.text_area(
-                    "Linhas",
-                    height=100,
-                    key="seq_paste_txt",
-                    placeholder="NF-e|1|1520\nNFC-e|2|890",
-                    label_visibility="collapsed",
-                )
-                if st.button("Aplicar à lista", key="seq_paste_btn", use_container_width=True):
-                    triplas = parse_linhas_inutil_manual(seq_paste)
-                    if not triplas:
-                        st.warning("Nenhuma linha válida.")
-                    else:
-                        rows = [{"Modelo": m, "Série": str(s), "Último número": str(n)} for m, s, n in triplas]
-                        st.session_state["seq_ref_rows"] = normalize_seq_ref_editor_df(pd.DataFrame(rows))
-                        st.session_state["seq_struct_v"] = int(st.session_state.get("seq_struct_v", 0)) + 1
-                        st.success(f"{len(rows)} série(s) importadas — confira os cartões e **Guardar referência**.")
-                        st.rerun()
 
             if st.session_state.get("seq_ref_ultimos"):
                 st.info(
@@ -2407,16 +2472,17 @@ if st.session_state['confirmado']:
             expanded=False,
         ):
             st.caption(
-                "Três formas: escolher entre os **buracos** (com filtro), marcar uma **faixa** de números ou **colar** várias linhas."
+                "Só vale para **buracos** que o garimpeiro já listou: não cria novos buracos nem alarga intervalos. "
+                "**Dos buracos:** multiselect ou colar números (mesmo modelo/série). **Faixa:** só aplica notas que forem buraco nesse intervalo."
             )
-            tab_b, tab_f, tab_c = st.tabs(["Dos buracos", "Faixa de números", "Colar lista"])
+            tab_b, tab_f = st.tabs(["Dos buracos", "Faixa de números"])
 
             with tab_b:
                 df_b = st.session_state["df_faltantes"].copy()
                 if not df_b.empty and "Serie" in df_b.columns and "Série" not in df_b.columns:
                     df_b = df_b.rename(columns={"Serie": "Série"})
                 if df_b.empty:
-                    st.info("Sem buracos na auditoria — use **Faixa** ou **Colar**, ou faça o garimpo primeiro.")
+                    st.info("Sem buracos na auditoria — faça o garimpo primeiro ou verifique a referência de último nº.")
                 elif not {"Tipo", "Série", "Num_Faltante"}.issubset(df_b.columns):
                     st.warning(
                         "A tabela de buracos não tem o formato esperado (Tipo, Série, Num_Faltante). "
@@ -2430,7 +2496,8 @@ if st.session_state['confirmado']:
                     _sb = st.selectbox("Série", _sers_b, key="inut_b_ser")
                     _sub2_b = _sub_b[_sub_b["Série"].astype(str) == _sb]
                     _nums_b = sorted(_sub2_b["Num_Faltante"].astype(int).unique())
-                    st.caption(f"{len(_nums_b)} número(s) em falta neste modelo/série.")
+                    _set_buracos = set(_nums_b)
+                    st.caption(f"{len(_nums_b)} buraco(s) neste modelo/série — só estes podem ser declarados aqui.")
                     _pick_b = st.multiselect(
                         "Marque os que quer tratar como inutilizados:",
                         options=_nums_b,
@@ -2449,6 +2516,48 @@ if st.session_state['confirmado']:
                                 reconstruir_dataframes_relatorio_simples()
                             st.rerun()
 
+                    st.divider()
+                    st.markdown("**Colar lista de números** (mesmo modelo e série acima)")
+                    st.caption(
+                        "Um número por linha (só dígitos). Notas que **não** forem buraco aqui são **ignoradas**."
+                    )
+                    _lista_txt = st.text_area(
+                        "Números",
+                        height=110,
+                        key="inut_b_lista_txt",
+                        placeholder="1520\n1521\n1525",
+                        label_visibility="collapsed",
+                    )
+                    if st.button("Aplicar lista (só buracos)", type="secondary", key="inut_b_lista_go"):
+                        _parsed = parse_numeros_um_por_linha(_lista_txt)
+                        if not _parsed:
+                            st.warning("Cole pelo menos um número válido.")
+                        else:
+                            _ok = []
+                            for _pn in _parsed:
+                                if _pn in _set_buracos and _pn not in _ok:
+                                    _ok.append(_pn)
+                            _ign = sum(1 for _pn in _parsed if _pn not in _set_buracos)
+                            if not _ok:
+                                st.warning(
+                                    "Nenhum número da lista coincide com buraco neste modelo/série — nada foi aplicado."
+                                )
+                            else:
+                                with st.spinner("A atualizar…"):
+                                    for _nb in sorted(_ok):
+                                        st.session_state["relatorio"].append(
+                                            item_registro_manual_inutilizado(cnpj_limpo, _mb, _sb, _nb)
+                                        )
+                                    reconstruir_dataframes_relatorio_simples()
+                                if _ign > 0:
+                                    st.info(
+                                        f"Aplicados **{len(_ok)}** número(s) que eram buraco. "
+                                        f"**{_ign}** linha(s) ignoradas (não eram buraco neste modelo/série)."
+                                    )
+                                else:
+                                    st.success(f"Incluídos **{len(_ok)}** registo(s).")
+                                st.rerun()
+
             with tab_f:
                 _mf = st.selectbox("Modelo", ["NF-e", "NFC-e", "CT-e", "MDF-e"], key="inut_f_mod")
                 _sf = st.text_input("Série", value="1", key="inut_f_ser").strip()
@@ -2456,43 +2565,55 @@ if st.session_state['confirmado']:
                 _n0 = _c1f.number_input("Nota inicial", min_value=1, value=1, step=1, key="inut_f_i")
                 _n1 = _c2f.number_input("Nota final", min_value=1, value=1, step=1, key="inut_f_f")
                 _MAX_FAIXA_INUT = 5000
-                st.caption(f"No máximo {_MAX_FAIXA_INUT} notas por vez (proteção do sistema).")
-                if st.button("Marcar faixa inteira", type="primary", key="inut_f_go"):
+                df_fb = st.session_state["df_faltantes"].copy()
+                if not df_fb.empty and "Serie" in df_fb.columns and "Série" not in df_fb.columns:
+                    df_fb = df_fb.rename(columns={"Serie": "Série"})
+                _bur_f = set()
+                if (
+                    not df_fb.empty
+                    and {"Tipo", "Série", "Num_Faltante"}.issubset(df_fb.columns)
+                ):
+                    _subf = df_fb[
+                        (df_fb["Tipo"].astype(str) == _mf)
+                        & (df_fb["Série"].astype(str) == str(_sf).strip())
+                    ]
+                    _bur_f = set(_subf["Num_Faltante"].astype(int).unique())
+                st.caption(
+                    f"No máximo {_MAX_FAIXA_INUT} notas analisadas por vez. "
+                    f"Só entram na inutilização manual as que forem **buraco** neste modelo/série "
+                    f"({len(_bur_f)} buraco(s) conhecidos)."
+                )
+                if st.button("Marcar buracos na faixa", type="primary", key="inut_f_go"):
                     if not _sf:
                         st.warning("Indique a série.")
                     elif _n0 > _n1:
                         st.warning("A nota inicial não pode ser maior que a final.")
                     elif (_n1 - _n0 + 1) > _MAX_FAIXA_INUT:
                         st.warning(f"Reduza a faixa (máximo {_MAX_FAIXA_INUT} notas).")
+                    elif not _bur_f:
+                        st.warning(
+                            "Não há buracos listados para este modelo/série — verifique o garimpeiro ou a referência."
+                        )
                     else:
-                        with st.spinner("A atualizar…"):
-                            for _nn in range(int(_n0), int(_n1) + 1):
-                                st.session_state["relatorio"].append(
-                                    item_registro_manual_inutilizado(cnpj_limpo, _mf, _sf, _nn)
+                        _aplic = [n for n in range(int(_n0), int(_n1) + 1) if n in _bur_f]
+                        _pul = (int(_n1) - int(_n0) + 1) - len(_aplic)
+                        if not _aplic:
+                            st.warning("Nenhum número desta faixa é buraco — nada foi aplicado.")
+                        else:
+                            with st.spinner("A atualizar…"):
+                                for _nn in _aplic:
+                                    st.session_state["relatorio"].append(
+                                        item_registro_manual_inutilizado(cnpj_limpo, _mf, _sf, _nn)
+                                    )
+                                reconstruir_dataframes_relatorio_simples()
+                            if _pul > 0:
+                                st.info(
+                                    f"Aplicados **{len(_aplic)}** número(s) que eram buraco na faixa. "
+                                    f"**{_pul}** número(s) ignorados (não eram buraco)."
                                 )
-                            reconstruir_dataframes_relatorio_simples()
-                        st.rerun()
-
-            with tab_c:
-                st.caption("Uma nota por linha: `NF-e|1|100` (modelo | série | número).")
-                _txt_c = st.text_area(
-                    "Linhas",
-                    height=120,
-                    key="inut_c_txt",
-                    placeholder="NF-e|1|100\nNF-e|1|101",
-                )
-                if st.button("Importar e aplicar", type="primary", key="inut_c_go"):
-                    _tri = parse_linhas_inutil_manual(_txt_c)
-                    if not _tri:
-                        st.warning("Nenhuma linha válida.")
-                    else:
-                        with st.spinner("A atualizar…"):
-                            for _mod, _ser, _nota in _tri:
-                                st.session_state["relatorio"].append(
-                                    item_registro_manual_inutilizado(cnpj_limpo, _mod, _ser, _nota)
-                                )
-                            reconstruir_dataframes_relatorio_simples()
-                        st.rerun()
+                            else:
+                                st.success(f"Incluídos **{len(_aplic)}** registo(s).")
+                            st.rerun()
 
         # =====================================================================
         # MÓDULO: DESFAZER INUTILIZAÇÃO MANUAL
@@ -2559,17 +2680,30 @@ if st.session_state['confirmado']:
                     if len(chave_lida) == 44:
                         auth_dict[chave_lida] = status_lido
                         
-                lote_recalc = {}
-                for item in st.session_state['relatorio']:
-                    key = item["Chave"]
-                    is_p = "EMITIDOS_CLIENTE" in item["Pasta"]
-                    if key in lote_recalc:
-                        if item["Status"] in ["CANCELADOS", "INUTILIZADOS"]: 
-                            lote_recalc[key] = (item, is_p)
-                    else: 
-                        lote_recalc[key] = (item, is_p)
-
+                lote_full = _lote_recalc_de_relatorio(st.session_state["relatorio"])
                 ref_ar, ref_mr, ref_map = buraco_ctx_sessao()
+                lote_sem_manual = {
+                    k: v
+                    for k, v in lote_full.items()
+                    if not _item_inutil_manual_sem_xml(v[0])
+                }
+                H_val = _conjunto_buracos_sem_inutil_manual(lote_sem_manual, ref_ar, ref_mr, ref_map)
+                drop_ch_v = set()
+                for k, (res, is_p) in lote_full.items():
+                    if not _item_inutil_manual_sem_xml(res):
+                        continue
+                    r0 = res.get("Range", (res["Número"], res["Número"]))
+                    ra, rb = int(r0[0]), int(r0[1])
+                    ser_s = str(res["Série"]).strip()
+                    if not any((res["Tipo"], ser_s, n) in H_val for n in range(ra, rb + 1)):
+                        drop_ch_v.add(k)
+                if drop_ch_v:
+                    st.session_state["relatorio"] = [
+                        x for x in st.session_state["relatorio"] if x["Chave"] not in drop_ch_v
+                    ]
+                    lote_full = _lote_recalc_de_relatorio(st.session_state["relatorio"])
+
+                lote_recalc = lote_full
                 audit_map = {}
                 canc_list = []
                 inut_list = []
@@ -2615,30 +2749,36 @@ if st.session_state['confirmado']:
                     
                     if status_final == "INUTILIZADOS":
                         r = res.get("Range", (res["Número"], res["Número"]))
-                        for n in range(r[0], r[1] + 1):
+                        ra, rb = int(r[0]), int(r[1])
+                        _man_inut = _inutil_sem_xml_manual(res)
+                        for n in range(ra, rb + 1):
+                            if _man_inut:
+                                if (res["Tipo"], str(res["Série"]).strip(), n) not in H_val:
+                                    continue
                             item_inut = registro_detalhado.copy()
                             item_inut.update({"Nota": n, "Status Final": "INUTILIZADA", "Valor": 0.0})
                             geral_list.append(item_inut)
-                    else: 
-                        geral_list.append(registro_detalhado)
-
-                    if is_p:
-                        sk = (res["Tipo"], res["Série"])
-                        if sk not in audit_map: 
-                            audit_map[sk] = {"nums": set(), "nums_buraco": set(), "valor": 0.0}
-                        ult_u = ultimo_ref_lookup(ref_map, res["Tipo"], res["Série"])
-                            
-                        if status_final == "INUTILIZADOS":
-                            r = res.get("Range", (res["Número"], res["Número"]))
-                            _man_inut = _inutil_sem_xml_manual(res)
-                            for n in range(r[0], r[1] + 1): 
+                            if is_p:
+                                sk = (res["Tipo"], res["Série"])
+                                if sk not in audit_map:
+                                    audit_map[sk] = {"nums": set(), "nums_buraco": set(), "valor": 0.0}
+                                ult_u = ultimo_ref_lookup(ref_map, res["Tipo"], res["Série"])
                                 audit_map[sk]["nums"].add(n)
-                                if _man_inut or incluir_numero_no_conjunto_buraco(
-                                    res["Ano"], res["Mes"], n, ref_ar, ref_mr, ult_u
-                                ):
+                                if _man_inut:
                                     audit_map[sk]["nums_buraco"].add(n)
+                                else:
+                                    if incluir_numero_no_conjunto_buraco(
+                                        res["Ano"], res["Mes"], n, ref_ar, ref_mr, ult_u
+                                    ):
+                                        audit_map[sk]["nums_buraco"].add(n)
                                 inut_list.append({"Modelo": res["Tipo"], "Série": res["Série"], "Nota": n})
-                        else:
+                    else:
+                        geral_list.append(registro_detalhado)
+                        if is_p:
+                            sk = (res["Tipo"], res["Série"])
+                            if sk not in audit_map:
+                                audit_map[sk] = {"nums": set(), "nums_buraco": set(), "valor": 0.0}
+                            ult_u = ultimo_ref_lookup(ref_map, res["Tipo"], res["Série"])
                             if res["Número"] > 0:
                                 audit_map[sk]["nums"].add(res["Número"])
                                 if incluir_numero_no_conjunto_buraco(
@@ -2650,9 +2790,9 @@ if st.session_state['confirmado']:
                                     ult_u,
                                 ):
                                     audit_map[sk]["nums_buraco"].add(res["Número"])
-                                if status_final == "CANCELADOS": 
+                                if status_final == "CANCELADOS":
                                     canc_list.append(registro_detalhado)
-                                elif status_final == "NORMAIS": 
+                                elif status_final == "NORMAIS":
                                     aut_list.append(registro_detalhado)
                                 audit_map[sk]["valor"] += res["Valor"]
                                 
