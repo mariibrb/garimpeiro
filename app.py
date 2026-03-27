@@ -1459,106 +1459,161 @@ def _pdf_multi_texto_largura_total(pdf, altura_linha, texto, use_dejavu):
     pdf.multi_cell(w, altura_linha, _pdf_txt(pdf, texto, use_dejavu))
 
 
-def _pdf_cabecalho_ludico_rosa(pdf, use_dejavu, linha_extra=None):
-    """Cabeçalho rosa/lilás — igual ao PDF «dashboard» de referência (folha 1)."""
+def _pdf_cabecalho_executivo_painel(pdf, use_dejavu, linha_extra=None):
+    """Cabeçalho alinhado ao painel da app: off-white, texto vinho."""
     y = pdf.get_y()
     w = pdf.w - pdf.l_margin - pdf.r_margin
-    pdf.set_fill_color(255, 192, 220)
-    pdf.rect(pdf.l_margin, y, w * 0.52, 19, "F")
-    pdf.set_fill_color(235, 200, 255)
-    pdf.rect(pdf.l_margin + w * 0.52, y, w * 0.48, 19, "F")
-    _pdf_font(pdf, use_dejavu, "B", 15)
-    pdf.set_text_color(136, 14, 79)
-    pdf.set_xy(pdf.l_margin + 5, y + 4)
-    pdf.cell(120, 7, _pdf_txt(pdf, "Garimpeiro", use_dejavu), ln=False)
-    _pdf_font(pdf, use_dejavu, "", 8)
-    pdf.set_text_color(122, 45, 95)
-    pdf.set_xy(pdf.l_margin + 5, y + 11)
-    pdf.cell(130, 5, _pdf_txt(pdf, "Dashboard do lote", use_dejavu), ln=False)
-    sub = datetime.now().strftime("%d/%m/%Y · %H:%M")
+    h = 20.0
+    pdf.set_fill_color(253, 251, 247)
+    pdf.set_draw_color(220, 210, 200)
+    pdf.set_line_width(0.25)
+    pdf.rect(pdf.l_margin, y, w, h, "DF")
+    _pdf_font(pdf, use_dejavu, "B", 12)
+    pdf.set_text_color(93, 27, 54)
+    pdf.set_xy(pdf.l_margin + 4, y + 3.5)
+    pdf.cell(w - 8, 6, _pdf_txt(pdf, "GARIMPEIRO · PAINEL DO LOTE", use_dejavu), ln=False)
     _pdf_font(pdf, use_dejavu, "", 7.5)
-    pdf.set_text_color(150, 80, 120)
-    try:
-        tw = pdf.get_string_width(_pdf_txt(pdf, sub, use_dejavu))
-    except Exception:
-        tw = 40.0
-    pdf.set_xy(pdf.w - pdf.r_margin - tw - 3, y + 6)
-    pdf.cell(tw + 2, 5, _pdf_txt(pdf, sub, use_dejavu), ln=False)
-    pdf.set_text_color(60, 40, 55)
-    pdf.set_y(y + 21)
+    pdf.set_text_color(90, 75, 85)
+    sub = "Boutique de dados · mesmo desenho que no ecrã principal."
     if linha_extra:
-        _pdf_font(pdf, use_dejavu, "", 8.5)
-        pdf.set_text_color(130, 75, 110)
-        pdf.set_x(pdf.l_margin)
-        pdf.cell(0, 5, _pdf_txt(pdf, linha_extra, use_dejavu), ln=True)
-    pdf.ln(2)
-
-
-def _pdf_card_documentos_lidos_rosa(pdf, n_docs, use_dejavu):
-    """Destaque principal: documentos (XML) lidos — texto como no PDF de referência."""
-    y = pdf.get_y()
-    full = pdf.w - pdf.l_margin - pdf.r_margin
-    pdf.set_fill_color(255, 248, 252)
-    pdf.set_draw_color(255, 143, 188)
-    pdf.rect(pdf.l_margin, y, full, 20, "D")
-    _pdf_font(pdf, use_dejavu, "B", 8.5)
-    pdf.set_text_color(173, 60, 110)
-    pdf.set_xy(pdf.l_margin + 4, y + 3)
-    pdf.cell(full - 8, 5, _pdf_txt(pdf, "Documentos lidos", use_dejavu), ln=False)
-    _pdf_font(pdf, use_dejavu, "B", 22)
-    pdf.set_text_color(199, 21, 133)
-    pdf.set_xy(pdf.l_margin + 4, y + 9)
-    pdf.cell(full - 8, 10, _pdf_txt(pdf, str(int(n_docs)), use_dejavu), ln=False)
+        sub = f"{linha_extra} · {sub}"
+    pdf.set_xy(pdf.l_margin + 4, y + 10)
+    pdf.cell(w - 8, 4.5, _pdf_txt(pdf, sub, use_dejavu), ln=False)
+    dt = datetime.now().strftime("%d/%m/%Y · %H:%M")
     _pdf_font(pdf, use_dejavu, "", 6.5)
-    pdf.set_text_color(160, 100, 130)
+    pdf.set_text_color(130, 115, 125)
     pdf.set_xy(pdf.l_margin + 4, y + 15)
-    pdf.cell(full - 8, 4, _pdf_txt(pdf, "ficheiros XML contados no garimpo (chaves no lote)", use_dejavu), ln=False)
-    pdf.set_xy(pdf.l_margin, y + 22)
+    pdf.cell(w - 8, 4, _pdf_txt(pdf, dt, use_dejavu), ln=False)
+    pdf.set_text_color(32, 35, 42)
+    pdf.set_xy(pdf.l_margin, y + h + 3)
 
 
-def _pdf_quatro_emissao_propria_rosa(pdf, sc, n_bur, use_dejavu):
-    """Emissão própria: grelha 2×2 pastel com borda (como no PDF de referência)."""
+def _pdf_quatro_kpi_cards_executivo(pdf, kpi, use_dejavu):
+    """Quatro cartões KPI como no Streamlit / Excel (borda #A1869E, fundo branco)."""
+    pm = dict(kpi.get("pares") or [])
+    try:
+        n_prop = int(pm.get("XML emissão própria (itens)", 0) or 0)
+    except (TypeError, ValueError):
+        n_prop = 0
+    try:
+        n_terc_xml = int(pm.get("XML terceiros (itens)", 0) or 0)
+    except (TypeError, ValueError):
+        n_terc_xml = 0
+    n_docs = int(kpi.get("n_docs") or 0)
+    sc = kpi.get("sc") or {}
     aut = int(sc.get("AUTORIZADAS", 0) or 0)
     can = int(sc.get("CANCELADOS", 0) or 0)
     inu = int(sc.get("INUTILIZADOS", 0) or 0)
-    bur = int(n_bur or 0)
-    pdf.ln(1)
-    _pdf_font(pdf, use_dejavu, "B", 9)
-    pdf.set_text_color(173, 20, 87)
-    pdf.set_x(pdf.l_margin)
-    pdf.cell(0, 5, _pdf_txt(pdf, "Emissão própria — totais", use_dejavu), ln=True)
-    _pdf_font(pdf, use_dejavu, "", 7)
-    pdf.set_text_color(140, 85, 115)
-    pdf.set_x(pdf.l_margin)
-    pdf.cell(0, 4, _pdf_txt(pdf, "Notas da sua empresa + buracos na sequência numérica.", use_dejavu), ln=True)
-    pdf.ln(1)
+    valor = float(kpi.get("valor") or 0.0)
+    terc_cnt = kpi.get("terc_cnt") or {}
+    if not isinstance(terc_cnt, dict):
+        terc_cnt = {}
+    terc_linhas = []
+    try:
+        itens = sorted(terc_cnt.items(), key=lambda x: int(x[1] or 0), reverse=True)
+        for mod, q in itens[:2]:
+            terc_linhas.append(f"{str(mod).strip()}: {_excel_fmt_milhar_pt(int(q or 0))}")
+    except Exception:
+        terc_linhas = []
+    if not terc_linhas:
+        terc_linhas = ["—"]
+
+    specs = [
+        (
+            "TOTAL DE DOCUMENTOS\nLIDOS (NUM GERAL)",
+            _excel_fmt_milhar_pt(n_docs),
+            f"Próprios: {_excel_fmt_milhar_pt(n_prop)}\nTerceiros: {_excel_fmt_milhar_pt(n_terc_xml)}",
+        ),
+        (
+            "DETALHAMENTO\nEMISSÃO PRÓPRIA",
+            f"{_excel_fmt_milhar_pt(aut)} Aut.",
+            f"Canceladas: {_excel_fmt_milhar_pt(can)}\nInutilizadas: {_excel_fmt_milhar_pt(inu)}",
+        ),
+        (
+            "DETALHAMENTO\nDOCUMENTOS TERCEIROS",
+            f"{_excel_fmt_milhar_pt(n_terc_xml)} Terc.",
+            "\n".join(terc_linhas),
+        ),
+        (
+            "VOLUME\nFINANCEIRO",
+            _excel_fmt_reais_pt_str(valor),
+            "Soma no resumo por série",
+        ),
+    ]
+
     margin = pdf.l_margin
     full = pdf.w - margin - pdf.r_margin
-    gap = 3
-    cw = (full - gap) / 2
-    rh = 24
-    specs = [
-        (0, 0, "Autorizadas", aut, (255, 240, 246), (233, 30, 99)),
-        (1, 0, "Canceladas", can, (255, 235, 238), (211, 47, 47)),
-        (0, 1, "Inutilizadas", inu, (243, 229, 245), (123, 31, 162)),
-        (1, 1, "Buracos", bur, (255, 249, 230), (230, 126, 34)),
-    ]
+    gap = 2.4
+    ncols = 4
+    cw = (full - gap * (ncols - 1)) / ncols
     y0 = pdf.get_y()
-    for col, row, label, val, bg, fg in specs:
-        x = margin + col * (cw + gap)
-        y = y0 + row * (rh + gap)
-        pdf.set_fill_color(*bg)
-        pdf.set_draw_color(255, 182, 204)
-        pdf.rect(x, y, cw, rh, "D")
-        _pdf_font(pdf, use_dejavu, "", 7)
-        pdf.set_text_color(120, 70, 95)
-        pdf.set_xy(x + 3, y + 2)
-        pdf.cell(cw - 6, 4, _pdf_txt(pdf, label, use_dejavu), ln=False)
-        _pdf_font(pdf, use_dejavu, "B", 18)
-        pdf.set_text_color(*fg)
-        pdf.set_xy(x + 3, y + 9)
-        pdf.cell(cw - 6, 12, str(val), ln=False)
-    pdf.set_xy(pdf.l_margin, y0 + 2 * (rh + gap) + 1)
+    card_h = 38.0
+    title_h = 10.5
+    foot_h = 12.0
+    val_h = card_h - title_h - foot_h
+    bor = (161, 134, 158)
+    sep = (210, 195, 205)
+
+    pdf.set_line_width(0.45)
+    for i, (tit, val, foot) in enumerate(specs):
+        x = margin + i * (cw + gap)
+        pdf.set_fill_color(255, 255, 255)
+        pdf.set_draw_color(*bor)
+        pdf.rect(x, y0, cw, card_h, "D")
+        pdf.set_draw_color(*sep)
+        pdf.set_line_width(0.15)
+        pdf.line(x, y0 + title_h, x + cw, y0 + title_h)
+        pdf.line(x, y0 + title_h + val_h, x + cw, y0 + title_h + val_h)
+        pdf.set_line_width(0.45)
+
+        _pdf_font(pdf, use_dejavu, "B", 5.8)
+        pdf.set_text_color(32, 35, 42)
+        yl = y0 + 2.2
+        for part in str(tit).split("\n")[:2]:
+            pdf.set_xy(x + 1.5, yl)
+            pdf.cell(cw - 3, 3.4, _pdf_txt(pdf, part.strip(), use_dejavu), align="C", ln=False)
+            yl += 3.5
+
+        _pdf_font(pdf, use_dejavu, "B", 9.5 if len(val) < 14 else 8.0)
+        pdf.set_text_color(32, 35, 42)
+        pdf.set_xy(x + 1.5, y0 + title_h + 3.5)
+        pdf.cell(cw - 3, val_h - 4, _pdf_txt(pdf, val, use_dejavu), align="C", ln=False)
+
+        _pdf_font(pdf, use_dejavu, "", 5.6)
+        pdf.set_text_color(61, 53, 64)
+        yf = y0 + title_h + val_h + 2.0
+        for fl in str(foot).split("\n")[:3]:
+            pdf.set_xy(x + 1.5, yf)
+            pdf.cell(cw - 3, 3.2, _pdf_txt(pdf, fl.strip(), use_dejavu), align="C", ln=False)
+            yf += 3.25
+
+    pdf.set_xy(pdf.l_margin, y0 + card_h + 4)
+
+
+def _pdf_faixa_buracos_executivo(pdf, n_bur, use_dejavu):
+    """Uma linha de contexto: buracos (saiu do antigo quadro 2×2)."""
+    margin = pdf.l_margin
+    full = pdf.w - margin - pdf.r_margin
+    y = pdf.get_y()
+    h = 7.5
+    pdf.set_fill_color(255, 255, 255)
+    pdf.set_draw_color(161, 134, 158)
+    pdf.set_line_width(0.2)
+    pdf.rect(margin, y, full, h, "D")
+    _pdf_font(pdf, use_dejavu, "", 7)
+    pdf.set_text_color(93, 27, 54)
+    pdf.set_xy(margin + 3, y + 2)
+    pdf.cell(
+        full - 6,
+        4,
+        _pdf_txt(
+            pdf,
+            f"Buracos na sequência (emissão própria): {_excel_fmt_milhar_pt(int(n_bur or 0))}",
+            use_dejavu,
+        ),
+        ln=False,
+    )
+    pdf.set_xy(pdf.l_margin, y + h + 3)
 
 
 def _pdf_lista_rosa(pdf, titulo, pares, use_dejavu, subtitulo=None):
@@ -1730,8 +1785,8 @@ def _pdf_tabela_preview(pdf, preview, use_dejavu, y_max=276, estilo_moderno=Fals
 
 def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
     """
-    PDF: folha 1 = resumo do lote (cabeçalho, documentos lidos, grelha emissão própria, listas) como no
-    dashboard de referência; folhas seguintes = indicadores detalhados em tabelas com bordas.
+    PDF: folha 1 = cabeçalho executivo + quatro cartões KPI (igual ao ecrã / Painel Fiscal), faixa de buracos,
+    listas terceiros / extras; folhas seguintes = indicadores detalhados em tabelas com bordas.
     """
     try:
         from fpdf import FPDF
@@ -1766,12 +1821,10 @@ def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
         if font_bold_path:
             pdf.add_font("DejaVu", "B", font_bold_path)
 
-    linha_cnpj = f"Emitente · {cnpj_fmt}" if cnpj_fmt else None
-    _pdf_cabecalho_ludico_rosa(pdf, use_dejavu, linha_cnpj)
-
-    sc = kpi.get("sc") or {}
-    _pdf_card_documentos_lidos_rosa(pdf, int(kpi.get("n_docs") or 0), use_dejavu)
-    _pdf_quatro_emissao_propria_rosa(pdf, sc, int(kpi.get("n_bur") or 0), use_dejavu)
+    linha_cnpj = f"CNPJ {cnpj_fmt}" if cnpj_fmt else None
+    _pdf_cabecalho_executivo_painel(pdf, use_dejavu, linha_cnpj)
+    _pdf_quatro_kpi_cards_executivo(pdf, kpi, use_dejavu)
+    _pdf_faixa_buracos_executivo(pdf, int(kpi.get("n_bur") or 0), use_dejavu)
 
     tc = kpi.get("terc_cnt") or {}
     if tc:
