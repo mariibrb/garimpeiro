@@ -19,6 +19,19 @@ def _instrucoes_instalar_fpdf2_markdown():
     """Streamlit corre com o interpretador em sys.executable — fpdf2 tem de estar aí."""
     exe = sys.executable or "python"
     cmd = f'"{exe}" -m pip install fpdf2'
+    cloud = "/home/adminuser/" in exe or "/mount/src/" in exe
+    if cloud:
+        return (
+            "No **Streamlit Community Cloud** não é possível instalar pacotes a partir da app — o ambiente "
+            "é montado só com o que está no repositório.\n\n"
+            "1. Confirme que na **raiz do repositório** existe `requirements.txt` com a linha **`fpdf2>=2.7.0`** "
+            "(o projeto Garimpeiro já a inclui).\n"
+            "2. Faça **commit** e **push** desse ficheiro para o ramo que a Cloud usa.\n"
+            "3. No painel [share.streamlit.io](https://share.streamlit.io), abra a app → **⋮** → "
+            "**Reboot app** (ou desligue e volte a publicar) para reinstalar dependências.\n\n"
+            "Se a app aponta para uma **pasta** dentro do repo, a Cloud continua a ler `requirements.txt` "
+            "só da **raiz** — não pode haver outro `requirements.txt` sem `fpdf2` a substituir."
+        )
     return (
         "O pacote **fpdf2** não está instalado no **mesmo Python** que está a executar o Streamlit.\n\n"
         f"No terminal, corra:\n\n`{cmd}`\n\n"
@@ -805,6 +818,16 @@ def _pdf_font(pdf, use_dejavu, style="", size=10):
             pdf.set_font("Helvetica", "" if not style else "B", size)
 
 
+def _pdf_multi_texto_largura_total(pdf, altura_linha, texto, use_dejavu):
+    """
+    Texto em bloco na largura útil da página.
+    Evita FPDFException (fpdf2): multi_cell(0, ...) com get_x() à direita — largura útil ~0.
+    """
+    pdf.set_x(pdf.l_margin)
+    w = max(30.0, pdf.w - pdf.l_margin - pdf.r_margin)
+    pdf.multi_cell(w, altura_linha, _pdf_txt(pdf, texto, use_dejavu))
+
+
 def _pdf_faixa_topo(pdf, titulo, subtitulo, use_dejavu):
     """Faixa rosa/roxa no topo (estilo cartão / dashboard)."""
     y = pdf.get_y()
@@ -867,7 +890,7 @@ def _pdf_cartoes_tres_metricas(pdf, sc, use_dejavu):
         pdf.set_xy(x + 2.2, y0 + 12)
         pdf.cell(w - 4, 7, str(val), ln=False)
     pdf.set_text_color(45, 45, 48)
-    pdf.set_y(y0 + 22)
+    pdf.set_xy(pdf.l_margin, y0 + 22)
 
 
 def _pdf_tabela_preview(pdf, preview, use_dejavu, y_max=276):
@@ -877,7 +900,7 @@ def _pdf_tabela_preview(pdf, preview, use_dejavu, y_max=276):
     if em and not cols:
         _pdf_font(pdf, use_dejavu, "", 9)
         pdf.set_text_color(95, 99, 110)
-        pdf.multi_cell(0, 4.8, _pdf_txt(pdf, em, use_dejavu))
+        _pdf_multi_texto_largura_total(pdf, 4.8, em, use_dejavu)
         pdf.set_text_color(45, 45, 48)
         return
     if not cols:
@@ -924,7 +947,7 @@ def _pdf_tabela_preview(pdf, preview, use_dejavu, y_max=276):
         tot = preview.get("total", 0)
         most = len(rows)
         msg = f"Mostrando as primeiras {most} de {tot} linhas (exporte Excel na app para a lista completa)."
-        pdf.multi_cell(0, 3.8, _pdf_txt(pdf, msg, use_dejavu))
+        _pdf_multi_texto_largura_total(pdf, 3.8, msg, use_dejavu)
         pdf.set_text_color(45, 45, 48)
 
 
@@ -1006,7 +1029,7 @@ def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
     )
     if cnpj_fmt:
         _pdf_font(pdf, use_dejavu, "", 9)
-        pdf.multi_cell(0, 5, _pdf_txt(pdf, f"CNPJ emitente: {cnpj_fmt}", use_dejavu))
+        _pdf_multi_texto_largura_total(pdf, 5, f"CNPJ emitente: {cnpj_fmt}", use_dejavu)
         pdf.ln(0.5)
 
     sc = kpi.get("sc") or {}
@@ -1017,7 +1040,7 @@ def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
     _pdf_font(pdf, use_dejavu, "", 8)
     for lab, val in kpi.get("pares", []):
         linha = f"{lab}: {val}"
-        pdf.multi_cell(0, 4.5, _pdf_txt(pdf, linha, use_dejavu))
+        _pdf_multi_texto_largura_total(pdf, 4.5, linha, use_dejavu)
     pdf.ln(0.5)
 
     sd = kpi.get("status_dist") or {}
@@ -1043,10 +1066,11 @@ def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
         soma = sum(int(x) for x in tc.values())
         _pdf_font(pdf, use_dejavu, "", 7.5)
         pdf.set_text_color(95, 95, 105)
-        pdf.multi_cell(
-            0,
+        _pdf_multi_texto_largura_total(
+            pdf,
             4,
-            _pdf_txt(pdf, f"Somatório geral (documentos lidos): {soma}", use_dejavu),
+            f"Somatório geral (documentos lidos): {soma}",
+            use_dejavu,
         )
         pdf.set_text_color(45, 45, 48)
         pdf.ln(0.5)
@@ -1077,14 +1101,11 @@ def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
     )
     _pdf_font(pdf, use_dejavu, "", 7.5)
     pdf.set_text_color(95, 95, 105)
-    pdf.multi_cell(
-        0,
+    _pdf_multi_texto_largura_total(
+        pdf,
         4,
-        _pdf_txt(
-            pdf,
-            "Mesmas linhas que na app; chaves abreviadas. Excel completo com folha Dashboard na exportação.",
-            use_dejavu,
-        ),
+        "Mesmas linhas que na app; chaves abreviadas. Excel completo com folha Dashboard na exportação.",
+        use_dejavu,
     )
     pdf.set_text_color(45, 45, 48)
     pdf.ln(0.5)
@@ -1093,14 +1114,11 @@ def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
     pdf.ln(3)
     _pdf_font(pdf, use_dejavu, "", 7)
     pdf.set_text_color(130, 130, 138)
-    pdf.multi_cell(
-        0,
+    _pdf_multi_texto_largura_total(
+        pdf,
         4,
-        _pdf_txt(
-            pdf,
-            "Garimpeiro — PDF gerado para arquivo. Dados completos: use os botoes Baixar Excel em cada tabela na aplicacao.",
-            use_dejavu,
-        ),
+        "Garimpeiro — PDF gerado para arquivo. Dados completos: use os botoes Baixar Excel em cada tabela na aplicacao.",
+        use_dejavu,
     )
 
     raw = pdf.output(dest="S")
