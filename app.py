@@ -11,6 +11,7 @@ from collections import Counter, defaultdict
 from calendar import monthrange
 from datetime import date, datetime
 import unicodedata
+from pathlib import Path
 
 # --- CONFIGURAÇÃO E ESTILO (CLONE ABSOLUTO DO DIAMOND TAX) ---
 st.set_page_config(page_title="Garimpeiro", layout="wide", page_icon="⛏️")
@@ -185,6 +186,56 @@ def aplicar_estilo_premium():
             border-left: 5px solid #FF69B4;
             margin-bottom: 20px;
             min-height: 280px;
+        }
+
+        .garim-dash-wrap {
+            background: linear-gradient(145deg, #fff8fc 0%, #ffffff 42%, #f6f8fc 100%);
+            border-radius: 22px;
+            padding: 1.35rem 1.5rem 1.5rem;
+            border: 1px solid rgba(255, 105, 180, 0.28);
+            margin: 0.75rem 0 1.25rem;
+            box-shadow: 0 12px 40px rgba(255, 105, 180, 0.11), 0 2px 8px rgba(0,0,0,0.04);
+        }
+        .garim-dash-title {
+            font-family: 'Montserrat', sans-serif;
+            font-weight: 800;
+            font-size: 1.15rem;
+            color: #ad1457 !important;
+            margin: 0 0 0.35rem 0;
+            letter-spacing: -0.02em;
+        }
+        .garim-dash-sub {
+            font-size: 0.82rem;
+            color: #6c757d;
+            margin: 0 0 1rem 0;
+        }
+        .garim-dash-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+            gap: 12px;
+        }
+        .garim-dash-card {
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 14px 12px;
+            border: 1px solid #fce4ec;
+            text-align: center;
+            box-shadow: 0 2px 12px rgba(255, 105, 180, 0.06);
+        }
+        .garim-dash-val {
+            font-size: 1.55rem;
+            font-weight: 800;
+            color: #c2185b !important;
+            font-family: 'Montserrat', sans-serif;
+            line-height: 1.2;
+        }
+        .garim-dash-lbl {
+            font-size: 0.72rem;
+            color: #868e96;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            margin-top: 6px;
+            font-weight: 600;
         }
 
         [data-testid="stMetric"] {
@@ -459,13 +510,246 @@ def dataframe_para_excel_bytes(df, sheet_name="Dados"):
     return buf.getvalue()
 
 
-def dataframe_para_csv_pt_bytes(df):
-    """CSV com separador ; e UTF-8 BOM — abre bem no Excel em português, colunas separadas."""
-    if df is None or df.empty:
+def coletar_kpis_dashboard():
+    """Indicadores agregados para dashboard na app, Excel (folha Dashboard) e PDF."""
+    rel = st.session_state.get("relatorio") or []
+    sc = st.session_state.get("st_counts") or {}
+    df_g = st.session_state.get("df_geral")
+    df_r = st.session_state.get("df_resumo")
+    df_f = st.session_state.get("df_faltantes")
+    n_geral = len(df_g) if df_g is not None and not df_g.empty else 0
+    n_bur = len(df_f) if df_f is not None and not df_f.empty else 0
+    n_proprios = sum(1 for x in rel if "EMITIDOS_CLIENTE" in (x.get("Pasta") or ""))
+    n_terc = sum(1 for x in rel if "RECEBIDOS_TERCEIROS" in (x.get("Pasta") or ""))
+    terc_cnt = Counter()
+    for x in rel:
+        if "RECEBIDOS_TERCEIROS" in (x.get("Pasta") or ""):
+            terc_cnt[x.get("Tipo") or "Outros"] += 1
+    valor = 0.0
+    if df_r is not None and not df_r.empty and "Valor Contábil (R$)" in df_r.columns:
+        try:
+            valor = float(df_r["Valor Contábil (R$)"].sum())
+        except (TypeError, ValueError):
+            valor = 0.0
+    status_dist = {}
+    if df_g is not None and not df_g.empty and "Status Final" in df_g.columns:
+        vc = df_g["Status Final"].value_counts()
+        status_dist = {str(k): int(v) for k, v in vc.items()}
+    ref_ok = bool(st.session_state.get("seq_ref_ultimos"))
+    val_ok = bool(st.session_state.get("validation_done"))
+    pares = [
+        ("Gerado em", datetime.now().strftime("%d/%m/%Y %H:%M")),
+        ("Linhas no relatório geral", n_geral),
+        ("Itens no lote (relatório bruto)", len(rel)),
+        ("Autorizadas (emissão própria)", int(sc.get("AUTORIZADAS", 0) or 0)),
+        ("Canceladas (emissão própria)", int(sc.get("CANCELADOS", 0) or 0)),
+        ("Inutilizadas (emissão própria)", int(sc.get("INUTILIZADOS", 0) or 0)),
+        ("Buracos na sequência", n_bur),
+        ("XML emissão própria (itens)", n_proprios),
+        ("XML terceiros (itens)", n_terc),
+        ("Valor contábil — resumo séries (R$)", round(valor, 2)),
+        ("Referência último nº guardada", "Sim" if ref_ok else "Não"),
+        ("Validação autenticidade (Etapa 2)", "Sim" if val_ok else "Não"),
+    ]
+    return {
+        "pares": pares,
+        "n_geral": n_geral,
+        "n_bur": n_bur,
+        "n_terc": n_terc,
+        "valor": valor,
+        "status_dist": status_dist,
+        "terc_cnt": dict(terc_cnt),
+        "sc": sc,
+    }
+
+
+def excel_relatorio_geral_com_dashboard_bytes(df_geral):
+    """Folha Geral + folha Dashboard (KPIs, resumo séries, terceiros)."""
+    if df_geral is None or df_geral.empty:
         return None
+    kpi = coletar_kpis_dashboard()
     buf = io.BytesIO()
-    df.reset_index(drop=True).to_csv(buf, index=False, encoding="utf-8-sig", sep=";")
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+        df_geral.reset_index(drop=True).to_excel(writer, sheet_name="Geral", index=False)
+        wb = writer.book
+        ws = wb.add_worksheet("Dashboard")
+        title_f = wb.add_format(
+            {"bold": True, "font_size": 16, "font_color": "#AD1457", "valign": "vcenter"}
+        )
+        hdr_f = wb.add_format(
+            {"bold": True, "bg_color": "#F8BBD0", "border": 1, "valign": "vcenter"}
+        )
+        cell_f = wb.add_format({"border": 1, "valign": "vcenter"})
+        sub_f = wb.add_format({"bold": True, "font_size": 11, "bg_color": "#FCE4EC", "border": 1})
+
+        ws.merge_range(0, 0, 0, 3, "Garimpeiro — Dashboard", title_f)
+        ws.set_row(0, 26)
+        row = 2
+        ws.write(row, 0, "Indicador", hdr_f)
+        ws.write(row, 1, "Valor", hdr_f)
+        row += 1
+        for lab, val in kpi["pares"]:
+            ws.write(row, 0, lab, cell_f)
+            ws.write(row, 1, val, cell_f)
+            row += 1
+        row += 1
+
+        df_r = st.session_state.get("df_resumo")
+        if df_r is not None and not df_r.empty:
+            last_c = max(5, len(df_r.columns) - 1)
+            ws.merge_range(row, 0, row, last_c, "Resumo por série (emissão própria)", sub_f)
+            row += 1
+            for c, colname in enumerate(df_r.columns):
+                ws.write(row, c, str(colname), hdr_f)
+            row += 1
+            for _, rr in df_r.iterrows():
+                for c, colname in enumerate(df_r.columns):
+                    v = rr[colname]
+                    ws.write(row, c, v, cell_f)
+                row += 1
+            row += 1
+
+        tc = kpi.get("terc_cnt") or {}
+        if tc:
+            ws.merge_range(row, 0, row, 2, "Terceiros — quantidade por modelo", sub_f)
+            row += 1
+            ws.write(row, 0, "Modelo", hdr_f)
+            ws.write(row, 1, "Quantidade", hdr_f)
+            row += 1
+            for mod, q in sorted(tc.items(), key=lambda x: x[0]):
+                ws.write(row, 0, mod, cell_f)
+                ws.write(row, 1, int(q), cell_f)
+                row += 1
+
+        ws.set_column(0, 0, 42)
+        ws.set_column(1, 1, 22)
+
     return buf.getvalue()
+
+
+def _pdf_ascii_seguro(txt):
+    if txt is None:
+        return ""
+    s = str(txt)
+    return (
+        unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii") or "-"
+    )
+
+
+def pdf_dashboard_garimpeiro_bytes(kpi, cnpj_fmt=""):
+    """PDF resumido do dashboard (UTF-8 limitado — usa transliteração segura)."""
+    try:
+        from fpdf import FPDF
+        import fpdf as _fpdf_mod
+    except ImportError:
+        return None
+    if not kpi:
+        return None
+
+    font_path = None
+    try:
+        _p = Path(_fpdf_mod.__file__).resolve().parent / "font" / "DejaVuSans.ttf"
+        if _p.is_file():
+            font_path = str(_p)
+    except Exception:
+        font_path = None
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=14)
+    pdf.add_page()
+    if font_path:
+        pdf.add_font("DejaVu", "", font_path)
+        pdf.set_font("DejaVu", "", 11)
+        use_dejavu = True
+    else:
+        pdf.set_font("Helvetica", "B", 14)
+        use_dejavu = False
+
+    tit = "Garimpeiro — Dashboard" if use_dejavu else "Garimpeiro - Dashboard"
+    pdf.cell(0, 10, tit, ln=True)
+    if use_dejavu:
+        pdf.set_font("DejaVu", "", 9)
+    else:
+        pdf.set_font("Helvetica", "", 9)
+    if cnpj_fmt:
+        pdf.cell(0, 6, f"CNPJ: {cnpj_fmt}" if use_dejavu else f"CNPJ: {_pdf_ascii_seguro(cnpj_fmt)}", ln=True)
+    pdf.ln(2)
+
+    if use_dejavu:
+        pdf.set_font("DejaVu", "", 10)
+    else:
+        pdf.set_font("Helvetica", "", 10)
+    for lab, val in kpi["pares"]:
+        linha = f"{lab}: {val}"
+        if not use_dejavu:
+            linha = _pdf_ascii_seguro(linha)
+        pdf.multi_cell(0, 6, linha)
+
+    sd = kpi.get("status_dist") or {}
+    if sd:
+        pdf.ln(3)
+        pdf.set_font("Helvetica" if not use_dejavu else "DejaVu", "B", 10)
+        pdf.cell(0, 7, "Status (relatorio geral):" if not use_dejavu else "Status (relatório geral):", ln=True)
+        if use_dejavu:
+            pdf.set_font("DejaVu", "", 9)
+        else:
+            pdf.set_font("Helvetica", "", 9)
+        for k, v in sorted(sd.items(), key=lambda x: -x[1]):
+            t = f"  - {k}: {v}"
+            pdf.multi_cell(0, 5, t if use_dejavu else _pdf_ascii_seguro(t))
+
+    raw = pdf.output(dest="S")
+    if raw is None:
+        return None
+    if isinstance(raw, bytes):
+        return raw
+    if isinstance(raw, bytearray):
+        return bytes(raw)
+    return str(raw).encode("latin-1", "replace")
+
+
+def renderizar_dashboard_streamlit(kpi, cnpj_fmt=""):
+    """HTML + gráficos Streamlit."""
+    sub = (
+        f"CNPJ {cnpj_fmt} · síntese do que foi lido neste lote"
+        if cnpj_fmt
+        else "Síntese do que foi lido neste lote"
+    )
+    cards = [
+        ("Linhas geral", kpi["n_geral"]),
+        ("Autorizadas", int(kpi["sc"].get("AUTORIZADAS", 0) or 0)),
+        ("Canceladas", int(kpi["sc"].get("CANCELADOS", 0) or 0)),
+        ("Inutilizadas", int(kpi["sc"].get("INUTILIZADOS", 0) or 0)),
+        ("Buracos", kpi["n_bur"]),
+        ("Terceiros (itens)", kpi["n_terc"]),
+    ]
+    grid = "".join(
+        f'<div class="garim-dash-card"><div class="garim-dash-val">{v}</div>'
+        f'<div class="garim-dash-lbl">{lbl}</div></div>'
+        for lbl, v in cards
+    )
+    st.markdown(
+        f'<div class="garim-dash-wrap"><p class="garim-dash-title">Dashboard do garimpo</p>'
+        f'<p class="garim-dash-sub">{sub}</p><div class="garim-dash-grid">{grid}</div></div>',
+        unsafe_allow_html=True,
+    )
+    vf = float(kpi.get("valor") or 0)
+    st.caption(f"Valor contábil agregado no resumo por série: **R$ {vf:,.2f}**")
+
+    sd = kpi.get("status_dist") or {}
+    if sd:
+        st.markdown("**Distribuição por status** (relatório geral)")
+        df_sd = pd.DataFrame(
+            [{"Status": a, "Quantidade": b} for a, b in sorted(sd.items(), key=lambda x: -x[1])]
+        )
+        st.bar_chart(df_sd.set_index("Status"))
+    tc = kpi.get("terc_cnt") or {}
+    if tc:
+        st.markdown("**Terceiros — por modelo**")
+        df_t = pd.DataFrame(
+            [{"Modelo": a, "Qtd": b} for a, b in sorted(tc.items(), key=lambda x: x[0])]
+        )
+        st.bar_chart(df_t.set_index("Modelo"))
 
 
 def aplicar_compactacao_dfs_sessao():
@@ -777,14 +1061,14 @@ def triplas_inutil_de_dataframe(df):
                 return a
         return None
 
-    cm = col("modelo", "documento", "tipo", "doc", "document")
+    cm = col("modelo", "documento", "tipo", "doc", "document", "mod", "cod_mod", "codigo")
     cs = col("serie", "ser")
     cn = col("nota", "numero", "num", "num_faltante", "n", "numeracao", "no")
     if not cm or not cs or not cn:
         return (
             None,
-            "Faltam colunas reconhecíveis. Use **Modelo** (ou Documento/Tipo), **Série** e **Nota** "
-            "(ou Número / Num_Faltante).",
+            "Faltam colunas reconhecíveis. Use **Modelo** (código Sefaz **55**, **65**, **57**, **58** ou NF-e…), "
+            "**Série** e **Nota** (ou Número / Num_Faltante).",
         )
     out = []
     for _, row in d2.iterrows():
@@ -795,8 +1079,8 @@ def triplas_inutil_de_dataframe(df):
             continue
         if m is None or pd.isna(m) or s is None or pd.isna(s) or nraw is None or pd.isna(nraw):
             continue
-        mod = str(m).strip()
-        ser = str(s).strip()
+        mod = _normaliza_modelo_filtro(m)
+        ser = _normaliza_serie_filtro(s)
         if not mod or not ser:
             continue
         if isinstance(nraw, (int, float)) and not pd.isna(nraw):
@@ -876,12 +1160,13 @@ def conjunto_triplas_buracos(df_faltantes):
 
 
 def _dataframe_modelo_planilha_inutil_sem_xml():
-    """Linhas de exemplo; o utilizador substitui ou apaga conforme o lote."""
+    """Linhas de exemplo com código numérico Sefaz (como na página da Sefaz) — também aceita NF-e, NFC-e…"""
     return pd.DataFrame(
         [
-            {"Modelo": "NF-e", "Série": "1", "Nota": 1520},
-            {"Modelo": "NF-e", "Série": "1", "Nota": 1521},
-            {"Modelo": "NFC-e", "Série": "2", "Nota": 100},
+            {"Modelo": 55, "Série": 1, "Nota": 1520},
+            {"Modelo": 55, "Série": 1, "Nota": 1521},
+            {"Modelo": 65, "Série": 2, "Nota": 100},
+            {"Modelo": 57, "Série": 1, "Nota": 500},
         ]
     )
 
@@ -895,13 +1180,6 @@ def bytes_modelo_planilha_inutil_sem_xml_xlsx():
         ws.set_column(0, 0, 14)
         ws.set_column(1, 1, 10)
         ws.set_column(2, 2, 12)
-    return buf.getvalue()
-
-
-def bytes_modelo_planilha_inutil_sem_xml_csv():
-    df = _dataframe_modelo_planilha_inutil_sem_xml()
-    buf = io.BytesIO()
-    df.to_csv(buf, index=False, encoding="utf-8-sig", sep=";")
     return buf.getvalue()
 
 
@@ -1323,7 +1601,9 @@ def v2_callback_repor_filtros():
 
 def rotulo_download_zip_parte(caminho_ficheiro):
     m = re.search(r"pt(\d+)\.zip$", caminho_ficheiro, re.I)
-    return f"📥 Parte {m.group(1)}" if m else f"📥 {os.path.basename(caminho_ficheiro)}"
+    if m:
+        return f"Baixar XML (parte {m.group(1)})"
+    return f"Baixar XML — {os.path.basename(caminho_ficheiro)}"
 
 
 def enumerar_buracos_por_segmento(nums_sorted, tipo_doc, serie_str, gap_max=MAX_SALTO_ENTRE_NOTAS_CONSECUTIVAS):
@@ -1966,7 +2246,8 @@ keys_to_init = [
     'org_zip_parts',
     'todos_zip_parts',
     'ch_falt_dom',
-    'zip_dom_parts'
+    'zip_dom_parts',
+    'dashboard_vis',
 ]
 
 for k in keys_to_init:
@@ -2004,7 +2285,6 @@ if "cnpj_widget" not in st.session_state:
 
 with st.sidebar:
     st.markdown("### 🔍 Configuração")
-    st.caption("CNPJ: digite **só os 14 números** — pontos, barra e traço aparecem sozinhos.")
     # Normalizar máscara *antes* do text_input: depois do widget o Streamlit bloqueia
     # `session_state["cnpj_widget"] = ...` na mesma execução (StreamlitAPIException).
     _cnpj_key = "cnpj_widget"
@@ -2016,8 +2296,8 @@ with st.sidebar:
     st.text_input(
         "CNPJ DO CLIENTE",
         key=_cnpj_key,
-        placeholder="só números, ex. 11222333000181",
-        help="Pode colar o CNPJ com ou sem máscara; guardamos só os dígitos e mostramos formatado.",
+        placeholder="somente numeros",
+        help="14 dígitos; pode colar com ou sem máscara. A formatação é aplicada ao digitar.",
     )
 
     if cnpj_limpo and len(cnpj_limpo) != 14:
@@ -2033,12 +2313,6 @@ with st.sidebar:
             def_mes = 12 if d.month == 1 else d.month - 1
             a0 = st.session_state["seq_ref_ano"] if st.session_state.get("seq_ref_ano") is not None else def_ano
             m0 = st.session_state["seq_ref_mes"] if st.session_state.get("seq_ref_mes") is not None else def_mes
-            st.caption(
-                "Última nota **emitida** por série até ao **fim** do mês abaixo. "
-                "Isto **não corta** o garimpo nem o resumo (continuam **totais**). Só a zona **Buracos** usa esta âncora: "
-                "a partir do último nº + 1 e sem contar competências anteriores ao mês escolhido **nas séries que preencher**. "
-                "Séries que não estiverem na tabela mantêm buracos em **toda** a numeração. Sem **Guardar referência** com sucesso, buracos voltam ao modo antigo (intervalos podem ficar enormes, ex.: nota de janeiro no meio de março)."
-            )
             if st.session_state.get("garimpo_ok"):
                 if st.button("Puxar séries do resumo", key="seq_btn_puxar", use_container_width=True):
                     dfr = st.session_state.get("df_resumo")
@@ -2375,6 +2649,30 @@ if st.session_state['confirmado']:
         c2.metric("❌ CANCELADAS (PRÓPRIAS)", sc.get("CANCELADOS", 0))
         c3.metric("🚫 INUTILIZADAS (PRÓPRIAS)", sc.get("INUTILIZADOS", 0))
 
+        st.markdown("### Painel executivo")
+        _kpi_dash = coletar_kpis_dashboard()
+        _cnpj_dash_fmt = format_cnpj_visual(cnpj_limpo) if len(cnpj_limpo) == 14 else ""
+        _pdf_dash = pdf_dashboard_garimpeiro_bytes(_kpi_dash, _cnpj_dash_fmt)
+        _r1, _r2 = st.columns(2)
+        with _r1:
+            if st.button("Gerar / atualizar dashboard", key="btn_dash_gen", use_container_width=True):
+                st.session_state["dashboard_vis"] = True
+                st.rerun()
+        with _r2:
+            if _pdf_dash:
+                st.download_button(
+                    "Baixar PDF",
+                    data=_pdf_dash,
+                    file_name="dashboard_garimpeiro.pdf",
+                    mime="application/pdf",
+                    key="dl_dash_pdf",
+                    use_container_width=True,
+                )
+            else:
+                st.caption("PDF: instale **fpdf2** (`pip install fpdf2`) no ambiente.")
+        if st.session_state.get("dashboard_vis"):
+            renderizar_dashboard_streamlit(_kpi_dash, _cnpj_dash_fmt)
+
         st.caption(
             "Se faltar XML ou ZIP, use o bloco abaixo sem reiniciar o garimpo: os totais e as tabelas atualizam na hora."
         )
@@ -2436,7 +2734,7 @@ if st.session_state['confirmado']:
         st.markdown("---")
         st.markdown("### 📊 Relatório da leitura (abas)")
         st.caption(
-            "Buracos, inutilizadas, canceladas, autorizadas e relatório geral — mesmas colunas que nas tabelas; use **Baixar Excel** ou **CSV (Excel PT)** para colunas separadas."
+            "Buracos, inutilizadas, canceladas, autorizadas e relatório geral — mesmas colunas que nas tabelas; use **Baixar Excel** abaixo de cada tabela."
         )
         tab_bur, tab_inut, tab_canc, tab_aut, tab_geral = st.tabs(
             ["⚠️ Buracos", "🚫 Inutilizadas", "❌ Canceladas", "✅ Autorizadas", "📋 Relatório geral"]
@@ -2454,28 +2752,15 @@ if st.session_state['confirmado']:
             if not df_fal.empty:
                 st.dataframe(df_fal, use_container_width=True, hide_index=True)
                 xlsx_b = dataframe_para_excel_bytes(df_fal, "Buracos")
-                csv_b = dataframe_para_csv_pt_bytes(df_fal)
-                c_dl1, c_dl2 = st.columns(2)
-                with c_dl1:
-                    if xlsx_b:
-                        st.download_button(
-                            "⬇️ Baixar Excel (mesmas colunas da tabela)",
-                            data=xlsx_b,
-                            file_name="relatorio_buracos.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_rep_buracos_xlsx",
-                            use_container_width=True,
-                        )
-                with c_dl2:
-                    if csv_b:
-                        st.download_button(
-                            "⬇️ Baixar CSV (Excel PT, colunas separadas)",
-                            data=csv_b,
-                            file_name="relatorio_buracos.csv",
-                            mime="text/csv",
-                            key="dl_rep_buracos_csv",
-                            use_container_width=True,
-                        )
+                if xlsx_b:
+                    st.download_button(
+                        "Baixar Excel",
+                        data=xlsx_b,
+                        file_name="relatorio_buracos.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_rep_buracos_xlsx",
+                        use_container_width=True,
+                    )
             else:
                 st.info("✅ Tudo em ordem.")
             with st.expander(
@@ -2496,28 +2781,15 @@ if st.session_state['confirmado']:
             if not df_inu.empty:
                 st.dataframe(df_inu, use_container_width=True, hide_index=True)
                 xlsx_i = dataframe_para_excel_bytes(df_inu, "Inutilizadas")
-                csv_i = dataframe_para_csv_pt_bytes(df_inu)
-                ci1, ci2 = st.columns(2)
-                with ci1:
-                    if xlsx_i:
-                        st.download_button(
-                            "⬇️ Baixar Excel",
-                            data=xlsx_i,
-                            file_name="relatorio_inutilizadas.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_rep_inut_xlsx",
-                            use_container_width=True,
-                        )
-                with ci2:
-                    if csv_i:
-                        st.download_button(
-                            "⬇️ Baixar CSV (Excel PT)",
-                            data=csv_i,
-                            file_name="relatorio_inutilizadas.csv",
-                            mime="text/csv",
-                            key="dl_rep_inut_csv",
-                            use_container_width=True,
-                        )
+                if xlsx_i:
+                    st.download_button(
+                        "Baixar Excel",
+                        data=xlsx_i,
+                        file_name="relatorio_inutilizadas.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_rep_inut_xlsx",
+                        use_container_width=True,
+                    )
             else:
                 st.info("ℹ️ Nenhuma nota.")
 
@@ -2527,28 +2799,15 @@ if st.session_state['confirmado']:
             if not df_can.empty:
                 st.dataframe(df_can, use_container_width=True, hide_index=True)
                 xlsx_c = dataframe_para_excel_bytes(df_can, "Canceladas")
-                csv_c = dataframe_para_csv_pt_bytes(df_can)
-                cc1, cc2 = st.columns(2)
-                with cc1:
-                    if xlsx_c:
-                        st.download_button(
-                            "⬇️ Baixar Excel",
-                            data=xlsx_c,
-                            file_name="relatorio_canceladas.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_rep_canc_xlsx",
-                            use_container_width=True,
-                        )
-                with cc2:
-                    if csv_c:
-                        st.download_button(
-                            "⬇️ Baixar CSV (Excel PT)",
-                            data=csv_c,
-                            file_name="relatorio_canceladas.csv",
-                            mime="text/csv",
-                            key="dl_rep_canc_csv",
-                            use_container_width=True,
-                        )
+                if xlsx_c:
+                    st.download_button(
+                        "Baixar Excel",
+                        data=xlsx_c,
+                        file_name="relatorio_canceladas.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_rep_canc_xlsx",
+                        use_container_width=True,
+                    )
             else:
                 st.info("ℹ️ Nenhuma nota.")
 
@@ -2558,28 +2817,15 @@ if st.session_state['confirmado']:
             if not df_aut.empty:
                 st.dataframe(df_aut, use_container_width=True, hide_index=True)
                 xlsx_a = dataframe_para_excel_bytes(df_aut, "Autorizadas")
-                csv_a = dataframe_para_csv_pt_bytes(df_aut)
-                ca1, ca2 = st.columns(2)
-                with ca1:
-                    if xlsx_a:
-                        st.download_button(
-                            "⬇️ Baixar Excel",
-                            data=xlsx_a,
-                            file_name="relatorio_autorizadas.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_rep_aut_xlsx",
-                            use_container_width=True,
-                        )
-                with ca2:
-                    if csv_a:
-                        st.download_button(
-                            "⬇️ Baixar CSV (Excel PT)",
-                            data=csv_a,
-                            file_name="relatorio_autorizadas.csv",
-                            mime="text/csv",
-                            key="dl_rep_aut_csv",
-                            use_container_width=True,
-                        )
+                if xlsx_a:
+                    st.download_button(
+                        "Baixar Excel",
+                        data=xlsx_a,
+                        file_name="relatorio_autorizadas.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_rep_aut_xlsx",
+                        use_container_width=True,
+                    )
             else:
                 st.info("ℹ️ Nenhuma nota autorizada na amostra.")
 
@@ -2587,31 +2833,20 @@ if st.session_state['confirmado']:
             _q_ger = len(df_ger) if not df_ger.empty else 0
             st.markdown(f"#### 📋 Relatório geral ({_q_ger})")
             if not df_ger.empty:
-                st.caption("Visão completa das colunas do garimpo; para ficheiros muito grandes prefira o download.")
+                st.caption(
+                    "Visão completa das colunas do garimpo; o **Excel** inclui também a folha **Dashboard** com indicadores."
+                )
                 st.dataframe(df_ger, use_container_width=True, hide_index=True, height=420)
-                xlsx_g = dataframe_para_excel_bytes(df_ger, "Geral")
-                csv_g = dataframe_para_csv_pt_bytes(df_ger)
-                cg1, cg2 = st.columns(2)
-                with cg1:
-                    if xlsx_g:
-                        st.download_button(
-                            "⬇️ Baixar Excel",
-                            data=xlsx_g,
-                            file_name="relatorio_geral.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_rep_geral_xlsx",
-                            use_container_width=True,
-                        )
-                with cg2:
-                    if csv_g:
-                        st.download_button(
-                            "⬇️ Baixar CSV (Excel PT)",
-                            data=csv_g,
-                            file_name="relatorio_geral.csv",
-                            mime="text/csv",
-                            key="dl_rep_geral_csv",
-                            use_container_width=True,
-                        )
+                xlsx_g = excel_relatorio_geral_com_dashboard_bytes(df_ger)
+                if xlsx_g:
+                    st.download_button(
+                        "Baixar Excel",
+                        data=xlsx_g,
+                        file_name="relatorio_geral.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_rep_geral_xlsx",
+                        use_container_width=True,
+                    )
             else:
                 st.info("Relatório geral vazio.")
 
@@ -2716,31 +2951,21 @@ if st.session_state['confirmado']:
             with tab_p:
                 st.markdown("**Subir tabela** com inutilizadas a declarar")
                 st.caption(
-                    "Colunas reconhecidas (cabeçalho na 1.ª linha): **Modelo** ou Documento/Tipo; **Série**; "
-                    "**Nota** ou Número / Num_Faltante. Cada linha é uma nota. "
-                    "Só entram linhas que o garimpeiro já marcou como **buraco** (o resto é ignorado)."
+                    "Colunas (1.ª linha = cabeçalho): **Modelo** = código Sefaz (**55** NF-e, **65** NFC-e, **57** CT-e, **58** MDF-e) "
+                    "ou nome NF-e / NFC-e…; **Série**; **Nota** (ou Número / Num_Faltante). "
+                    "Ideal para copiar/colar da Sefaz. Só entram linhas que já forem **buraco** no garimpeiro."
                 )
-                _dmx, _dmc = st.columns(2)
-                with _dmx:
-                    st.download_button(
-                        "⬇️ Baixar modelo Excel (.xlsx)",
-                        data=bytes_modelo_planilha_inutil_sem_xml_xlsx(),
-                        file_name="MODELO_inutilizadas_sem_XML_garimpeiro.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_modelo_inut_xlsx",
-                        use_container_width=True,
-                    )
-                with _dmc:
-                    st.download_button(
-                        "⬇️ Baixar modelo CSV (.csv)",
-                        data=bytes_modelo_planilha_inutil_sem_xml_csv(),
-                        file_name="MODELO_inutilizadas_sem_XML_garimpeiro.csv",
-                        mime="text/csv",
-                        key="dl_modelo_inut_csv",
-                        use_container_width=True,
-                    )
+                st.download_button(
+                    "Baixar Excel",
+                    data=bytes_modelo_planilha_inutil_sem_xml_xlsx(),
+                    file_name="MODELO_inutilizadas_sem_XML_garimpeiro.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_modelo_inut_xlsx",
+                    use_container_width=True,
+                )
                 st.caption(
-                    "No modelo: cabeçalhos **Modelo**, **Série**, **Nota** — substitua ou apague as linhas de exemplo e guarde antes de importar."
+                    "No modelo: **Modelo** em número (55, 65, 57, 58) como na Sefaz; **Série** e **Nota**. "
+                    "Substitua ou apague as linhas de exemplo e guarde antes de importar."
                 )
                 _up_inut = st.file_uploader(
                     "Ficheiro .csv, .xlsx ou .xls",
@@ -3452,7 +3677,7 @@ if st.session_state['confirmado']:
                 st.rerun()
 
         if st.session_state.get("export_ready"):
-            st.success("Geração concluída. Use os botões abaixo para descarregar.")
+            st.success("Geração concluída. Use **Baixar XML** para cada ZIP e **Baixar Excel** para o relatório completo, se existir.")
             _parts_o = st.session_state.get("org_zip_parts") or []
             _parts_t = st.session_state.get("todos_zip_parts") or []
             _dl_i = 0
@@ -3490,7 +3715,7 @@ if st.session_state['confirmado']:
             _xbuf = st.session_state.get("excel_buffer")
             if _xbuf:
                 st.download_button(
-                    "Descarregar Excel completo (todo o filtro)",
+                    "Baixar Excel",
                     _xbuf,
                     file_name=st.session_state.get(
                         "export_excel_name", "relatorio_completo.xlsx"
@@ -3790,7 +4015,7 @@ if st.session_state['confirmado']:
                         if os.path.exists(part):
                             with open(part, "rb") as f_final:
                                 cols[idx].download_button(
-                                    label=f"📥 {os.path.basename(part)}",
+                                    label=rotulo_download_zip_parte(part),
                                     data=f_final.read(),
                                     file_name=os.path.basename(part),
                                     mime="application/zip",
