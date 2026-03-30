@@ -2751,10 +2751,51 @@ def v2_sanear_selecoes_contra_opcoes(
             st.session_state[key] = novo
 
 
+def _v2_remover_zips_em_disco_listados():
+    for key in ("org_zip_parts", "todos_zip_parts"):
+        for p in st.session_state.get(key) or []:
+            try:
+                if p and os.path.isfile(p):
+                    os.remove(p)
+            except OSError:
+                pass
+
+
+def _v2_limpar_estado_exportacao_etapa3():
+    """Remove ficheiros ZIP gerados e reinicia sessão de downloads da Etapa 3."""
+    _v2_remover_zips_em_disco_listados()
+    st.session_state["export_ready"] = False
+    st.session_state["org_zip_parts"] = []
+    st.session_state["todos_zip_parts"] = []
+    st.session_state["excel_buffer"] = None
+    st.session_state.pop("v2_export_sig", None)
+    st.session_state.pop("v2_export_sem_xml", None)
+
+
+def v2_assinatura_exportacao_sessao():
+    """
+    Identifica filtros + confirmação «exportar tudo» + formato (ZIP/Excel).
+    Se mudar após uma geração, os downloads guardados deixam de ser válidos.
+    """
+    return (
+        tuple(st.session_state.get("v2_f_orig") or []),
+        tuple(st.session_state.get("v2_f_mes") or []),
+        tuple(st.session_state.get("v2_f_mod") or []),
+        tuple(st.session_state.get("v2_f_ser") or []),
+        tuple(st.session_state.get("v2_f_stat") or []),
+        tuple(st.session_state.get("v2_f_op") or []),
+        bool(st.session_state.get("v2_confirm_full", True)),
+        bool(st.session_state.get("v2_zip_org", True)),
+        bool(st.session_state.get("v2_zip_plano", True)),
+        bool(st.session_state.get("v2_excel_completo", False)),
+    )
+
+
 def v2_callback_repor_filtros():
     """Limpa multiselects da Etapa 3. Deve ser usado com on_click (antes dos widgets na mesma corrida)."""
     for _kx in ("v2_f_orig", "v2_f_mes", "v2_f_mod", "v2_f_ser", "v2_f_stat", "v2_f_op"):
         st.session_state[_kx] = []
+    _v2_limpar_estado_exportacao_etapa3()
 
 
 def rotulo_download_zip_parte(caminho_ficheiro):
@@ -4663,6 +4704,18 @@ if st.session_state['confirmado']:
             key="v2_excel_completo",
         )
 
+        if st.session_state.get("export_ready"):
+            _sig_now = v2_assinatura_exportacao_sessao()
+            if st.session_state.get("v2_export_sig") != _sig_now:
+                _v2_limpar_estado_exportacao_etapa3()
+                st.session_state["v2_show_regen_hint"] = True
+
+        if st.session_state.pop("v2_show_regen_hint", False):
+            st.info(
+                "Os filtros ou o formato de exportação mudaram. **Volte a clicar em «Gerar ficheiros»** "
+                "para alinhar os ZIPs e o Excel ao que escolheu agora."
+            )
+
         _quer_alguma_saida = v2_zip_org or v2_zip_plano or v2_excel_completo
         if not _quer_alguma_saida:
             st.info("Marque **pelo menos** um tipo de ZIP ou Excel completo.")
@@ -4884,6 +4937,7 @@ if st.session_state['confirmado']:
                             "org_zip_parts": org_parts if v2_zip_org else [],
                             "todos_zip_parts": todos_parts if v2_zip_plano else [],
                             "export_ready": True,
+                            "v2_export_sig": v2_assinatura_exportacao_sessao(),
                         }
                     )
                     gc.collect()
@@ -5240,4 +5294,5 @@ if st.session_state['confirmado']:
                                 )
 else:
     st.warning("👈 Insira o CNPJ lateral para começar.")
+
 
