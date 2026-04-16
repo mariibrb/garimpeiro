@@ -9,14 +9,42 @@ import os
 import sys
 
 
+def _garimpeiro_resolver_pasta_dados() -> str:
+    """
+    Pasta base para TEMP/TMP, uploads temporários e extrações — **evitar o disco C:** no Windows
+    quando existir outro volume (D:, E:, …) ou `GARIMPEIRO_DATA_ROOT`.
+    """
+    env = (os.environ.get("GARIMPEIRO_DATA_ROOT") or "").strip().strip('"').strip("'")
+    if env:
+        p = os.path.abspath(env)
+        os.makedirs(p, exist_ok=True)
+        return p
+    here = os.path.dirname(os.path.abspath(__file__))
+    if sys.platform != "win32":
+        return here
+    drv = (os.path.splitdrive(here)[0] or "").upper()
+    if drv and drv != "C:":
+        return here
+    for letter in "DEFGHIJKLMNOPQRSTUVWXYZ":
+        alt = f"{letter}:\\"
+        if os.path.isdir(alt):
+            d = os.path.join(alt, "GarimpeiroOnLine_dados")
+            try:
+                os.makedirs(d, exist_ok=True)
+                return d
+            except OSError:
+                continue
+    return here
+
+
 def _garimpeiro_forcar_temp_na_pasta_do_projeto():
     """
-    TEMP/TMP e PIP_CACHE_DIR ficam na pasta do app2.py (ex.: disco D:).
-    Assim Excel/xlsxwriter e ferramentas Python não dependem de C:\\Users\\…\\Temp
-    (crítico quando C: está sem espaço). Corre antes dos restantes imports.
+    TEMP/TMP e PIP_CACHE_DIR ficam sob a pasta de dados resolvida (não em C:\\Users\\…\\Temp).
+    Corre antes dos restantes imports.
     """
     try:
-        root = os.path.dirname(os.path.abspath(__file__))
+        root = _garimpeiro_resolver_pasta_dados()
+        os.environ["GARIMPEIRO_RESOLVED_DATA_ROOT"] = root
         tmp = os.path.join(root, "temp_windows_ambiente")
         os.makedirs(tmp, exist_ok=True)
         os.environ["TEMP"] = tmp
@@ -71,9 +99,9 @@ def _erro_sem_espaco_disco(exc: BaseException) -> bool:
 
 def _msg_sem_espaco_disco_garimpeiro() -> str:
     return (
-        "ERR:Sem espaço em disco (errno 28). O Garimpeiro força **TEMP/TMP** na pasta do projeto "
-        "**temp_windows_ambiente** (mesmo disco que o app2.py). Liberte espaço **nesse disco** e apague ficheiros antigos nessa pasta se precisar. "
-        "Se ainda aparecer C: no erro, confirme que abriu a app com **streamlit run app2.py** (o arranque do Python tem de carregar o início do ficheiro)."
+        "ERR:Sem espaço em disco (errno 28). O Garimpeiro usa **TEMP/TMP** na pasta **temp_windows_ambiente** "
+        "(resolvida com **GARIMPEIRO_DATA_ROOT** ou outro volume que não C: quando possível). "
+        "Liberte espaço nesse disco ou defina **GARIMPEIRO_DATA_ROOT** para uma pasta noutro volume e reinicie."
     )
 
 
@@ -687,8 +715,12 @@ def aplicar_estilo_premium():
 aplicar_estilo_premium()
 
 # --- VARIÃVEIS DE SISTEMA DE ARQUIVOS (PREVENÃ‡ÃƒO DE QUEDA DE MEMÃ“RIA) ---
-TEMP_EXTRACT_DIR = "temp_garimpo_zips"
-TEMP_UPLOADS_DIR = "temp_garimpo_uploads"
+# Caminhos **absolutos** na pasta de dados (não dependem do cwd; no Windows evitam gravar em C: quando há outro disco)
+_GARIM_ROOT = (os.environ.get("GARIMPEIRO_RESOLVED_DATA_ROOT") or "").strip() or os.path.dirname(
+    os.path.abspath(__file__)
+)
+TEMP_EXTRACT_DIR = os.path.join(_GARIM_ROOT, "temp_garimpo_zips")
+TEMP_UPLOADS_DIR = os.path.join(_GARIM_ROOT, "temp_garimpo_uploads")
 MAX_XML_PER_ZIP = 10000  # Máx. XMLs por ficheiro ZIP (lista específica e Etapa 3); reparte em vários lotes
 ZIP_EXPORT_COMPRESSLEVEL = 9  # 1â€“9: 9 = .zip menores na exportação (mais CPU ao gravar)
 
@@ -2731,7 +2763,7 @@ def _excel_relatorio_geral_openpyxl_fallback_bytes(
                     {
                         "Aviso": [
                             "Export alternativo (sem espaço para xlsxwriter em disco/Temp). "
-                            "Liberte espaço em C: ou defina TEMP/TMP noutro disco."
+                            "Liberte espaço no disco onde está a pasta **temp_windows_ambiente** do Garimpeiro (ou defina **GARIMPEIRO_DATA_ROOT** noutro volume)."
                         ]
                     }
                 )
@@ -2753,7 +2785,7 @@ def _excel_relatorio_geral_openpyxl_fallback_bytes(
                     {
                         "Nota": [
                             "Painel fiscal: só no export completo (xlsxwriter). "
-                            "Liberte espaço em C: (Temp) e exporte de novo."
+                            "Liberte espaço no disco da pasta **temp_windows_ambiente** do Garimpeiro e exporte de novo."
                         ]
                     }
                 )
@@ -6739,7 +6771,6 @@ def _relatorio_leitura_tabela_aggrid(df_raw: pd.DataFrame, grid_key: str, height
         )
         st.dataframe(
             _df_relatorio_leitura_abas_para_exibicao_sem_sep_milhar(df_raw),
-            width="stretch",
             hide_index=True,
             height=height,
         )
@@ -6750,7 +6781,6 @@ def _relatorio_leitura_tabela_aggrid(df_raw: pd.DataFrame, grid_key: str, height
     # Tabela nativa sempre visível (nºs de nota, série, etc.) — o AgGrid por vezes não desenha com Streamlit novo.
     st.dataframe(
         df_show,
-        width="stretch",
         hide_index=True,
         height=min(max(260, height), 520),
         key=f"tbl_num_{grid_key}",
@@ -6847,7 +6877,6 @@ def _painel_zip_xml_filtrado(prefix, df_filtrado, cnpj_limpo, df_geral_full):
     if st.button(
         "Gerar ZIP com XML (linhas filtradas)",
         key=f"{prefix}_btn_zip",
-        width="stretch",
     ):
         with st.spinner("A montar ZIP a partir do lote (memória ou pasta)…"):
             parts, tot = escrever_zip_dominio_por_chaves(
@@ -6870,7 +6899,6 @@ def _painel_zip_xml_filtrado(prefix, df_filtrado, cnpj_limpo, df_geral_full):
                     fp.read(),
                     file_name=os.path.basename(part),
                     key=f"{prefix}_dlz_{idx}_{hashlib.md5(part.encode()).hexdigest()[:8]}",
-                    width="stretch",
                 )
 
 
@@ -7924,7 +7952,6 @@ with st.sidebar:
                     if st.button(
                         "Gerar ZIPs (série 4, ~50 MB cada)",
                         key="btn_serie4_zip50_gerar",
-                        width="stretch",
                     ):
                         _parts, _err = _gerar_lista_zips_serie4_emitidas_50mb(cnpj_limpo)
                         if _err:
@@ -7946,7 +7973,6 @@ with st.sidebar:
                                 file_name=_zfn,
                                 mime="application/zip",
                                 key=f"dl_serie4zip50_{_zi}_{hashlib.md5(_zblob[: min(4096, len(_zblob))]).hexdigest()[:10]}",
-                                width="stretch",
                             )
                         if st.button("Limpar lista de ZIPs", key="btn_serie4_zip50_limpar"):
                             st.session_state[SESSION_KEY_SERIE4_ZIP50_PARTS] = None
@@ -7962,7 +7988,7 @@ with st.sidebar:
             a0 = st.session_state["seq_ref_ano"] if st.session_state.get("seq_ref_ano") is not None else def_ano
             m0 = st.session_state["seq_ref_mes"] if st.session_state.get("seq_ref_mes") is not None else def_mes
             if st.session_state.get("garimpo_ok"):
-                if st.button("Puxar séries do resumo", key="seq_btn_puxar", width="stretch"):
+                if st.button("Puxar séries do resumo", key="seq_btn_puxar"):
                     dfr = st.session_state.get("df_resumo")
                     if dfr is not None and not dfr.empty:
                         novas = []
@@ -8079,7 +8105,7 @@ with st.sidebar:
 
             b1, b2 = st.columns(2)
             with b1:
-                if st.button("+ Série", key="seq_add_row", width="stretch"):
+                if st.button("+ Série", key="seq_add_row"):
                     cur_df = collect_seq_ref_from_widgets(v, n_rows)
                     novo = pd.DataFrame(
                         [{"Modelo": "NF-e", SEQ_REF_COL_SERIE: "", SEQ_REF_COL_ULT: ""}]
@@ -8090,7 +8116,7 @@ with st.sidebar:
                     st.session_state["seq_struct_v"] = v + 1
                     st.rerun()
             with b2:
-                if n_rows > 1 and st.button("- Última", key="seq_rem_row", width="stretch"):
+                if n_rows > 1 and st.button("- Última", key="seq_rem_row"):
                     cur_df = collect_seq_ref_from_widgets(v, n_rows)
                     st.session_state["seq_ref_rows"] = normalize_seq_ref_editor_df(cur_df.iloc[:-1])
                     st.session_state["seq_struct_v"] = v + 1
@@ -8099,7 +8125,6 @@ with st.sidebar:
             if st.button(
                 "Guardar referência",
                 type="primary",
-                width="stretch",
                 key="seq_btn_guardar",
                 help="Grava ano, mês e séries na sessão.",
             ):
@@ -8145,7 +8170,6 @@ with st.sidebar:
                     file_name="dashboard_garimpeiro.pdf",
                     mime="application/pdf",
                     key="dl_dash_pdf_sidebar",
-                    width="stretch",
                 )
             else:
                 st.markdown(_instrucoes_instalar_fpdf2_markdown())
@@ -8520,7 +8544,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
             "Repor filtros e limpar exportação gerada",
             key="v2_pre_clr",
             on_click=v2_callback_repor_filtros,
-            width="stretch",
         )
     
     _fmt_labels = {
@@ -8699,11 +8722,16 @@ def _garim_etapa3_corpo(cnpj_limpo):
     if str(st.session_state.get("v2_export_format", "")).startswith("zip_"):
         if "v2_etapa3_zip_save_dir" not in st.session_state:
             st.session_state["v2_etapa3_zip_save_dir"] = ""
-        st.text_input(
-            "Pasta onde guardar os ZIP — sua empresa / terceiros",
-            key="v2_etapa3_zip_save_dir",
-            help="Obrigatório antes de gerar ZIP. Caminho completo (ex.: D:\\Exportacoes). A pasta é criada se não existir.",
-        )
+        if not _streamlit_likely_community_cloud():
+            st.text_input(
+                "Pasta onde guardar os ZIP — sua empresa / terceiros",
+                key="v2_etapa3_zip_save_dir",
+                help="Obrigatório antes de gerar ZIP. Caminho completo (ex.: D:\\Exportacoes). A pasta é criada se não existir.",
+            )
+        else:
+            st.caption(
+                "**Versão web:** não é possível gravar ZIP numa pasta do seu PC. Escolha **Só Excel** ou use o Garimpeiro **no seu computador** para exportar ZIP para pasta."
+            )
 
     col_g_pr, col_g_tc = st.columns(2, gap="large")
     with col_g_pr:
@@ -8712,7 +8740,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
             type="primary",
             key="v2_btn_export_pr",
             disabled=_dis_pr,
-            width="stretch",
         )
     with col_g_tc:
         gen_tc = st.button(
@@ -8720,13 +8747,11 @@ def _garim_etapa3_corpo(cnpj_limpo):
             type="primary",
             key="v2_btn_export_tc",
             disabled=_dis_tc,
-            width="stretch",
         )
     gen_ambos = st.button(
         "Gerar os dois lados",
         key="v2_btn_export_ambos",
         disabled=_dis_ambos,
-        width="stretch",
     )
     
     _lados_run = None
@@ -9045,7 +9070,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
                                         fp.read(),
                                         file_name=os.path.basename(part),
                                         key=f"v2_dlo_p_{_dl_k_zip[0]}",
-                                        width="stretch",
                                     )
                         for part in _pt_pr_pre:
                             _dl_k_zip[0] += 1
@@ -9056,7 +9080,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
                                         fp.read(),
                                         file_name=os.path.basename(part),
                                         key=f"v2_dlt_p_{_dl_k_zip[0]}",
-                                        width="stretch",
                                     )
                     elif "propria" in _lados_ger:
                         st.caption("Nada a descarregar deste lado.")
@@ -9070,7 +9093,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
                         ),
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="v2_dl_xlsx_propria",
-                        width="stretch",
                     )
         with d_dl_tc:
             with st.container(border=True):
@@ -9094,7 +9116,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
                                         fp.read(),
                                         file_name=os.path.basename(part),
                                         key=f"v2_dlo_t_{_dl_k_zip[0]}",
-                                        width="stretch",
                                     )
                         for part in _pt_tc_pre:
                             _dl_k_zip[0] += 1
@@ -9105,7 +9126,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
                                         fp.read(),
                                         file_name=os.path.basename(part),
                                         key=f"v2_dlt_t_{_dl_k_zip[0]}",
-                                        width="stretch",
                                     )
                     elif "terceiros" in _lados_ger:
                         st.caption("Nada a descarregar deste lado.")
@@ -9119,7 +9139,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
                         ),
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="v2_dl_xlsx_terceiros",
-                        width="stretch",
                     )
     
     if st.session_state.get("export_ready"):
@@ -9154,7 +9173,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
                                     fp.read(),
                                     file_name=os.path.basename(part),
                                     key=f"v2_dlo_{_dl_i}",
-                                    width="stretch",
                                 )
                 if _parts_t:
                     for part in _parts_t:
@@ -9166,7 +9184,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
                                     fp.read(),
                                     file_name=os.path.basename(part),
                                     key=f"v2_dlt_{_dl_i}",
-                                    width="stretch",
                                 )
             elif _xbuf or _xbp or _xbt:
                 st.caption("Ficheiros prontos abaixo.")
@@ -9180,7 +9197,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
                     ),
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="v2_dl_xlsx",
-                    width="stretch",
                 )
             if _xbp:
                 st.download_button(
@@ -9192,7 +9208,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
                     ),
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="v2_dl_xlsx_propria_lo",
-                    width="stretch",
                 )
             if _xbt:
                 st.download_button(
@@ -9204,7 +9219,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
                     ),
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="v2_dl_xlsx_terceiros_lo",
-                    width="stretch",
                 )
 
 
@@ -9276,7 +9290,6 @@ def _garim_etapa3_contabilidade_corpo(cnpj_limpo):
         _lbl_gerar,
         key="v2_btn_mariana_zip",
         disabled=_btn_dis,
-        width="stretch",
         type="primary",
     )
     if gen_pacote_matriz:
@@ -9340,8 +9353,8 @@ def _garim_etapa3_contabilidade_corpo(cnpj_limpo):
                 if _erro_sem_espaco_disco(ex):
                     st.error(
                         "**Sem espaço em disco** ao gerar o Excel do pacote (errno 28). "
-                        "Liberte espaço em **C:** (pasta Temp do utilizador) e no disco onde grava o pacote; "
-                        "ou defina **TEMP** e **TMP** para uma pasta noutro disco (ex.: `D:\\Temp`) e reinicie o Garimpeiro."
+                        "Liberte espaço na pasta **temp_windows_ambiente** do Garimpeiro e no disco onde grava o pacote; "
+                        "ou defina **GARIMPEIRO_DATA_ROOT** (e reinicie) para usar outro volume."
                     )
                 else:
                     st.error(f"**Erro ao gerar o pacote:** {ex}")
@@ -9365,7 +9378,6 @@ def _garim_etapa3_contabilidade_corpo(cnpj_limpo):
                     file_name=os.path.basename(_mxp),
                     key="v2_dl_mariana_excel_completo",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    width="stretch",
                 )
         st.markdown("**Descarregar pacote (ZIP)**")
         for _i_m, part_m in enumerate(
@@ -9378,7 +9390,6 @@ def _garim_etapa3_contabilidade_corpo(cnpj_limpo):
                         fm.read(),
                         file_name=os.path.basename(part_m),
                         key=f"v2_dl_mariana_{_i_m}",
-                        width="stretch",
                     )
 
 
@@ -9423,7 +9434,6 @@ if st.session_state.get("confirmado"):
                     file_name="MODELO_inutilizadas_sem_XML_garimpeiro.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="dl_modelo_inutil_garimpo_ini",
-                    width="stretch",
                 )
             else:
                 st.warning(_msg_sem_espaco_disco_garimpeiro())
@@ -9436,7 +9446,6 @@ if st.session_state.get("confirmado"):
                     file_name="MODELO_canceladas_sem_XML_garimpeiro.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="dl_modelo_cancel_garimpo_ini",
-                    width="stretch",
                 )
             else:
                 st.warning(_msg_sem_espaco_disco_garimpeiro())
@@ -9471,7 +9480,6 @@ if st.session_state.get("confirmado"):
                 file_name="MODELO_autenticidade_Sefaz_garimpeiro.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="dl_modelo_autent_garimpo_ini",
-                width="stretch",
             )
         else:
             st.warning(_msg_sem_espaco_disco_garimpeiro())
@@ -9480,35 +9488,35 @@ if st.session_state.get("confirmado"):
             st.session_state["mariana_zip_save_dir"] = ""
         if "mariana_zip_basename" not in st.session_state:
             st.session_state["mariana_zip_basename"] = ""
-        st.markdown(
-            f'<p style="margin:0.6rem 0 0.25rem 0;font-weight:700;color:#5D1B36;">'
-            f'{_garim_emoji("\U0001f4c2")} Pasta no PC — padrão contabilidade (já no início)</p>',
-            unsafe_allow_html=True,
-        )
         if _streamlit_likely_community_cloud():
             st.caption(
-                "**Versão web:** como **guardar no seu PC** e escolher pasta — veja o quadro **logo abaixo do upload do SPED** "
-                "(painel direito, no **fim** da página, após o garimpo)."
+                "**Versão web:** não há campo de pasta no seu PC — use **Descarregar** nos exportes. "
+                "Para espelho em disco e caminhos `D:\\…`, corra o Garimpeiro **no seu computador** (`streamlit run`)."
             )
         else:
+            st.markdown(
+                f'<p style="margin:0.6rem 0 0.25rem 0;font-weight:700;color:#5D1B36;">'
+                f'{_garim_emoji("\U0001f4c2")} Pasta no PC — padrão contabilidade (já no início)</p>',
+                unsafe_allow_html=True,
+            )
             st.caption(
                 "Cole **aqui** o caminho da pasta **antes** de **Iniciar grande garimpo** — o espelho dos XML grava **já durante a leitura** "
                 "(subpasta **Garimpeiro_lote_espelho**). No **Windows local** use `C:\\…` ou `D:\\…`. "
                 "Se a app estiver num **servidor Linux** (não Cloud), use um caminho desse sistema. "
                 "O mesmo campo serve depois para **Gerar arquivo contabilidade**. Vazio = só ecrã."
             )
-        st.text_input(
-            "Pasta de destino — leitura + pacote contabilidade (caminho completo)",
-            key="mariana_zip_save_dir",
-            placeholder="Ex.: D:\\Contabilidade\\Apuracao — ou vazio para não gravar no disco",
-            help="Shift+clique direito na pasta no Explorador → Copiar como caminho. Uma pasta para espelho durante a leitura e para Excel/ZIPs contabilidade.",
-        )
-        st.text_input(
-            "Prefixo opcional dos nomes dos ZIP (sem .zip)",
-            key="mariana_zip_basename",
-            placeholder="Opcional — ex.: Cliente ou projeto",
-            help="Prefixo sanitizado dos ficheiros .zip do pacote contabilidade.",
-        )
+            st.text_input(
+                "Pasta de destino — leitura + pacote contabilidade (caminho completo)",
+                key="mariana_zip_save_dir",
+                placeholder="Ex.: D:\\Contabilidade\\Apuracao — ou vazio para não gravar no disco",
+                help="Shift+clique direito na pasta no Explorador → Copiar como caminho. Uma pasta para espelho durante a leitura e para Excel/ZIPs contabilidade.",
+            )
+            st.text_input(
+                "Prefixo opcional dos nomes dos ZIP (sem .zip)",
+                key="mariana_zip_basename",
+                placeholder="Opcional — ex.: Cliente ou projeto",
+                help="Prefixo sanitizado dos ficheiros .zip do pacote contabilidade.",
+            )
         if st.button("INICIAR GRANDE GARIMPO"):
             _ui_scroll_to_top()
             # No mesmo rerun do clique o file_uploader por vezes devolve vazio — usar session_state (igual ao «Processar Dados»).
@@ -9883,7 +9891,6 @@ if st.session_state.get("confirmado"):
                 "Atualizar dados e sincronizar pasta XML",
                 key="btn_garim_resync_espelho",
                 help="Relê o lote, recalcula tabelas (mantém registos manuais sem XML) e regrava as pastas xml/ e por_origem/ no espelho.",
-                width="stretch",
             ):
                 footer_sync = st.empty()
                 t0 = time.perf_counter()
@@ -9919,7 +9926,6 @@ if st.session_state.get("confirmado"):
             )
             st.dataframe(
                 _df_resumo_para_exibicao_sem_separador_milhar(st.session_state["df_resumo"]),
-                width="stretch",
                 hide_index=True,
             )
 
@@ -9945,7 +9951,6 @@ if st.session_state.get("confirmado"):
                 )
                 st.dataframe(
                     _df_terceiros_por_tipo_para_exibicao_sem_separador_milhar(_df_terc),
-                    width="stretch",
                     hide_index=True,
                 )
 
@@ -10013,7 +10018,6 @@ if st.session_state.get("confirmado"):
                             st.markdown("**Resumo nos buracos** — quantidade de números em falta por modelo e série")
                             st.dataframe(
                                 _df_rb,
-                                width="stretch",
                                 hide_index=True,
                                 height=min(260, 44 + 28 * max(1, len(_df_rb))),
                             )
@@ -10027,7 +10031,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_buracos.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_buracos_xlsx",
-                                width="stretch",
                             )
                         _painel_zip_xml_filtrado("rep_bur", df_b_f, cnpj_limpo, df_ger)
                     else:
@@ -10045,7 +10048,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_inutilizadas.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_inut_xlsx",
-                                width="stretch",
                             )
                         _painel_zip_xml_filtrado("rep_inu", df_i_f, cnpj_limpo, df_ger)
                     else:
@@ -10063,7 +10065,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_canceladas.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_canc_xlsx",
-                                width="stretch",
                             )
                         _painel_zip_xml_filtrado("rep_canc", df_c_f, cnpj_limpo, df_ger)
                     else:
@@ -10081,7 +10082,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_autorizadas.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_aut_xlsx",
-                                width="stretch",
                             )
                         _painel_zip_xml_filtrado("rep_aut", df_a_f, cnpj_limpo, df_ger)
                     else:
@@ -10099,7 +10099,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_denegadas.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_den_xlsx",
-                                width="stretch",
                             )
                         _painel_zip_xml_filtrado("rep_den", df_d_f, cnpj_limpo, df_ger)
                     else:
@@ -10117,7 +10116,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_rejeitadas.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_rej_xlsx",
-                                width="stretch",
                             )
                         _painel_zip_xml_filtrado("rep_rej", df_r_f, cnpj_limpo, df_ger)
                     else:
@@ -10148,7 +10146,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_geral.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_geral_xlsx",
-                                width="stretch",
                             )
                         elif _full_vista:
                             st.warning(_msg_sem_espaco_disco_garimpeiro())
@@ -10187,7 +10184,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_terceiros_canceladas.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_canc_xlsx_t",
-                                width="stretch",
                             )
                         _painel_zip_xml_filtrado("rep_canc_t", df_c_ft, cnpj_limpo, df_ger)
                     else:
@@ -10205,7 +10201,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_terceiros_autorizadas.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_aut_xlsx_t",
-                                width="stretch",
                             )
                         _painel_zip_xml_filtrado("rep_aut_t", df_a_ft, cnpj_limpo, df_ger)
                     else:
@@ -10223,7 +10218,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_terceiros_denegadas.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_den_xlsx_t",
-                                width="stretch",
                             )
                         _painel_zip_xml_filtrado("rep_den_t", df_d_ft, cnpj_limpo, df_ger)
                     else:
@@ -10241,7 +10235,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_terceiros_rejeitadas.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_rej_xlsx_t",
-                                width="stretch",
                             )
                         _painel_zip_xml_filtrado("rep_rej_t", df_r_ft, cnpj_limpo, df_ger)
                     else:
@@ -10275,7 +10268,6 @@ if st.session_state.get("confirmado"):
                                 file_name="relatorio_geral_terceiros.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_rep_geral_xlsx_t",
-                                width="stretch",
                             )
                         elif _full_vista_t:
                             st.warning(_msg_sem_espaco_disco_garimpeiro())
@@ -10355,14 +10347,13 @@ if st.session_state.get("confirmado"):
                             file_name="MODELO_autenticidade_Sefaz_garimpeiro.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             key="dl_modelo_autent_xlsx",
-                            width="stretch",
                         )
                     else:
                         st.warning(_msg_sem_espaco_disco_garimpeiro())
                     _df_div_ui = st.session_state.get("df_divergencias")
                     if _df_div_ui is not None and isinstance(_df_div_ui, pd.DataFrame) and not _df_div_ui.empty:
                         st.caption(f"**{len(_df_div_ui)}** divergência(s) na última comparação.")
-                        st.dataframe(_df_div_ui, width="stretch", height=min(260, 40 + 24 * len(_df_div_ui)))
+                        st.dataframe(_df_div_ui, height=min(260, 40 + 24 * len(_df_div_ui)))
                     elif st.session_state.get("validation_done"):
                         st.success(
                             "Última comparação de autenticidade: **sem divergências** (ou planilha vazia após cruzamento)."
@@ -10422,7 +10413,6 @@ if st.session_state.get("confirmado"):
                                 file_name="MODELO_inutilizadas_sem_XML_garimpeiro.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_modelo_inut_xlsx",
-                                width="stretch",
                             )
                         else:
                             st.warning(_msg_sem_espaco_disco_garimpeiro())
@@ -10531,7 +10521,6 @@ if st.session_state.get("confirmado"):
                                 file_name="MODELO_canceladas_sem_XML_garimpeiro.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                 key="dl_modelo_canc_xlsx",
-                                width="stretch",
                             )
                         else:
                             st.warning(_msg_sem_espaco_disco_garimpeiro())
@@ -10590,7 +10579,6 @@ if st.session_state.get("confirmado"):
                 if st.button(
                     "Processar Dados",
                     key="btn_reprocessar_garimpo",
-                    width="stretch",
                     type="primary",
                 ):
                     _ef = st.session_state.get("extra_files")
@@ -10753,7 +10741,6 @@ if st.session_state.get("confirmado"):
                             file_name="modelo_lista_especifica_chaves.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             key="dl_modelo_lista_espec_chaves",
-                            width="stretch",
                         )
                     else:
                         st.caption("Modelo indisponível (temp/disco).")
@@ -10814,7 +10801,6 @@ if st.session_state.get("confirmado"):
                             file_name="modelo_lista_especifica_inicial_final_serie.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             key="dl_modelo_lista_espec_ini_fim_ser",
-                            width="stretch",
                         )
                     else:
                         st.caption("Modelo indisponível (espaço em disco/temp).")
@@ -11072,7 +11058,6 @@ if st.session_state.get("confirmado"):
                                     file_name=os.path.basename(part),
                                     mime="application/zip",
                                     key=f"btn_dl_dom_{part}",
-                                    width="stretch",
                                 )
 
         # =====================================================================
@@ -11099,46 +11084,52 @@ if st.session_state.get("confirmado"):
                 key="sped_c100_d100_upload",
             )
             _painel_como_guardar_na_versao_web()
-            st.text_input(
-                "Pasta no PC onde gravar (ZIP, Excel e/ou XML — caminho completo)",
-                key="sped_xml_dest_dir",
-                placeholder="Ex.: D:\\Contabilidade\\XML_do_SPED",
-                help="Usada ao gravar XML soltos **e** ao gerar ZIP/Excel (exportação SPED): os ficheiros são gravados **nesta pasta** no disco. "
-                "Se ficar vazio, o ZIP e o Excel só aparecem nos botões de descarregar abaixo.",
-            )
-            if st.button(
-                "Gravar XML do lote (interseção com chaves C100/D100)",
-                key="btn_sped_gravar_xml_pasta",
-                width="stretch",
-            ):
-                texto_sped = _sped_resolver_texto_de_uploader(sped_efd_up)
-                if not texto_sped:
-                    st.warning(
-                        "Anexe o **.txt** do SPED aqui ou no **opcional do primeiro passo** (fica na sessão ao iniciar o garimpo)."
-                    )
-                else:
-                    _p_sped, _err_sped = _pasta_destino_sped_xml_para_gravar()
-                    if _err_sped:
-                        st.warning(_err_sped)
+            if not _streamlit_likely_community_cloud():
+                st.text_input(
+                    "Pasta no PC onde gravar (ZIP, Excel e/ou XML — caminho completo)",
+                    key="sped_xml_dest_dir",
+                    placeholder="Ex.: D:\\Contabilidade\\XML_do_SPED",
+                    help="Usada ao gravar XML soltos **e** ao gerar ZIP/Excel (exportação SPED): os ficheiros são gravados **nesta pasta** no disco. "
+                    "Se ficar vazio, o ZIP e o Excel só aparecem nos botões de descarregar abaixo.",
+                )
+            if not _streamlit_likely_community_cloud():
+                if st.button(
+                    "Gravar XML do lote (interseção com chaves C100/D100)",
+                    key="btn_sped_gravar_xml_pasta",
+                ):
+                    texto_sped = _sped_resolver_texto_de_uploader(sped_efd_up)
+                    if not texto_sped:
+                        st.warning(
+                            "Anexe o **.txt** do SPED aqui ou no **opcional do primeiro passo** (fica na sessão ao iniciar o garimpo)."
+                        )
                     else:
-                        with st.spinner("A ler SPED e a gravar XML…"):
-                            _ng, _nf, _msg_sped = gravar_xml_lote_filtrado_por_chaves_sped(
-                                cnpj_limpo, texto_sped, _p_sped
-                            )
-                        if _ng > 0:
-                            st.success(_msg_sped)
+                        _p_sped, _err_sped = _pasta_destino_sped_xml_para_gravar()
+                        if _err_sped:
+                            st.warning(_err_sped)
                         else:
-                            st.warning(_msg_sped)
+                            with st.spinner("A ler SPED e a gravar XML…"):
+                                _ng, _nf, _msg_sped = gravar_xml_lote_filtrado_por_chaves_sped(
+                                    cnpj_limpo, texto_sped, _p_sped
+                                )
+                            if _ng > 0:
+                                st.success(_msg_sped)
+                            else:
+                                st.warning(_msg_sped)
 
-            st.markdown(
-                "**Exportação SPED** (ZIP com XML cruzados + Excel de pendências). "
-                "Se preencheu a **pasta** acima, o ZIP e o Excel são gravados **no disco** nessa pasta; "
-                "sempre pode também usar os botões de descarregar."
-            )
+            if _streamlit_likely_community_cloud():
+                st.markdown(
+                    "**Exportação SPED** (ZIP com XML cruzados + Excel de pendências). "
+                    "Na web use os **botões Descarregar** abaixo; para gravar direto numa pasta do PC, use o Garimpeiro **localmente**."
+                )
+            else:
+                st.markdown(
+                    "**Exportação SPED** (ZIP com XML cruzados + Excel de pendências). "
+                    "Se preencheu a **pasta** acima, o ZIP e o Excel são gravados **no disco** nessa pasta; "
+                    "sempre pode também usar os botões de descarregar."
+                )
             if st.button(
                 "Gerar ZIP e Excel (exportação SPED)",
                 key="btn_sped_gera_zip_xlsx",
-                width="stretch",
             ):
                 texto_sped = _sped_resolver_texto_de_uploader(sped_efd_up)
                 if not texto_sped:
@@ -11200,7 +11191,6 @@ if st.session_state.get("confirmado"):
                     file_name="SPED_intersecao_lote_xml.zip",
                     mime="application/zip",
                     key="dl_sped_zip_intersecao",
-                    width="stretch",
                 )
             if _xexp:
                 st.download_button(
@@ -11209,12 +11199,10 @@ if st.session_state.get("confirmado"):
                     file_name="SPED_sem_XML_no_lote.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="dl_sped_xlsx_pend",
-                    width="stretch",
                 )
             if st.button(
                 "Limpar ficheiros gerados (ZIP/Excel em memória)",
                 key="btn_sped_clear_export",
-                width="stretch",
             ):
                 st.session_state.pop("sped_export_zip", None)
                 st.session_state.pop("sped_export_xlsx", None)
