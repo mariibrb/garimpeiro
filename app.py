@@ -7048,11 +7048,11 @@ with st.sidebar:
         st.error("âš ï¸ CNPJ InvÃ¡lido.")
         
     if len(cnpj_limpo) == 14:
-        if st.button("âœ… Liberar operação"): 
+        if st.button("\u2705 Liberar operação"):
             st.session_state['confirmado'] = True
 
         if cnpj_limpo == CNPJ_CLIENTE_EXPORT_SERIE4_ZIP50MB:
-            with st.expander("ðŸ“¦ ZIP sÃ©rie 4 — emitidas (~50 MB)", expanded=False):
+            with st.expander("\U0001f4e6 ZIP série 4 — emitidas (~50 MB)", expanded=False):
                 st.caption(
                     "Gera ZIPs só com **NF-e / NFC-e autorizadas** (NORMAIS), **série 4**, **emissão própria**, "
                     f"a partir do lote atual. Cada ficheiro tem no máximo **~{ZIP50_SERIE4_MAX_BYTES // (1024 * 1024)} MB**."
@@ -7080,7 +7080,7 @@ with st.sidebar:
                         st.caption(f"{len(_zp)} ficheiro(s) na última geração.")
                         for _zi, (_zfn, _zblob) in enumerate(_zp):
                             st.download_button(
-                                f"â¬‡️ {_zfn}",
+                                f"\u2b07\ufe0f {_zfn}",
                                 data=_zblob,
                                 file_name=_zfn,
                                 mime="application/zip",
@@ -7091,7 +7091,7 @@ with st.sidebar:
                             st.session_state[SESSION_KEY_SERIE4_ZIP50_PARTS] = None
                             st.rerun()
 
-        with st.expander("ðŸ“Œ Ãšltimos nº / séries (mês ref.)", expanded=False):
+        with st.expander("\U0001f4cc Últimos nº / séries (mês ref.)", expanded=False):
             st.caption(
                 "Mês de referência + por linha modelo, série e último nº. **Só essas séries** entram no cálculo de **buracos** (a partir desse último nº); as outras séries do lote ignoram-se nos buracos."
             )
@@ -7287,7 +7287,7 @@ with st.sidebar:
 
     st.markdown("---")
 
-    if st.button("ðŸ—‘️ Resetar sistema"):
+    if st.button("\U0001f5d1\ufe0f Resetar sistema"):
         limpar_arquivos_temp()
         st.session_state.clear()
         st.rerun()
@@ -7303,7 +7303,7 @@ def _garim_etapa3_corpo(cnpj_limpo):
             "Esta secção corre em **modo fragmento**: ao mudar filtros aqui, a página **não** recalcula tabelas e o painel de uploads acima — resposta mais rápida."
         )
     # Não usar st.expander aqui: esta função corre dentro do expander «Etapa 3» (Streamlit proíbe expanders aninhados).
-    if st.checkbox("ðŸ“– Como isto funciona", value=False, key="garim_e3_como_funciona"):
+    if st.checkbox("\U0001f4d6 Como isto funciona", value=False, key="garim_e3_como_funciona"):
         st.markdown(
             """
     <div style="background:#fff8fc;border:1px solid #f8bbd9;border-radius:10px;padding:14px 16px;margin-bottom:14px;font-size:0.93rem;line-height:1.55;color:#333;">
@@ -7314,8 +7314,8 @@ def _garim_etapa3_corpo(cnpj_limpo):
     • <b>ZIP todo o lote</b> — ignora filtros para escolher XML; Excel completo dentro de cada ZIP.<br/>
     • <b>ZIP filtrado</b> — só XML que passam nos filtros; Excel coerente com esse conjunto.<br/>
     • <b>Só Excel</b> — sem XML.<br/><br/>
-    <b>Descargas</b> — sempre em <b>dois ficheiros</b> (prÃ³pria e terceiros). Nos ZIP, o Excel estÃ¡ em <code>RELATORIO_GARIMPEIRO/</code> (atÃ© 10â€¯000 XML por parte).<br/><br/>
-    <b>Pacote contabilidade / matriz</b> (se aparecer em baixo) — exporta o lote lido; filtros da Etapa 3 <b>não</b> cortam. Na pasta escolhida: <b>Excel solto</b> (<code>…_relatorio_garimpeiro_completo.xlsx</code>, sem folha Painel Fiscal) + ZIPs. Em cada ZIP: pasta <code>XML/Lote_001</code>, <code>Lote_002</code>, … (até 10&nbsp;000 XML por pasta) + Excel na raiz com nome <code>relatorio_garimpeiro_…</code> (inclui sÃ©rie/mÃªs/grupo, para nÃ£o se sobrepor ao extrair); o .zip pode incluir <code>_notas_</code> inicialâ€“final. <b>Emitidas</b>: um ZIP por série, status e <b>mês de emissão</b> (<code>Mes_AAAA_MM</code>); <b>Terceiros</b>: por modelo e status (sem mês).
+    <b>Descargas</b> — sempre em <b>dois ficheiros</b> (própria e terceiros). Nos ZIP, o Excel está em <code>RELATORIO_GARIMPEIRO/</code> (até 10&nbsp;000 XML por parte).<br/><br/>
+    <b>Pacote contabilidade / matriz</b> (se aparecer em baixo) — exporta o lote lido; filtros da Etapa 3 <b>não</b> cortam. Na pasta escolhida: <b>Excel solto</b> (<code>…_relatorio_garimpeiro_completo.xlsx</code>, sem folha Painel Fiscal) + ZIPs. Em cada ZIP: pasta <code>XML/Lote_001</code>, <code>Lote_002</code>, … (até 10&nbsp;000 XML por pasta) + Excel na raiz com nome <code>relatorio_garimpeiro_…</code> (inclui série/mês/grupo, para não se sobrepor ao extrair); o .zip pode incluir <code>_notas_</code> inicial–final. <b>Emitidas</b>: um ZIP por série, status e <b>mês de emissão</b> (<code>Mes_AAAA_MM</code>); <b>Terceiros</b>: por modelo e status (sem mês).
     </div>
             """,
             unsafe_allow_html=True,
@@ -9933,4 +9933,4 @@ if st.session_state.get("confirmado"):
                                     width="stretch",
                                 )
 else:
-    st.warning("ðŸ‘ˆ Insira o CNPJ lateral para começar.")
+    st.warning("\U0001f448 Insira o CNPJ lateral para começar.")
