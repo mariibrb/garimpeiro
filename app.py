@@ -8135,7 +8135,7 @@ def _garim_etapa3_corpo(cnpj_limpo):
     • <b>ZIP filtrado</b> — só XML que passam nos filtros; Excel coerente com esse conjunto.<br/>
     • <b>Só Excel</b> — sem XML.<br/><br/>
     <b>Descargas</b> — sempre em <b>dois ficheiros</b> (própria e terceiros). Nos ZIP, o Excel está em <code>RELATORIO_GARIMPEIRO/</code> (até 10&nbsp;000 XML por parte).<br/><br/>
-    <b>Pacote contabilidade / matriz</b> (se aparecer em baixo) — exporta o lote lido; filtros da Etapa 3 <b>não</b> cortam. Na pasta escolhida: <b>Excel solto</b> (<code>…_relatorio_garimpeiro_completo.xlsx</code>, sem folha Painel Fiscal) + ZIPs. Em cada ZIP: pasta <code>XML/Lote_001</code>, <code>Lote_002</code>, … (até 10&nbsp;000 XML por pasta) + Excel na raiz com nome <code>relatorio_garimpeiro_…</code> (inclui série/mês/grupo, para não se sobrepor ao extrair); o .zip pode incluir <code>_notas_</code> inicial–final. <b>Emitidas</b>: um ZIP por série, status e <b>mês de emissão</b> (<code>Mes_AAAA_MM</code>); <b>Terceiros</b>: por modelo e status (sem mês).
+    <b>Pacote contabilidade / matriz</b> (secção <b>Pacote contabilidade</b>, logo abaixo do quadro ZIP/Excel) — exporta o lote lido; filtros da Etapa 3 <b>não</b> cortam. Na pasta escolhida: <b>Excel solto</b> (<code>…_relatorio_garimpeiro_completo.xlsx</code>, sem folha Painel Fiscal) + ZIPs. Em cada ZIP: pasta <code>XML/Lote_001</code>, <code>Lote_002</code>, … (até 10&nbsp;000 XML por pasta) + Excel na raiz com nome <code>relatorio_garimpeiro_…</code> (inclui série/mês/grupo, para não se sobrepor ao extrair); o .zip pode incluir <code>_notas_</code> inicial–final. <b>Emitidas</b>: um ZIP por série, status e <b>mês de emissão</b> (<code>Mes_AAAA_MM</code>); <b>Terceiros</b>: por modelo e status (sem mês).
     </div>
             """,
             unsafe_allow_html=True,
@@ -8265,15 +8265,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
         if st.session_state.get("v2_export_sig") != _sig_now:
             _v2_limpar_estado_exportacao_etapa3(remover_zip_do_disco=False)
             st.session_state["v2_show_regen_hint"] = True
-    
-    if st.session_state.get("mariana_export_ready"):
-        _sig_mar = v2_assinatura_pacote_matriz_sessao(df_g_base)
-        if st.session_state.get("mariana_export_sig") != _sig_mar:
-            st.session_state.pop("mariana_zip_parts", None)
-            st.session_state["mariana_export_ready"] = False
-            st.session_state.pop("mariana_export_sig", None)
-            st.session_state.pop("mariana_sem_xml_msg", None)
-            st.session_state.pop("mariana_excel_completo_path", None)
     
     if st.session_state.pop("v2_show_regen_hint", False):
         st.caption(
@@ -8659,9 +8650,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
             "dis_tc": _dis_tc,
             "dis_ambos": _dis_ambos,
         }
-    
-    _pacote_matriz_btn_dis = df_g_base.empty
-    gen_pacote_matriz = False
 
     if str(st.session_state.get("v2_export_format", "")).startswith("zip_"):
         if "v2_etapa3_zip_save_dir" not in st.session_state:
@@ -9174,6 +9162,29 @@ def _garim_etapa3_corpo(cnpj_limpo):
                     width="stretch",
                 )
 
+
+def _garim_etapa3_contabilidade_corpo(cnpj_limpo):
+    """Pacote contabilidade (Mariana) — imediatamente abaixo do expander ZIP/Excel (mesmo fragmento)."""
+    st.markdown(
+        f'<p style="margin:0.5rem 0 0.35rem 0;font-weight:700;color:#5D1B36;">'
+        f'{_garim_emoji("\U0001f4be")} Pacote contabilidade (disco / matriz)</p>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Separado dos filtros acima — exporta o **lote completo** lido no garimpo (não aplica filtros ZIP/Excel)."
+    )
+    df_g_base = st.session_state["df_geral"]
+    if st.session_state.get("mariana_export_ready"):
+        _sig_mar = v2_assinatura_pacote_matriz_sessao(df_g_base)
+        if st.session_state.get("mariana_export_sig") != _sig_mar:
+            st.session_state.pop("mariana_zip_parts", None)
+            st.session_state["mariana_export_ready"] = False
+            st.session_state.pop("mariana_export_sig", None)
+            st.session_state.pop("mariana_sem_xml_msg", None)
+            st.session_state.pop("mariana_excel_completo_path", None)
+
+    _pacote_matriz_btn_dis = df_g_base.empty
+
     st.markdown("---")
     st.download_button(
         "Descarregar guia — estrutura ZIP / LEIAME (.txt)",
@@ -9202,10 +9213,23 @@ def _garim_etapa3_corpo(cnpj_limpo):
         placeholder="Opcional — ex.: ClienteABC",
         help="Prefixo opcional dos ficheiros .zip (sanitizado). Se vazio, a app usa um nome interno.",
     )
+    _btn_mariana_ok = _is_mariana_pc_bundle()
+    if not _btn_mariana_ok:
+        st.info(
+            "**O botão fica desativado aqui** porque a app **não está em modo «gravar pacote no disco»** "
+            "(típico na **internet / Streamlit Cloud**, onde não há o seu `D:\\…`).\n\n"
+            "**Para ativar:** corra o Garimpeiro **no seu PC** com `streamlit run` (normalmente já ativa); **ou** na Cloud defina "
+            "`GARIMPEIRO_MARIANA_PC=1` nas secrets; **ou** um ficheiro vazio `.mariana_pc` na pasta do projeto. "
+            "Se definiu `GARIMPEIRO_MARIANA_PC=0`, isso **força** o botão desligado."
+        )
+    elif _pacote_matriz_btn_dis:
+        st.warning(
+            "**Sem dados para exportar:** o relatório geral está vazio. Conclua o **garimpo** com XML no lote antes de gerar o pacote."
+        )
     gen_pacote_matriz = st.button(
         "Gerar arquivo contabilidade",
         key="v2_btn_mariana_zip",
-        disabled=(not _is_mariana_pc_bundle()) or _pacote_matriz_btn_dis,
+        disabled=(not _btn_mariana_ok) or _pacote_matriz_btn_dis,
         width="stretch",
     )
     if gen_pacote_matriz:
@@ -9309,13 +9333,17 @@ def _garim_etapa3_corpo(cnpj_limpo):
 
 
 def _garim_etapa3_fragment_entry():
-    """Ponto de entrada estável para `st.fragment` (evita redefinir a função a cada rerun)."""
+    """Expander «Filtros e exportação» + bloco contabilidade no mesmo fragmento (rerun parcial coerente)."""
     _cx = "".join(c for c in str(st.session_state.get("cnpj_widget", "")) if c.isdigit())[:14]
-    _garim_etapa3_corpo(_cx)
+    with st.expander(
+        "\U0001f4e6 Filtros e exportação (ZIP / Excel)",
+        expanded=False,
+    ):
+        _garim_etapa3_corpo(_cx)
+    _garim_etapa3_contabilidade_corpo(_cx)
 
 
 if st.session_state.get("confirmado"):
-    _painel_como_guardar_na_versao_web()
     if not st.session_state.get("garimpo_ok"):
         st.markdown(
             f'<h5>{_garim_emoji("\U0001f4c4")} Documentos XML / ZIP para ler</h5>',
@@ -9335,9 +9363,8 @@ if st.session_state.get("confirmado"):
         )
         if _streamlit_likely_community_cloud():
             st.caption(
-                "**Nesta versão web:** para **guardar no seu PC e escolher a pasta**, use os **Descarregar** depois do garimpo "
-                "(o browser pergunta onde guardar). O campo abaixo só serve para caminho **no servidor** (opcional, ex. `./export_lote`); "
-                "**não** cole `C:\\Users\\…` aqui."
+                "**Versão web:** como **guardar no seu PC** e escolher pasta — veja o quadro **logo abaixo do upload do SPED** "
+                "(painel direito, no **fim** da página, após o garimpo)."
             )
         else:
             st.caption(
@@ -9411,6 +9438,36 @@ if st.session_state.get("confirmado"):
             type=["txt"],
             key="sped_sessao_upload_ini",
         )
+        st.markdown(
+            f'<p style="margin:0.85rem 0 0.35rem 0;font-weight:600;">{_garim_emoji("\U0001f50d")} Planilha(s) de autenticidade Sefaz (opcional)</p>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Se já tiver o relatório **exportado do portal da Sefaz** (lista de autorizadas / emitidas), anexe aqui — "
+            "é o mesmo campo do painel direito **Validação de autenticidade**; ao clicar **Processar dados** a app compara com o lote."
+        )
+        st.file_uploader(
+            "Relatório(is) Sefaz para autenticidade (.csv, .xlsx ou .xls)",
+            type=["csv", "xlsx", "xls"],
+            accept_multiple_files=True,
+            key="autent_sefaz_up",
+        )
+        st.caption(
+            "Colunas: **Modelo**, **Série**, **Nota** (ou Número) — pode anexar **vários** ficheiros. "
+            "Mesmo critério da planilha de inutilizadas para cabeçalhos."
+        )
+        _bytes_m_aut_ini = bytes_modelo_planilha_inutil_sem_xml_xlsx()
+        if _bytes_m_aut_ini:
+            st.download_button(
+                "Baixar modelo de colunas — autenticidade (Excel)",
+                data=_bytes_m_aut_ini,
+                file_name="MODELO_autenticidade_Sefaz_garimpeiro.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_modelo_autent_garimpo_ini",
+                width="stretch",
+            )
+        else:
+            st.warning(_msg_sem_espaco_disco_garimpeiro())
         if st.button("INICIAR GRANDE GARIMPO"):
             # No mesmo rerun do clique o file_uploader por vezes devolve vazio — usar session_state (igual ao «Processar Dados»).
             _ufs = uploaded_files
@@ -9877,7 +9934,7 @@ if st.session_state.get("confirmado"):
 
             with st.expander(
                 "\U0001f3e2 Emissão própria — buracos, inutilizadas, canceladas, autorizadas, denegadas, rejeitadas e relatório geral",
-                expanded=True,
+                expanded=False,
             ):
                 _n_bur = len(df_fal) if not df_fal.empty else 0
                 _n_inu = len(df_inu) if not df_inu.empty else 0
@@ -10058,8 +10115,8 @@ if st.session_state.get("confirmado"):
                         st.info("Sem linhas de emissão própria no relatório geral.")
 
             with st.expander(
-                "\U0001f91d Terceiros — XML recebidos (canceladas, autorizadas, denegadas, rejeitadas e relatório geral)",
-                expanded=True,
+                "\U0001f91d Terceiros — XML recebidos — canceladas, autorizadas, denegadas, rejeitadas e relatório geral",
+                expanded=False,
             ):
                 _tca = _folhas_t["df_can"]
                 _tau = _folhas_t["df_aut"]
@@ -10200,83 +10257,6 @@ if st.session_state.get("confirmado"):
                     f'<h5>{_garim_emoji("\U0001f4e4")} Uploads e validação</h5>',
                     unsafe_allow_html=True,
                 )
-                st.markdown(
-                    f'<h5>{_garim_emoji("\u2699\ufe0f")} Processar Dados (leitura completa do lote)</h5>',
-                    unsafe_allow_html=True,
-                )
-                st.caption(
-                    "Grava XML/ZIP extra, aplica inutilizações / canceladas manuais e compara **autenticidade** se anexou planilhas — "
-                    "**um clique** recalcula tudo a partir da pasta de uploads. Pode usar já; ou preencha primeiro os separadores abaixo."
-                )
-                if st.button(
-                    "Processar Dados",
-                    key="btn_reprocessar_garimpo",
-                    width="stretch",
-                    type="primary",
-                ):
-                    _ef = st.session_state.get("extra_files")
-                    if _ef is not None and not isinstance(_ef, (list, tuple)):
-                        _ef = [_ef]
-                    _pick = list(st.session_state.get("inut_b_pick") or [])
-                    _mb = st.session_state.get("inut_b_mod")
-                    _sb = st.session_state.get("inut_b_ser")
-                    _up_pl = st.session_state.get("inut_planilha_up")
-                    _mf = st.session_state.get("inut_f_mod", "NF-e")
-                    _sf = st.session_state.get("inut_f_ser", "1")
-                    _n0 = int(st.session_state.get("inut_f_i", 1))
-                    _n1 = int(st.session_state.get("inut_f_f", 1))
-                    _pick_c = list(st.session_state.get("canc_b_pick") or [])
-                    _mbc = st.session_state.get("canc_b_mod")
-                    _sbc = st.session_state.get("canc_b_ser")
-                    _up_canc = st.session_state.get("canc_planilha_up")
-                    _mfc = st.session_state.get("canc_f_mod", "NF-e")
-                    _sfc = st.session_state.get("canc_f_ser", "1")
-                    _n0c = int(st.session_state.get("canc_f_i", 1))
-                    _n1c = int(st.session_state.get("canc_f_f", 1))
-                    _up_aut = st.session_state.get("autent_sefaz_up")
-                    if _up_aut is not None and not isinstance(_up_aut, (list, tuple)):
-                        _up_aut = [_up_aut]
-                    _txt_inut = str(st.session_state.get("inut_planilha_paste") or "").strip()
-                    _txt_canc = str(st.session_state.get("canc_planilha_paste") or "").strip()
-                    _footer_proc = st.empty()
-                    _t_proc = time.perf_counter()
-                    try:
-                        with st.spinner("A gravar, aplicar inutilizações / canceladas e a recalcular…"):
-                            _ok_all, _msg_all, _ = processar_painel_lateral_direito(
-                                cnpj_limpo,
-                                _ef,
-                                _pick,
-                                _mb,
-                                _sb,
-                                _up_pl,
-                                _mf,
-                                _sf,
-                                _n0,
-                                _n1,
-                                pick_bur_canc=_pick_c,
-                                mb_canc=_mbc,
-                                sb_canc=_sbc,
-                                up_canc_planilha=_up_canc,
-                                mf_canc_f=_mfc,
-                                sf_canc_f=_sfc,
-                                n0_canc_f=_n0c,
-                                n1_canc_f=_n1c,
-                                up_autent_sefaz=_up_aut,
-                                footer_ph=_footer_proc,
-                                t_start=_t_proc,
-                                texto_inut_planilha=_txt_inut or None,
-                                texto_canc_planilha=_txt_canc or None,
-                            )
-                    finally:
-                        try:
-                            _footer_proc.empty()
-                        except Exception:
-                            pass
-                    if _ok_all:
-                        st.success(_msg_all)
-                    else:
-                        st.warning(_msg_all)
-                    st.rerun()
 
                 st.divider()
 
@@ -10556,6 +10536,85 @@ if st.session_state.get("confirmado"):
                             f"({len(_bur_cfu)} buraco(s) conhecidos)."
                         )
 
+                st.divider()
+                st.markdown(
+                    f'<h5>{_garim_emoji("\u2699\ufe0f")} Processar Dados (leitura completa do lote)</h5>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "Grava XML/ZIP extra, aplica inutilizações / canceladas manuais e compara **autenticidade** se anexou planilhas — "
+                    "**um clique** recalcula tudo a partir da pasta de uploads. Preencha **acima** o que precisar (XML extra, autenticidade, inutilizadas, canceladas) e confirme aqui; ou use já para só recalcular com o lote atual."
+                )
+                if st.button(
+                    "Processar Dados",
+                    key="btn_reprocessar_garimpo",
+                    width="stretch",
+                    type="primary",
+                ):
+                    _ef = st.session_state.get("extra_files")
+                    if _ef is not None and not isinstance(_ef, (list, tuple)):
+                        _ef = [_ef]
+                    _pick = list(st.session_state.get("inut_b_pick") or [])
+                    _mb = st.session_state.get("inut_b_mod")
+                    _sb = st.session_state.get("inut_b_ser")
+                    _up_pl = st.session_state.get("inut_planilha_up")
+                    _mf = st.session_state.get("inut_f_mod", "NF-e")
+                    _sf = st.session_state.get("inut_f_ser", "1")
+                    _n0 = int(st.session_state.get("inut_f_i", 1))
+                    _n1 = int(st.session_state.get("inut_f_f", 1))
+                    _pick_c = list(st.session_state.get("canc_b_pick") or [])
+                    _mbc = st.session_state.get("canc_b_mod")
+                    _sbc = st.session_state.get("canc_b_ser")
+                    _up_canc = st.session_state.get("canc_planilha_up")
+                    _mfc = st.session_state.get("canc_f_mod", "NF-e")
+                    _sfc = st.session_state.get("canc_f_ser", "1")
+                    _n0c = int(st.session_state.get("canc_f_i", 1))
+                    _n1c = int(st.session_state.get("canc_f_f", 1))
+                    _up_aut = st.session_state.get("autent_sefaz_up")
+                    if _up_aut is not None and not isinstance(_up_aut, (list, tuple)):
+                        _up_aut = [_up_aut]
+                    _txt_inut = str(st.session_state.get("inut_planilha_paste") or "").strip()
+                    _txt_canc = str(st.session_state.get("canc_planilha_paste") or "").strip()
+                    _footer_proc = st.empty()
+                    _t_proc = time.perf_counter()
+                    try:
+                        with st.spinner("A gravar, aplicar inutilizações / canceladas e a recalcular…"):
+                            _ok_all, _msg_all, _ = processar_painel_lateral_direito(
+                                cnpj_limpo,
+                                _ef,
+                                _pick,
+                                _mb,
+                                _sb,
+                                _up_pl,
+                                _mf,
+                                _sf,
+                                _n0,
+                                _n1,
+                                pick_bur_canc=_pick_c,
+                                mb_canc=_mbc,
+                                sb_canc=_sbc,
+                                up_canc_planilha=_up_canc,
+                                mf_canc_f=_mfc,
+                                sf_canc_f=_sfc,
+                                n0_canc_f=_n0c,
+                                n1_canc_f=_n1c,
+                                up_autent_sefaz=_up_aut,
+                                footer_ph=_footer_proc,
+                                t_start=_t_proc,
+                                texto_inut_planilha=_txt_inut or None,
+                                texto_canc_planilha=_txt_canc or None,
+                            )
+                    finally:
+                        try:
+                            _footer_proc.empty()
+                        except Exception:
+                            pass
+                    if _ok_all:
+                        st.success(_msg_all)
+                    else:
+                        st.warning(_msg_all)
+                    st.rerun()
+
                 # =====================================================================
                 # MÃ“DULO: DESFAZER REGISTO MANUAL (inutil. / cancel.)
                 # =====================================================================
@@ -10609,14 +10668,10 @@ if st.session_state.get("confirmado"):
                                 st.warning("Selecione pelo menos um registo.")
 
         st.divider()
-        with st.expander(
-            "\U0001f4e6 Etapa 3 — Filtros e exportação (ZIP / Excel)",
-            expanded=False,
-        ):
-            if hasattr(st, "fragment"):
-                st.fragment(_garim_etapa3_fragment_entry)()
-            else:
-                _garim_etapa3_fragment_entry()
+        if hasattr(st, "fragment"):
+            st.fragment(_garim_etapa3_fragment_entry)()
+        else:
+            _garim_etapa3_fragment_entry()
 
         if st.button("NOVO GARIMPO / LIMPAR TUDO"):
             limpar_arquivos_temp(); st.session_state.clear(); st.rerun()
@@ -11004,6 +11059,7 @@ if st.session_state.get("confirmado"):
                 type=["txt"],
                 key="sped_c100_d100_upload",
             )
+            _painel_como_guardar_na_versao_web()
             st.text_input(
                 "Pasta no PC onde gravar (ZIP, Excel e/ou XML — caminho completo)",
                 key="sped_xml_dest_dir",
