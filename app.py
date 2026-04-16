@@ -46,6 +46,7 @@ from datetime import date, datetime
 import unicodedata
 import json
 import time
+import tempfile
 import html as html_escape
 from pathlib import Path
 
@@ -912,6 +913,22 @@ def _mariana_destino_zip_para_gravar():
         p.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         return None, f"Não foi possível criar ou aceder à pasta: {e}"
+    return p, None
+
+
+def _mariana_destino_temp_para_descarga():
+    """
+    Pasta efémera no servidor para gerar o pacote contabilidade quando não há pasta do utilizador (ex.: web).
+    O utilizador descarrega os ZIP/Excel pelo browser — sem caminho D:\\ no formulário.
+    """
+    try:
+        os.makedirs(TEMP_UPLOADS_DIR, exist_ok=True)
+    except OSError as e:
+        return None, f"Não foi possível preparar pasta temporária: {e}"
+    try:
+        p = Path(tempfile.mkdtemp(prefix="mariana_web_", dir=TEMP_UPLOADS_DIR))
+    except (OSError, ValueError) as e:
+        return None, f"Não foi possível criar pasta temporária: {e}"
     return p, None
 
 
@@ -9165,14 +9182,6 @@ def _garim_etapa3_corpo(cnpj_limpo):
 
 def _garim_etapa3_contabilidade_corpo(cnpj_limpo):
     """Pacote contabilidade (Mariana) — imediatamente abaixo do expander ZIP/Excel (mesmo fragmento)."""
-    st.markdown(
-        f'<p style="margin:0.5rem 0 0.35rem 0;font-weight:700;color:#5D1B36;">'
-        f'{_garim_emoji("\U0001f4be")} Pacote contabilidade (disco / matriz)</p>',
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "Separado dos filtros acima — exporta o **lote completo** lido no garimpo (não aplica filtros ZIP/Excel)."
-    )
     df_g_base = st.session_state["df_geral"]
     if st.session_state.get("mariana_export_ready"):
         _sig_mar = v2_assinatura_pacote_matriz_sessao(df_g_base)
@@ -9184,53 +9193,73 @@ def _garim_etapa3_contabilidade_corpo(cnpj_limpo):
             st.session_state.pop("mariana_excel_completo_path", None)
 
     _pacote_matriz_btn_dis = df_g_base.empty
+    _btn_pc = _is_mariana_pc_bundle()
 
-    st.markdown("---")
-    st.download_button(
-        "Descarregar guia — estrutura ZIP / LEIAME (.txt)",
-        data=_LEIAME_ESTRUTURA_CONTABILIDADE.encode("utf-8"),
-        file_name="LEIAME_pacote_contabilidade.txt",
-        mime="text/plain; charset=utf-8",
-        key="v2_dl_leiame_padrao_contabilidade",
-        width="stretch",
+    st.markdown(
+        f'<p style="margin:0.5rem 0 0.35rem 0;font-weight:700;color:#5D1B36;">'
+        f'{_garim_emoji("\U0001f4be")} Pacote contabilidade (disco / matriz)</p>',
+        unsafe_allow_html=True,
     )
+    if _btn_pc:
+        st.caption(
+            "Separado dos filtros acima — **lote completo** do garimpo (sem filtros ZIP/Excel). "
+            "Indique uma pasta **no seu PC** para gravar o Excel e os ZIPs."
+        )
+    else:
+        st.caption(
+            "Separado dos filtros acima — **lote completo** do garimpo (sem filtros ZIP/Excel). "
+            "**Na web**, clique em **Gerar pacote para descarregar** e use os botões **Descarregar** (não é preciso colar caminho `D:\\`)."
+        )
 
-    st.markdown("---")
-    st.markdown("##### Colar pasta no PC — Excel + todos os ZIPs (contabilidade / matriz)")
-    st.caption(
-        "Se já preencheu a pasta no **1.º passo**, o caminho aparece aqui; pode alterar antes de **Gerar arquivo contabilidade**."
-    )
+    with st.expander("Guia LEIAME — estrutura dos ZIPs (opcional)", expanded=False):
+        st.download_button(
+            "Descarregar guia — estrutura ZIP / LEIAME (.txt)",
+            data=_LEIAME_ESTRUTURA_CONTABILIDADE.encode("utf-8"),
+            file_name="LEIAME_pacote_contabilidade.txt",
+            mime="text/plain; charset=utf-8",
+            key="v2_dl_leiame_padrao_contabilidade",
+            width="stretch",
+        )
+
     if "mariana_zip_save_dir" not in st.session_state:
         st.session_state["mariana_zip_save_dir"] = ""
-    st.text_input(
-        "Pasta onde gravar tudo (caminho completo — cole do Explorador)",
-        key="mariana_zip_save_dir",
-        help="Obrigatório antes de gerar. Uma só pasta: aqui ficam o Excel solto e todos os ZIPs Emitidas_… / Terceiros_…",
-    )
+    if "mariana_zip_basename" not in st.session_state:
+        st.session_state["mariana_zip_basename"] = ""
+
+    if _btn_pc:
+        st.markdown("##### Pasta no PC — Excel + ZIPs")
+        st.caption(
+            "Se já definiu a pasta no **1.º passo**, o caminho aparece aqui; pode alterar antes de gravar."
+        )
+        st.text_input(
+            "Pasta onde gravar tudo (caminho completo — cole do Explorador)",
+            key="mariana_zip_save_dir",
+            help="Obrigatório para gravar no disco. Uma só pasta: Excel solto + ZIPs Emitidas_… / Terceiros_…",
+        )
+
     st.text_input(
         "Prefixo opcional dos nomes dos ZIP (sem .zip)",
         key="mariana_zip_basename",
         placeholder="Opcional — ex.: ClienteABC",
         help="Prefixo opcional dos ficheiros .zip (sanitizado). Se vazio, a app usa um nome interno.",
     )
-    _btn_mariana_ok = _is_mariana_pc_bundle()
-    if not _btn_mariana_ok:
-        st.info(
-            "**O botão fica desativado aqui** porque a app **não está em modo «gravar pacote no disco»** "
-            "(típico na **internet / Streamlit Cloud**, onde não há o seu `D:\\…`).\n\n"
-            "**Para ativar:** corra o Garimpeiro **no seu PC** com `streamlit run` (normalmente já ativa); **ou** na Cloud defina "
-            "`GARIMPEIRO_MARIANA_PC=1` nas secrets; **ou** um ficheiro vazio `.mariana_pc` na pasta do projeto. "
-            "Se definiu `GARIMPEIRO_MARIANA_PC=0`, isso **força** o botão desligado."
-        )
-    elif _pacote_matriz_btn_dis:
-        st.warning(
-            "**Sem dados para exportar:** o relatório geral está vazio. Conclua o **garimpo** com XML no lote antes de gerar o pacote."
-        )
+
+    _path_ok_pc = bool(str(st.session_state.get("mariana_zip_save_dir") or "").strip())
+    _btn_dis = _pacote_matriz_btn_dis or (_btn_pc and not _path_ok_pc)
+    if _pacote_matriz_btn_dis:
+        st.warning("Relatório geral vazio — conclua o **garimpo** antes de gerar o pacote.")
+    elif _btn_pc and not _path_ok_pc:
+        st.caption("Preencha a **pasta completa** acima para gravar no disco.")
+
+    _lbl_gerar = (
+        "Gravar pacote na pasta indicada" if _btn_pc else "Gerar pacote para descarregar"
+    )
     gen_pacote_matriz = st.button(
-        "Gerar arquivo contabilidade",
+        _lbl_gerar,
         key="v2_btn_mariana_zip",
-        disabled=(not _btn_mariana_ok) or _pacote_matriz_btn_dis,
+        disabled=_btn_dis,
         width="stretch",
+        type="primary",
     )
     if gen_pacote_matriz:
         if df_g_base is None or df_g_base.empty:
@@ -9239,7 +9268,10 @@ def _garim_etapa3_contabilidade_corpo(cnpj_limpo):
             _pacote_matriz_rerun = False
             try:
                 with st.spinner("A gerar pacote ZIP…"):
-                    _out_m, _err_m = _mariana_destino_zip_para_gravar()
+                    if _btn_pc:
+                        _out_m, _err_m = _mariana_destino_zip_para_gravar()
+                    else:
+                        _out_m, _err_m = _mariana_destino_temp_para_descarga()
                     if _err_m:
                         st.error(_err_m)
                     else:
@@ -9346,51 +9378,6 @@ def _garim_etapa3_fragment_entry():
 if st.session_state.get("confirmado"):
     if not st.session_state.get("garimpo_ok"):
         st.markdown(
-            f'<h5>{_garim_emoji("\U0001f4c4")} Documentos XML / ZIP para ler</h5>',
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "Carregue abaixo os ficheiros do lote; depois use **Iniciar grande garimpo** para ler e montar o relatório."
-        )
-        if "mariana_zip_save_dir" not in st.session_state:
-            st.session_state["mariana_zip_save_dir"] = ""
-        if "mariana_zip_basename" not in st.session_state:
-            st.session_state["mariana_zip_basename"] = ""
-        st.markdown(
-            f'<p style="margin:0.6rem 0 0.25rem 0;font-weight:700;color:#5D1B36;">'
-            f'{_garim_emoji("\U0001f4c2")} Pasta no PC — padrão contabilidade (já no início)</p>',
-            unsafe_allow_html=True,
-        )
-        if _streamlit_likely_community_cloud():
-            st.caption(
-                "**Versão web:** como **guardar no seu PC** e escolher pasta — veja o quadro **logo abaixo do upload do SPED** "
-                "(painel direito, no **fim** da página, após o garimpo)."
-            )
-        else:
-            st.caption(
-                "Cole **aqui** o caminho da pasta **antes** de **Iniciar grande garimpo** — o espelho dos XML grava **já durante a leitura** "
-                "(subpasta **Garimpeiro_lote_espelho**). No **Windows local** use `C:\\…` ou `D:\\…`. "
-                "Se a app estiver num **servidor Linux** (não Cloud), use um caminho desse sistema. "
-                "O mesmo campo serve depois para **Gerar arquivo contabilidade**. Vazio = só ecrã."
-            )
-        st.text_input(
-            "Pasta de destino — leitura + pacote contabilidade (caminho completo)",
-            key="mariana_zip_save_dir",
-            placeholder="Ex.: D:\\Contabilidade\\Apuracao — ou vazio para não gravar no disco",
-            help="Shift+clique direito na pasta no Explorador → Copiar como caminho. Uma pasta para espelho durante a leitura e para Excel/ZIPs contabilidade.",
-        )
-        st.text_input(
-            "Prefixo opcional dos nomes dos ZIP (sem .zip)",
-            key="mariana_zip_basename",
-            placeholder="Opcional — ex.: Cliente ou projeto",
-            help="Prefixo sanitizado dos ficheiros .zip do pacote contabilidade.",
-        )
-        uploaded_files = st.file_uploader(
-            "\U0001f4c2 Escolha os XML e/ou ZIP (suporta grandes volumes):",
-            accept_multiple_files=True,
-            key="garimpo_ini_lote_xml",
-        )
-        st.markdown(
             f'<p style="margin:0.85rem 0 0.35rem 0;font-weight:600;">{_garim_emoji("\U0001f4d1")} Opcional no mesmo passo</p>',
             unsafe_allow_html=True,
         )
@@ -9438,23 +9425,11 @@ if st.session_state.get("confirmado"):
             type=["txt"],
             key="sped_sessao_upload_ini",
         )
-        st.markdown(
-            f'<p style="margin:0.85rem 0 0.35rem 0;font-weight:600;">{_garim_emoji("\U0001f50d")} Planilha(s) de autenticidade Sefaz (opcional)</p>',
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "Se já tiver o relatório **exportado do portal da Sefaz** (lista de autorizadas / emitidas), anexe aqui — "
-            "é o mesmo campo do painel direito **Validação de autenticidade**; ao clicar **Processar dados** a app compara com o lote."
-        )
         st.file_uploader(
             "Relatório(is) Sefaz para autenticidade (.csv, .xlsx ou .xls)",
             type=["csv", "xlsx", "xls"],
             accept_multiple_files=True,
             key="autent_sefaz_up",
-        )
-        st.caption(
-            "Colunas: **Modelo**, **Série**, **Nota** (ou Número) — pode anexar **vários** ficheiros. "
-            "Mesmo critério da planilha de inutilizadas para cabeçalhos."
         )
         _bytes_m_aut_ini = bytes_modelo_planilha_inutil_sem_xml_xlsx()
         if _bytes_m_aut_ini:
@@ -9468,6 +9443,52 @@ if st.session_state.get("confirmado"):
             )
         else:
             st.warning(_msg_sem_espaco_disco_garimpeiro())
+        st.divider()
+        st.markdown(
+            f'<h5>{_garim_emoji("\U0001f4c4")} Documentos XML / ZIP para ler</h5>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Carregue abaixo os ficheiros do lote; depois use **Iniciar grande garimpo** para ler e montar o relatório."
+        )
+        if "mariana_zip_save_dir" not in st.session_state:
+            st.session_state["mariana_zip_save_dir"] = ""
+        if "mariana_zip_basename" not in st.session_state:
+            st.session_state["mariana_zip_basename"] = ""
+        st.markdown(
+            f'<p style="margin:0.6rem 0 0.25rem 0;font-weight:700;color:#5D1B36;">'
+            f'{_garim_emoji("\U0001f4c2")} Pasta no PC — padrão contabilidade (já no início)</p>',
+            unsafe_allow_html=True,
+        )
+        if _streamlit_likely_community_cloud():
+            st.caption(
+                "**Versão web:** como **guardar no seu PC** e escolher pasta — veja o quadro **logo abaixo do upload do SPED** "
+                "(painel direito, no **fim** da página, após o garimpo)."
+            )
+        else:
+            st.caption(
+                "Cole **aqui** o caminho da pasta **antes** de **Iniciar grande garimpo** — o espelho dos XML grava **já durante a leitura** "
+                "(subpasta **Garimpeiro_lote_espelho**). No **Windows local** use `C:\\…` ou `D:\\…`. "
+                "Se a app estiver num **servidor Linux** (não Cloud), use um caminho desse sistema. "
+                "O mesmo campo serve depois para **Gerar arquivo contabilidade**. Vazio = só ecrã."
+            )
+        st.text_input(
+            "Pasta de destino — leitura + pacote contabilidade (caminho completo)",
+            key="mariana_zip_save_dir",
+            placeholder="Ex.: D:\\Contabilidade\\Apuracao — ou vazio para não gravar no disco",
+            help="Shift+clique direito na pasta no Explorador → Copiar como caminho. Uma pasta para espelho durante a leitura e para Excel/ZIPs contabilidade.",
+        )
+        st.text_input(
+            "Prefixo opcional dos nomes dos ZIP (sem .zip)",
+            key="mariana_zip_basename",
+            placeholder="Opcional — ex.: Cliente ou projeto",
+            help="Prefixo sanitizado dos ficheiros .zip do pacote contabilidade.",
+        )
+        uploaded_files = st.file_uploader(
+            "\U0001f4c2 Escolha os XML e/ou ZIP (suporta grandes volumes):",
+            accept_multiple_files=True,
+            key="garimpo_ini_lote_xml",
+        )
         if st.button("INICIAR GRANDE GARIMPO"):
             # No mesmo rerun do clique o file_uploader por vezes devolve vazio — usar session_state (igual ao «Processar Dados»).
             _ufs = uploaded_files
@@ -10672,9 +10693,6 @@ if st.session_state.get("confirmado"):
             st.fragment(_garim_etapa3_fragment_entry)()
         else:
             _garim_etapa3_fragment_entry()
-
-        if st.button("NOVO GARIMPO / LIMPAR TUDO"):
-            limpar_arquivos_temp(); st.session_state.clear(); st.rerun()
 
         # =====================================================================
         # BLOCO 4: EXPORTAR LISTA ESPECÍFICA
