@@ -962,7 +962,9 @@ Este guia descreve ONDE os ficheiros são gravados e COMO ficam organizados quan
 
 1) Pasta no disco (escolha sua)
 ---------------------------------
-• Indique uma pasta **com caminho completo**. A app **cria a pasta se não existir** e grava **tudo diretamente nessa pasta** (não acrescenta automaticamente subpastas como \\Garimpeiro por baixo do caminho — se quiser, inclua-as no caminho).
+• Na app, no bloco «Padrão contabilidade», **cole o caminho completo** (no Explorador do Windows: Shift+clique direito na pasta
+  → «Copiar como caminho»). A app **cria a pasta se não existir** e grava **tudo diretamente nessa pasta** — o Excel solto e
+  todos os .zip (não acrescenta por baixo uma subpasta «Garimpeiro»; se quiser essa árvore, inclua-a no caminho que colar).
 
 • Nessa pasta ficam:
   (a) **Um Excel solto** com o relatório completo do lote (sem folha «Painel Fiscal»):
@@ -1357,15 +1359,19 @@ def _caminho_xml_pacote_contab_raiz(res: dict, nome_xml: str) -> str:
 
 def _is_mariana_pc_bundle() -> bool:
     """
-    Mostra o bloco «Pacote para contabilidade / matriz» (todo o lote lido, sem filtros da Etapa 3).
-    • Local (streamlit run): ligado por omissão.
-    • Streamlit Cloud: desligado por omissão (ligar com GARIMPEIRO_MARIANA_PC=1 no deploy).
-    • Desligar em qualquer sítio: GARIMPEIRO_MARIANA_PC=0
+    Mostra o bloco «Padrão contabilidade»: campo para colar a pasta no PC + «Gerar pacote ZIP».
+    Todo o lote lido (sem filtros da Etapa 3).
+    • GARIMPEIRO_MARIANA_PC=0 — desliga o bloco em qualquer sítio.
+    • GARIMPEIRO_MARIANA_PC=1 — liga (ex.: deploy com disco / necessidade explícita).
+    • Em branco: em **PC local** (não Streamlit Community Cloud) fica **ligado** — pode colar o caminho
+      do Explorador e gravar o Excel + todos os ZIPs nessa pasta. Na Cloud fica desligado salvo env=1 ou ficheiro .mariana_pc.
     """
     env = os.environ.get("GARIMPEIRO_MARIANA_PC", "").strip().lower()
     if env in ("0", "false", "no"):
         return False
     if env in ("1", "true", "yes"):
+        return True
+    if not _streamlit_likely_community_cloud():
         return True
     if (Path(__file__).resolve().parent / ".mariana_pc").is_file():
         return True
@@ -1377,9 +1383,7 @@ def _is_mariana_pc_bundle() -> bool:
             return True
     except OSError:
         pass
-    if _streamlit_likely_community_cloud():
-        return False
-    return True
+    return False
 
 
 # Se dois números emitidos consecutivos (ordenados) diferem mais que isto, tratamos como outra faixa.
@@ -7411,7 +7415,7 @@ Ficheiros e descargas que pode obter:
 • Modelo Excel para inutilizadas declaradas manualmente (quando usar essa funcionalidade).
 
 === GARIMPEIRO RAIZ (linha de comandos) vs. ESTA PÁGINA ===
-• **SPED EFD (.txt):** no painel direito, secção **«SPED EFD — XML do lote (chaves C100 / D100)»**, pode anexar o texto do EFD e **gravar numa pasta à sua escolha** só os XML do lote cuja chave aparece em C100/D100. O fluxo completo «Apuração final» em ZIP (como no Garimpeiro Raiz em CLI) continua a ser outro processo; use o Raiz se precisar desse pacote integral.
+• **SPED EFD (.txt):** no **topo do painel direito** (**«Ações rápidas»**), secção **SPED EFD — XML do lote (chaves C100 / D100)**, pode anexar o texto do EFD e **gravar numa pasta à sua escolha** só os XML do lote cuja chave aparece em C100/D100. O fluxo completo «Apuração final» em ZIP (como no Garimpeiro Raiz em CLI) continua a ser outro processo; use o Raiz se precisar desse pacote integral.
 
 === MANUAL PASSO A PASSO ===
 1. Lateral: CNPJ do emitente (cliente) — só os 14 dígitos ou cole já mascarado; clique em Liberar operação.
@@ -7421,7 +7425,7 @@ Ficheiros e descargas que pode obter:
 5. (Opcional) Lateral «Último nº por série»: afeta só o cálculo de buracos — **só as séries que preencher e guardar**; âncora por último nº e mês. O garimpo e o resumo por série continuam totais. Sem Guardar referência válida, buracos usam todo o intervalo lido em emissão própria.
 6. Inutilizadas: a partir dos buracos, por planilha (Excel/CSV) ou faixa — só números que já forem buraco listado (não alarga intervalos).
 7. Painel à direita: **Processar Dados** grava XML/ZIP extra, aplica inutilizações «sem XML» (se configurou) e recalcula a partir da pasta de uploads.
-8. Etapa 3: filtros em cascata (emissão própria e terceiros em colunas separadas). Na caixa **Tipo de exportação** escolha ZIP (tudo ou filtrado, raiz ou pastas) ou Excel (lote completo ou só filtrado). Depois use **Gerar — sua empresa**, **Gerar — terceiros** ou **Gerar os dois lados**. **SPED:** ver painel direito (C100/D100 → XML na pasta). O menu completo da CLI Raiz tem outras opções.
+8. Etapa 3: filtros em cascata (emissão própria e terceiros em colunas separadas). Na caixa **Tipo de exportação** escolha ZIP (tudo ou filtrado, raiz ou pastas) ou Excel (lote completo ou só filtrado). Depois use **Gerar — sua empresa**, **Gerar — terceiros** ou **Gerar os dois lados**. **SPED:** ver **Ações rápidas** no topo do painel direito (C100/D100 → XML na pasta). O menu completo da CLI Raiz tem outras opções.
 9. Lista específica (secção própria): exporte subconjuntos por chaves, faixa, período, série ou uma nota — em Excel e/ou ZIP conforme os botões apresentados.
 
 === DICAS ===
@@ -7449,7 +7453,7 @@ with st.container():
         st.markdown(
             """
         <div style="font-size:0.88rem;line-height:1.5;color:#444;margin:0 0 12px 0;padding:10px 12px;background:rgba(230,240,255,0.85);border-radius:10px;border-left:3px solid #4169E1;">
-        <b>SPED (.txt):</b> no painel direito pode anexar o EFD e gravar numa pasta os XML do lote que batem com chaves <b>C100/D100</b>. O pacote «Apuração final» completo do <b>Garimpeiro Raiz</b> (CLI) é um fluxo à parte.
+        <b>SPED (.txt):</b> no <b>topo do painel direito</b> (Ações rápidas) pode anexar o EFD e gravar numa pasta os XML do lote que batem com chaves <b>C100/D100</b>. O pacote «Apuração final» completo do <b>Garimpeiro Raiz</b> (CLI) é um fluxo à parte.
         </div>
         <div class="instrucoes-card manual-compacto">
             <p style="margin:0 0 10px 0;font-size:0.95rem;line-height:1.55;color:#333;">
@@ -8925,11 +8929,9 @@ def _garim_etapa3_corpo(cnpj_limpo):
     st.markdown("---")
     st.markdown("##### Padrão **contabilidade** (onde grava e como se chamam as pastas / ficheiros)")
     st.caption(
-        "O ficheiro descarregável é um **guia completo** (não é só um aviso curto): indica **em que pasta do PC** "
-        "o pacote é gravado (a que você indicar na app), **como se nomeiam** o Excel solto e cada ZIP, e **a árvore "
-        "dentro de cada ZIP** (XML/Lote_001…, Excel na raiz, LEIAME incluído). "
-        "O **botão para gerar** o pacote no disco só aparece abaixo quando o ambiente está configurado "
-        "(PC local / GARIMPEIRO_MARIANA_PC / ficheiro .mariana_pc)."
+        "O ficheiro descarregável é um **guia completo**: nomes do Excel solto, de cada ZIP, e a árvore **dentro** de cada ZIP "
+        "(XML/Lote_001…, Excel na raiz, LEIAME). **Abaixo**, quando o ambiente permite gravar no disco, há um **campo para colar** "
+        "a pasta onde o Garimpeiro grava **o Excel completo e todos os ZIPs** de uma vez (mesmo critério que no guia)."
     )
     st.download_button(
         "Descarregar guia — pastas, nomes e estrutura ZIP (padrão contabilidade) (.txt)",
@@ -8942,19 +8944,25 @@ def _garim_etapa3_corpo(cnpj_limpo):
 
     if _is_mariana_pc_bundle():
         st.markdown("---")
-        st.markdown("##### Pacote para **contabilidade / matriz** (gerar no disco)")
+        st.markdown("##### Colar pasta no PC — Excel + todos os ZIPs (contabilidade / matriz)")
+        st.caption(
+            "Cole o **caminho completo** da pasta de destino (no Explorador do Windows: abra a pasta, **Shift+clique direito** "
+            "no fundo da lista → **Copiar como caminho**, e cole aqui; pode apagar as aspas se aparecerem). "
+            "O Garimpeiro **cria a pasta se não existir** e grava **nesta pasta** o relatório Excel completo (sem Painel Fiscal) "
+            "e **todos** os ficheiros .zip do pacote (cada ZIP com as respetivas «pastinhas» **XML/Lote_001**… por dentro)."
+        )
         if "mariana_zip_save_dir" not in st.session_state:
             st.session_state["mariana_zip_save_dir"] = ""
         st.text_input(
-            "Pasta onde guardar o pacote ZIP (caminho completo)",
+            "Pasta onde gravar tudo (caminho completo — cole do Explorador)",
             key="mariana_zip_save_dir",
-            help="Obrigatório antes de gerar. Caminho completo — a pasta é criada se não existir.",
+            help="Obrigatório antes de gerar. Uma só pasta: aqui ficam o Excel solto e todos os ZIPs Emitidas_… / Terceiros_…",
         )
         st.text_input(
-            "Nome base do ZIP (opcional, sem .zip)",
+            "Prefixo opcional dos nomes dos ZIP (sem .zip)",
             key="mariana_zip_basename",
-            placeholder="Opcional",
-            help="Prefixo do nome dos ficheiros ZIP (opcional).",
+            placeholder="Opcional — ex.: ClienteABC",
+            help="Prefixo opcional dos ficheiros .zip (sanitizado). Se vazio, a app usa um nome interno.",
         )
         gen_pacote_matriz = st.button(
             "Gerar pacote ZIP (apuração / contabilidade)",
@@ -9060,6 +9068,13 @@ def _garim_etapa3_corpo(cnpj_limpo):
                             key=f"v2_dl_mariana_{_i_m}",
                             width="stretch",
                         )
+    else:
+        st.caption(
+            "O campo para **colar a pasta no PC** e gravar o pacote completo no disco não está ativo aqui "
+            "(ex.: Streamlit Community Cloud, ou **GARIMPEIRO_MARIANA_PC=0**). "
+            "Num **PC local** com `streamlit run`, esse campo aparece abaixo do guia LEIAME. "
+            "Use os descarregamentos da Etapa 3 enquanto não gravar diretamente."
+        )
 
 
 def _garim_etapa3_fragment_entry():
@@ -9809,8 +9824,158 @@ if st.session_state.get("confirmado"):
                     unsafe_allow_html=True,
                 )
                 st.caption(
-                    "Configure **abaixo** os ficheiros, **inutilizações** e **canceladas** manuais; **um único botão** em baixo (**Processar Dados**) grava, aplica e recalcula tudo."
+                    "**Primeiro:** pode **subir o SPED** e **gravar XML** (C100/D100) e/ou carregar em **Processar Dados** "
+                    "para reler o lote com tudo o que configurar mais abaixo (XML extra, autenticidade, inutilizadas…). "
+                    "Os blocos detalhados continuam mais em baixo na mesma coluna."
                 )
+                # =====================================================================
+                # AÇÕES RÁPIDAS — SPED + Processar Dados (topo do painel; leitura completa sem scroll)
+                # =====================================================================
+                st.markdown(
+                    f'<h5>{_garim_emoji("\u26a1")} Ações rápidas</h5>',
+                    unsafe_allow_html=True,
+                )
+                st.markdown(
+                    '<h5>SPED EFD (.txt) — XML do lote (chaves C100 / D100)</h5>',
+                    unsafe_allow_html=True,
+                )
+                with st.expander(
+                    "Anexar EFD ICMS/IPI e gravar no PC só os XML do garimpo cuja chave aparece nos blocos C100 ou D100",
+                    expanded=True,
+                ):
+                    st.caption(
+                        "Carregue o ficheiro **texto** do SPED (pipe `|`). A app lê registos **|C100|** e **|D100|** e recolhe "
+                        "chaves de acesso de **44 dígitos**. Depois copia para a pasta que indicar **apenas** os XML já "
+                        "presentes no lote atual cujo número de chave coincide — útil para alinhar pasta física ao escriturado."
+                    )
+                    if "sped_xml_dest_dir" not in st.session_state:
+                        st.session_state["sped_xml_dest_dir"] = ""
+                    sped_efd_up = st.file_uploader(
+                        "Ficheiro SPED (.txt)",
+                        type=["txt"],
+                        key="sped_c100_d100_upload",
+                    )
+                    st.text_input(
+                        "Pasta no disco onde gravar os XML (caminho completo)",
+                        key="sped_xml_dest_dir",
+                        placeholder="Ex.: D:\\Contabilidade\\XML_do_SPED",
+                        help="A pasta é criada se não existir. Os ficheiros ficam na raiz desta pasta (sem subpastas automáticas).",
+                    )
+                    if st.button(
+                        "Gravar XML do lote (interseção com chaves C100/D100)",
+                        key="btn_sped_gravar_xml_pasta",
+                        width="stretch",
+                    ):
+                        if sped_efd_up is None:
+                            st.warning("Anexe primeiro o ficheiro **.txt** do SPED.")
+                        else:
+                            raw_b = sped_efd_up.read()
+                            try:
+                                sped_efd_up.seek(0)
+                            except Exception:
+                                pass
+                            texto_sped = None
+                            for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
+                                try:
+                                    texto_sped = raw_b.decode(enc)
+                                    break
+                                except UnicodeDecodeError:
+                                    continue
+                            if texto_sped is None:
+                                texto_sped = raw_b.decode("latin-1", errors="replace")
+                            _p_sped, _err_sped = _pasta_destino_sped_xml_para_gravar()
+                            if _err_sped:
+                                st.warning(_err_sped)
+                            else:
+                                with st.spinner("A ler SPED e a gravar XML…"):
+                                    _ng, _nf, _msg_sped = gravar_xml_lote_filtrado_por_chaves_sped(
+                                        cnpj_limpo, texto_sped, _p_sped
+                                    )
+                                if _ng > 0:
+                                    st.success(_msg_sped)
+                                else:
+                                    st.warning(_msg_sped)
+
+                st.markdown(
+                    f'<h5>{_garim_emoji("\u2699\ufe0f")} Processar Dados (leitura completa do lote)</h5>',
+                    unsafe_allow_html=True,
+                )
+                st.caption(
+                    "Grava XML/ZIP extra, aplica inutilizações / canceladas manuais e compara **autenticidade** se anexou planilhas — "
+                    "**um clique** recalcula tudo a partir da pasta de uploads. Pode usar já; ou preencha primeiro os separadores abaixo."
+                )
+                if st.button(
+                    "Processar Dados",
+                    key="btn_reprocessar_garimpo",
+                    width="stretch",
+                    type="primary",
+                ):
+                    _ef = st.session_state.get("extra_files")
+                    if _ef is not None and not isinstance(_ef, (list, tuple)):
+                        _ef = [_ef]
+                    _pick = list(st.session_state.get("inut_b_pick") or [])
+                    _mb = st.session_state.get("inut_b_mod")
+                    _sb = st.session_state.get("inut_b_ser")
+                    _up_pl = st.session_state.get("inut_planilha_up")
+                    _mf = st.session_state.get("inut_f_mod", "NF-e")
+                    _sf = st.session_state.get("inut_f_ser", "1")
+                    _n0 = int(st.session_state.get("inut_f_i", 1))
+                    _n1 = int(st.session_state.get("inut_f_f", 1))
+                    _pick_c = list(st.session_state.get("canc_b_pick") or [])
+                    _mbc = st.session_state.get("canc_b_mod")
+                    _sbc = st.session_state.get("canc_b_ser")
+                    _up_canc = st.session_state.get("canc_planilha_up")
+                    _mfc = st.session_state.get("canc_f_mod", "NF-e")
+                    _sfc = st.session_state.get("canc_f_ser", "1")
+                    _n0c = int(st.session_state.get("canc_f_i", 1))
+                    _n1c = int(st.session_state.get("canc_f_f", 1))
+                    _up_aut = st.session_state.get("autent_sefaz_up")
+                    if _up_aut is not None and not isinstance(_up_aut, (list, tuple)):
+                        _up_aut = [_up_aut]
+                    _txt_inut = str(st.session_state.get("inut_planilha_paste") or "").strip()
+                    _txt_canc = str(st.session_state.get("canc_planilha_paste") or "").strip()
+                    _footer_proc = st.empty()
+                    _t_proc = time.perf_counter()
+                    try:
+                        with st.spinner("A gravar, aplicar inutilizações / canceladas e a recalcular…"):
+                            _ok_all, _msg_all, _ = processar_painel_lateral_direito(
+                                cnpj_limpo,
+                                _ef,
+                                _pick,
+                                _mb,
+                                _sb,
+                                _up_pl,
+                                _mf,
+                                _sf,
+                                _n0,
+                                _n1,
+                                pick_bur_canc=_pick_c,
+                                mb_canc=_mbc,
+                                sb_canc=_sbc,
+                                up_canc_planilha=_up_canc,
+                                mf_canc_f=_mfc,
+                                sf_canc_f=_sfc,
+                                n0_canc_f=_n0c,
+                                n1_canc_f=_n1c,
+                                up_autent_sefaz=_up_aut,
+                                footer_ph=_footer_proc,
+                                t_start=_t_proc,
+                                texto_inut_planilha=_txt_inut or None,
+                                texto_canc_planilha=_txt_canc or None,
+                            )
+                    finally:
+                        try:
+                            _footer_proc.empty()
+                        except Exception:
+                            pass
+                    if _ok_all:
+                        st.success(_msg_all)
+                    else:
+                        st.warning(_msg_all)
+                    st.rerun()
+
+                st.divider()
+
                 # MÃ“DULO: DOCUMENTOS XML/ZIP (carga incremental)
                 # =====================================================================
                 st.markdown(
@@ -9876,70 +10041,6 @@ if st.session_state.get("confirmado"):
                         st.success(
                             "Última comparação de autenticidade: **sem divergências** (ou planilha vazia após cruzamento)."
                         )
-
-                # =====================================================================
-                # SPED EFD — XML do lote que constam em C100/D100 (gravar em pasta)
-                # =====================================================================
-                st.markdown(
-                    '<h5>SPED EFD (.txt) — XML do lote (chaves C100 / D100)</h5>',
-                    unsafe_allow_html=True,
-                )
-                with st.expander(
-                    "Anexar EFD ICMS/IPI e gravar no PC só os XML do garimpo cuja chave aparece nos blocos C100 ou D100",
-                    expanded=False,
-                ):
-                    st.caption(
-                        "Carregue o ficheiro **texto** do SPED (pipe `|`). A app lê registos **|C100|** e **|D100|** e recolhe "
-                        "chaves de acesso de **44 dígitos**. Depois copia para a pasta que indicar **apenas** os XML já "
-                        "presentes no lote atual cujo número de chave coincide — útil para alinhar pasta física ao escriturado."
-                    )
-                    if "sped_xml_dest_dir" not in st.session_state:
-                        st.session_state["sped_xml_dest_dir"] = ""
-                    sped_efd_up = st.file_uploader(
-                        "Ficheiro SPED (.txt)",
-                        type=["txt"],
-                        key="sped_c100_d100_upload",
-                    )
-                    st.text_input(
-                        "Pasta no disco onde gravar os XML (caminho completo)",
-                        key="sped_xml_dest_dir",
-                        placeholder="Ex.: D:\\Contabilidade\\XML_do_SPED",
-                        help="A pasta é criada se não existir. Os ficheiros ficam na raiz desta pasta (sem subpastas automáticas).",
-                    )
-                    if st.button(
-                        "Gravar XML do lote (interseção com chaves C100/D100)",
-                        key="btn_sped_gravar_xml_pasta",
-                        width="stretch",
-                    ):
-                        if sped_efd_up is None:
-                            st.warning("Anexe primeiro o ficheiro **.txt** do SPED.")
-                        else:
-                            raw_b = sped_efd_up.read()
-                            try:
-                                sped_efd_up.seek(0)
-                            except Exception:
-                                pass
-                            texto_sped = None
-                            for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
-                                try:
-                                    texto_sped = raw_b.decode(enc)
-                                    break
-                                except UnicodeDecodeError:
-                                    continue
-                            if texto_sped is None:
-                                texto_sped = raw_b.decode("latin-1", errors="replace")
-                            _p_sped, _err_sped = _pasta_destino_sped_xml_para_gravar()
-                            if _err_sped:
-                                st.warning(_err_sped)
-                            else:
-                                with st.spinner("A ler SPED e a gravar XML…"):
-                                    _ng, _nf, _msg_sped = gravar_xml_lote_filtrado_por_chaves_sped(
-                                        cnpj_limpo, texto_sped, _p_sped
-                                    )
-                                if _ng > 0:
-                                    st.success(_msg_sped)
-                                else:
-                                    st.warning(_msg_sped)
 
                 # =====================================================================
                 # MÃ“DULO: DECLARAR INUTILIZADAS MANUAIS
@@ -10212,83 +10313,6 @@ if st.session_state.get("confirmado"):
                                 st.rerun()
                             else:
                                 st.warning("Selecione pelo menos um registo.")
-
-                st.divider()
-
-                st.markdown(
-                    f'<h5>{_garim_emoji("\u2699\ufe0f")} Processar Dados</h5>',
-                    unsafe_allow_html=True,
-                )
-                if st.button(
-                    "Processar Dados",
-                    key="btn_reprocessar_garimpo",
-                    width="stretch",
-                ):
-                    # Usar o retorno do file_uploader (variável `extra_files`): em alguns Streamlit,
-                    # `st.session_state["extra_files"]` fica vazio no mesmo run do clique e os XML extra não entram no lote.
-                    _ef = extra_files if extra_files else st.session_state.get("extra_files")
-                    if _ef is not None and not isinstance(_ef, (list, tuple)):
-                        _ef = [_ef]
-                    _pick = list(st.session_state.get("inut_b_pick") or [])
-                    _mb = st.session_state.get("inut_b_mod")
-                    _sb = st.session_state.get("inut_b_ser")
-                    _up_pl = st.session_state.get("inut_planilha_up")
-                    _mf = st.session_state.get("inut_f_mod", "NF-e")
-                    _sf = st.session_state.get("inut_f_ser", "1")
-                    _n0 = int(st.session_state.get("inut_f_i", 1))
-                    _n1 = int(st.session_state.get("inut_f_f", 1))
-                    _pick_c = list(st.session_state.get("canc_b_pick") or [])
-                    _mbc = st.session_state.get("canc_b_mod")
-                    _sbc = st.session_state.get("canc_b_ser")
-                    _up_canc = st.session_state.get("canc_planilha_up")
-                    _mfc = st.session_state.get("canc_f_mod", "NF-e")
-                    _sfc = st.session_state.get("canc_f_ser", "1")
-                    _n0c = int(st.session_state.get("canc_f_i", 1))
-                    _n1c = int(st.session_state.get("canc_f_f", 1))
-                    _up_aut = st.session_state.get("autent_sefaz_up")
-                    if _up_aut is not None and not isinstance(_up_aut, (list, tuple)):
-                        _up_aut = [_up_aut]
-                    _txt_inut = str(st.session_state.get("inut_planilha_paste") or "").strip()
-                    _txt_canc = str(st.session_state.get("canc_planilha_paste") or "").strip()
-                    _footer_proc = st.empty()
-                    _t_proc = time.perf_counter()
-                    try:
-                        with st.spinner("A gravar, aplicar inutilizações / canceladas e a recalcular…"):
-                            _ok_all, _msg_all, _ = processar_painel_lateral_direito(
-                                cnpj_limpo,
-                                _ef,
-                                _pick,
-                                _mb,
-                                _sb,
-                                _up_pl,
-                                _mf,
-                                _sf,
-                                _n0,
-                                _n1,
-                                pick_bur_canc=_pick_c,
-                                mb_canc=_mbc,
-                                sb_canc=_sbc,
-                                up_canc_planilha=_up_canc,
-                                mf_canc_f=_mfc,
-                                sf_canc_f=_sfc,
-                                n0_canc_f=_n0c,
-                                n1_canc_f=_n1c,
-                                up_autent_sefaz=_up_aut,
-                                footer_ph=_footer_proc,
-                                t_start=_t_proc,
-                                texto_inut_planilha=_txt_inut or None,
-                                texto_canc_planilha=_txt_canc or None,
-                            )
-                    finally:
-                        try:
-                            _footer_proc.empty()
-                        except Exception:
-                            pass
-                    if _ok_all:
-                        st.success(_msg_all)
-                    else:
-                        st.warning(_msg_all)
-                    st.rerun()
 
         st.divider()
         with st.expander(
