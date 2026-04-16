@@ -839,6 +839,45 @@ def _streamlit_likely_community_cloud() -> bool:
     return "/mount/src/" in exe or "/home/adminuser/" in exe
 
 
+def _erro_caminho_windows_num_servidor_nao_windows(s: str) -> str | None:
+    """
+    Em Linux/macOS, `C:\\Users\\...` não é um caminho absoluto do Windows — o Path junta ao cwd
+    e aparecem pastas ridículas tipo `/mount/src/app/C:\\Users\\...`.
+    Devolve mensagem de erro ou None se o caminho pode ser aceite.
+    """
+    t = (s or "").strip().strip('"').strip("'")
+    if len(t) >= 2 and t[0].isalpha() and t[1] == ":":
+        if os.name != "nt":
+            return (
+                "Esse texto é um caminho de **Windows** (ex.: `C:\\Users\\…`). "
+                "A app está a correr em **Linux** (servidor ou Cloud) — **não grava no disco do seu PC**. "
+                "Instale e execute o Garimpeiro **no seu computador Windows** (`streamlit run` na pasta do projeto) "
+                "e aí sim use `C:\\…` ou `D:\\…`."
+            )
+    return None
+
+
+def _painel_como_guardar_na_versao_web():
+    """
+    Na Streamlit Community Cloud a app corre no servidor: não há como gravar direto em C:\\ do utilizador.
+    A «escolha de pasta» no PC do utilizador faz-se pelo browser ao descarregar (Guardar como…).
+    """
+    if not _streamlit_likely_community_cloud():
+        return
+    st.info(
+        "**Versão web:** o servidor **não** vê o disco do seu PC — por isso não use caminho `C:\\Users\\…` aqui. "
+        "Para **escolher onde guardar** cada ficheiro no **seu computador**, use os botões **Descarregar** "
+        "(ZIP, Excel, etc.); quando o browser abrir a janela, escolha a pasta (**Guardar como…**). "
+        "No **Chrome / Edge**: Definições → Transferências → ative **Perguntar onde guardar cada ficheiro antes de transferir**."
+    )
+    with st.expander("Porque não há campo «pasta do meu PC» na web?", expanded=False):
+        st.markdown(
+            "O navegador só permite **descarregar** ficheiros para a sua máquina; isso **é** a forma segura de "
+            "você **indicar a pasta** (na janela de gravação). Se precisar de gravar **direto** num caminho `D:\\…` "
+            "sem passar pelo browser, instale o Garimpeiro **no seu Windows** e execute `streamlit run` na pasta do projeto."
+        )
+
+
 def _mariana_zip_default_dir() -> Path:
     """Pasta por omissão dos ZIP do pacote apuração (junto a app2.py)."""
     return Path(__file__).resolve().parent
@@ -857,6 +896,9 @@ def _mariana_destino_zip_para_gravar():
             None,
             "Indique a **pasta completa** onde gravar (o campo não pode ficar em branco).",
         )
+    _ew = _erro_caminho_windows_num_servidor_nao_windows(s)
+    if _ew:
+        return None, _ew
     try:
         p = Path(s).expanduser().resolve()
     except (OSError, ValueError):
@@ -885,6 +927,9 @@ def _v2_destino_zip_etapa3_para_gravar():
             None,
             "Indique a **pasta completa** para os ZIP (o campo não pode ficar em branco).",
         )
+    _ew = _erro_caminho_windows_num_servidor_nao_windows(s)
+    if _ew:
+        return None, _ew
     try:
         p = Path(s).expanduser().resolve()
     except (OSError, ValueError):
@@ -904,10 +949,9 @@ def _v2_destino_zip_etapa3_para_gravar():
 def _garimpo_destino_copia_lote_opcional():
     """
     Pasta opcional para gravar cópias dos XML durante o garimpo (espelho em Garimpeiro_lote_espelho/).
-    Usa **mariana_zip_save_dir** (campo único no 1.º passo = destino contabilidade + leitura);
-    se vazio, tenta o legado **garimpo_lote_save_dir**.
+    Usa **mariana_zip_save_dir** (1.º passo) ou **garimpo_lote_save_dir** (legado).
     Em branco → (None, None). Caminho inválido → (None, mensagem).
-    Se o utilizador preencheu mas o ambiente não grava no disco → (None, 'cloud_or_disabled').
+    Não bloqueia por Cloud: se o caminho for válido neste SO, grava já na leitura (PC local ou servidor Linux com pasta acessível).
     """
     s = ""
     for _key in ("mariana_zip_save_dir", SESSION_KEY_GARIMPO_LOTE_SAVE_DIR):
@@ -918,8 +962,9 @@ def _garimpo_destino_copia_lote_opcional():
             break
     if not s:
         return None, None
-    if not _is_mariana_pc_bundle():
-        return None, "cloud_or_disabled"
+    _ew = _erro_caminho_windows_num_servidor_nao_windows(s)
+    if _ew:
+        return None, _ew
     try:
         p = Path(s).expanduser().resolve()
     except (OSError, ValueError):
@@ -7172,6 +7217,9 @@ def _pasta_destino_sped_xml_para_gravar():
             None,
             "Indique a **pasta completa** onde gravar os XML (o campo não pode ficar em branco).",
         )
+    _ew = _erro_caminho_windows_num_servidor_nao_windows(s)
+    if _ew:
+        return None, _ew
     try:
         p = Path(s).expanduser().resolve()
     except (OSError, ValueError):
@@ -9267,6 +9315,7 @@ def _garim_etapa3_fragment_entry():
 
 
 if st.session_state.get("confirmado"):
+    _painel_como_guardar_na_versao_web()
     if not st.session_state.get("garimpo_ok"):
         st.markdown(
             f'<h5>{_garim_emoji("\U0001f4c4")} Documentos XML / ZIP para ler</h5>',
@@ -9284,12 +9333,19 @@ if st.session_state.get("confirmado"):
             f'{_garim_emoji("\U0001f4c2")} Pasta no PC — padrão contabilidade (já no início)</p>',
             unsafe_allow_html=True,
         )
-        st.caption(
-            "Cole **aqui** o caminho completo da pasta **antes** de iniciar o garimpo — **não** precisa esperar as análises. "
-            "Enquanto os ficheiros são lidos, gravamos cópias dos XML nessa pasta (subpasta **Garimpeiro_lote_espelho**). "
-            "Depois, o **mesmo** caminho é usado para **Gerar arquivo contabilidade** (Excel solto + ZIPs com XML/Lote_001…). "
-            "Deixe vazio para ver só no ecrã."
-        )
+        if _streamlit_likely_community_cloud():
+            st.caption(
+                "**Nesta versão web:** para **guardar no seu PC e escolher a pasta**, use os **Descarregar** depois do garimpo "
+                "(o browser pergunta onde guardar). O campo abaixo só serve para caminho **no servidor** (opcional, ex. `./export_lote`); "
+                "**não** cole `C:\\Users\\…` aqui."
+            )
+        else:
+            st.caption(
+                "Cole **aqui** o caminho da pasta **antes** de **Iniciar grande garimpo** — o espelho dos XML grava **já durante a leitura** "
+                "(subpasta **Garimpeiro_lote_espelho**). No **Windows local** use `C:\\…` ou `D:\\…`. "
+                "Se a app estiver num **servidor Linux** (não Cloud), use um caminho desse sistema. "
+                "O mesmo campo serve depois para **Gerar arquivo contabilidade**. Vazio = só ecrã."
+            )
         st.text_input(
             "Pasta de destino — leitura + pacote contabilidade (caminho completo)",
             key="mariana_zip_save_dir",
@@ -9379,14 +9435,9 @@ if st.session_state.get("confirmado"):
                 _esp_base, _esp_err = _garimpo_destino_copia_lote_opcional()
                 st.session_state.pop("garimpo_lote_espelho_root", None)
                 st.session_state.pop("garimpo_lote_save_resolved", None)
-                if _esp_err and _esp_err != "cloud_or_disabled":
+                if _esp_err:
                     st.error(_esp_err)
                     st.stop()
-                if _esp_err == "cloud_or_disabled":
-                    st.warning(
-                        "A pasta para cópia dos XML **não será usada** neste ambiente (ex.: Cloud). "
-                        "Num **PC local** pode gravar o espelho na pasta indicada."
-                    )
                 if _esp_base is not None:
                     try:
                         _root = _esp_base / GARIMPE_SUBDIR_ESPELHO
