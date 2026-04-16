@@ -256,6 +256,34 @@ def _garim_emoji(grapheme: str) -> str:
     return f'<span class="garim-emoji" aria-hidden="true">{grapheme}</span>'
 
 
+def _ui_scroll_to_top() -> None:
+    """Repor a vista no topo (o Streamlit não faz scroll após clique no fim da página)."""
+    try:
+        import streamlit.components.v1 as components
+    except ImportError:
+        return
+    components.html(
+        """<script>
+(function(){
+  try {
+    var p = window.parent;
+    if (!p) return;
+    p.scrollTo(0, 0);
+    var d = p.document;
+    if (!d) return;
+    var sel = ['[data-testid="stAppViewContainer"]','section.main','[data-testid="stMain"]'];
+    for (var i = 0; i < sel.length; i++) {
+      var el = d.querySelector(sel[i]);
+      if (el) el.scrollTop = 0;
+    }
+  } catch (e) {}
+})();
+</script>""",
+        height=0,
+        width=0,
+    )
+
+
 # --- CONFIGURAÇÃO E ESTILO (CLONE ABSOLUTO DO DIAMOND TAX) ---
 st.set_page_config(page_title="Garimpeiro", layout="wide", page_icon=":round_pushpin:")
 
@@ -9378,6 +9406,20 @@ def _garim_etapa3_fragment_entry():
 if st.session_state.get("confirmado"):
     if not st.session_state.get("garimpo_ok"):
         st.markdown(
+            f'<h5>{_garim_emoji("\U0001f4c4")} Documentos XML / ZIP para ler</h5>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Lote principal — depois, mais abaixo, pasta no PC (opcional) e **Iniciar grande garimpo** para ler e montar o relatório."
+        )
+        uploaded_files = st.file_uploader(
+            "\U0001f4c2 Escolha os XML e/ou ZIP (suporta grandes volumes):",
+            accept_multiple_files=True,
+            key="garimpo_ini_lote_xml",
+        )
+
+        st.divider()
+        st.markdown(
             f'<p style="margin:0.85rem 0 0.35rem 0;font-weight:600;">{_garim_emoji("\U0001f4d1")} Opcional no mesmo passo</p>',
             unsafe_allow_html=True,
         )
@@ -9444,13 +9486,6 @@ if st.session_state.get("confirmado"):
         else:
             st.warning(_msg_sem_espaco_disco_garimpeiro())
         st.divider()
-        st.markdown(
-            f'<h5>{_garim_emoji("\U0001f4c4")} Documentos XML / ZIP para ler</h5>',
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "Carregue abaixo os ficheiros do lote; depois use **Iniciar grande garimpo** para ler e montar o relatório."
-        )
         if "mariana_zip_save_dir" not in st.session_state:
             st.session_state["mariana_zip_save_dir"] = ""
         if "mariana_zip_basename" not in st.session_state:
@@ -9484,12 +9519,8 @@ if st.session_state.get("confirmado"):
             placeholder="Opcional — ex.: Cliente ou projeto",
             help="Prefixo sanitizado dos ficheiros .zip do pacote contabilidade.",
         )
-        uploaded_files = st.file_uploader(
-            "\U0001f4c2 Escolha os XML e/ou ZIP (suporta grandes volumes):",
-            accept_multiple_files=True,
-            key="garimpo_ini_lote_xml",
-        )
         if st.button("INICIAR GRANDE GARIMPO"):
+            _ui_scroll_to_top()
             # No mesmo rerun do clique o file_uploader por vezes devolve vazio — usar session_state (igual ao «Processar Dados»).
             _ufs = uploaded_files
             if _ufs is not None and not isinstance(_ufs, (list, tuple)):
@@ -9501,7 +9532,7 @@ if st.session_state.get("confirmado"):
                     _ufs = list(_raw) if isinstance(_raw, (list, tuple)) else [_raw]
             if not _ufs:
                 st.error(
-                    "**Nenhum ficheiro no upload.** Anexe de novo os XML/ZIP no campo acima e clique outra vez em **Iniciar grande garimpo**. "
+                    "**Nenhum ficheiro no upload do lote.** Anexe de novo os XML/ZIP no **primeiro campo** (topo da página) e clique outra vez em **Iniciar grande garimpo**. "
                     "(Em alguns navegadores o anexo limpa-se se o clique não apanhar os ficheiros — volte a escolhê-los.)"
                 )
             elif len(cnpj_limpo) != 14:
