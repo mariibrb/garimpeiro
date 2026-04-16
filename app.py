@@ -9196,52 +9196,6 @@ if st.session_state.get("confirmado"):
         st.caption(
             "Carregue abaixo os ficheiros do lote; depois use **Iniciar grande garimpo** para ler e montar o relatório."
         )
-        with st.expander(
-            "SPED EFD (.txt) — importar já para a sessão (antes do garimpo)",
-            expanded=True,
-        ):
-            st.caption(
-                "O texto do SPED fica **guardado na sessão** até substituir. Depois do garimpo, no painel direito "
-                "(Ações rápidas) pode gravar XML na pasta, descarregar **ZIP** com os cruzados e o **Excel** de pendências "
-                "(chaves só no SPED, sem XML no lote) — sem voltar a anexar o .txt, se não quiser."
-            )
-            _sped_pre_up = st.file_uploader(
-                "Ficheiro SPED (.txt)",
-                type=["txt"],
-                key="sped_sessao_upload_ini",
-            )
-            _b1, _b2 = st.columns(2)
-            with _b1:
-                if st.button("Importar SPED para a sessão", key="btn_sped_import_sess_ini", width="stretch"):
-                    if _sped_pre_up is None:
-                        st.warning("Anexe um ficheiro **.txt** do SPED.")
-                    else:
-                        _rawp = _sped_pre_up.read()
-                        try:
-                            _sped_pre_up.seek(0)
-                        except Exception:
-                            pass
-                        st.session_state[SPED_SESSION_TEXT_KEY] = _decode_sped_upload_bytes(_rawp).strip()
-                        st.session_state[SPED_SESSION_NAME_KEY] = (
-                            getattr(_sped_pre_up, "name", None) or "SPED.txt"
-                        )
-                        st.success("SPED guardado na sessão.")
-                        st.rerun()
-            with _b2:
-                if st.button("Limpar SPED da sessão", key="btn_sped_clear_sess_ini", width="stretch"):
-                    st.session_state.pop(SPED_SESSION_TEXT_KEY, None)
-                    st.session_state.pop(SPED_SESSION_NAME_KEY, None)
-                    st.session_state.pop("sped_export_zip", None)
-                    st.session_state.pop("sped_export_xlsx", None)
-                    st.info("Cache SPED removido.")
-                    st.rerun()
-            _ts = st.session_state.get(SPED_SESSION_TEXT_KEY)
-            if _ts:
-                _nk = len(_sped_chaves44_de_texto(_ts))
-                _nm = st.session_state.get(SPED_SESSION_NAME_KEY) or "SPED"
-                st.success(
-                    f"**SPED na sessão** (`{_nm}`): **{_nk}** chave(s) com 44 dígitos em C100/D100."
-                )
         uploaded_files = st.file_uploader(
             "\U0001f4c2 Escolha os XML e/ou ZIP (suporta grandes volumes):",
             accept_multiple_files=True,
@@ -9253,8 +9207,90 @@ if st.session_state.get("confirmado"):
         )
         st.caption(
             "Relatórios **inutilizadas** e **canceladas** (mesmo formato que na lateral direita). "
-            "Só entram linhas que, **depois** de ler os XML, apareçam como **buraco** — igual ao **Processar Dados**."
+            "Só entram linhas que, **depois** de ler os XML, apareçam como **buraco** — igual ao **Processar Dados**. "
+            "**SPED:** pode importar o `.txt` para a sessão aqui; depois do garimpo use o bloco SPED no **fim do painel direito** "
+            "para gravar na pasta, ZIP e Excel de pendências."
         )
+        st.markdown(
+            f'<p style="margin:0.65rem 0 0.25rem 0;font-weight:600;font-size:0.95rem;">'
+            f'{_garim_emoji("\U0001f4c4")} SPED EFD (.txt) — opcional</p>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "O texto fica **na sessão** até substituir. Não é obrigatório para a equipa; útil para cruzar C100/D100 com o lote mais tarde."
+        )
+        _sped_pre_up = st.file_uploader(
+            "Ficheiro SPED (.txt)",
+            type=["txt"],
+            key="sped_sessao_upload_ini",
+        )
+        _b1, _b2 = st.columns(2)
+        with _b1:
+            if st.button("Importar SPED para a sessão", key="btn_sped_import_sess_ini", width="stretch"):
+                if _sped_pre_up is None:
+                    st.warning("Anexe um ficheiro **.txt** do SPED.")
+                else:
+                    _rawp = _sped_pre_up.read()
+                    try:
+                        _sped_pre_up.seek(0)
+                    except Exception:
+                        pass
+                    st.session_state[SPED_SESSION_TEXT_KEY] = _decode_sped_upload_bytes(_rawp).strip()
+                    st.session_state[SPED_SESSION_NAME_KEY] = (
+                        getattr(_sped_pre_up, "name", None) or "SPED.txt"
+                    )
+                    st.success("SPED guardado na sessão.")
+                    st.rerun()
+        with _b2:
+            if st.button("Limpar SPED da sessão", key="btn_sped_clear_sess_ini", width="stretch"):
+                st.session_state.pop(SPED_SESSION_TEXT_KEY, None)
+                st.session_state.pop(SPED_SESSION_NAME_KEY, None)
+                st.session_state.pop("sped_export_zip", None)
+                st.session_state.pop("sped_export_xlsx", None)
+                st.info("Cache SPED removido.")
+                st.rerun()
+        _ts = st.session_state.get(SPED_SESSION_TEXT_KEY)
+        if _ts:
+            _nk = len(_sped_chaves44_de_texto(_ts))
+            _nm = st.session_state.get(SPED_SESSION_NAME_KEY) or "SPED"
+            st.success(
+                f"**SPED na sessão** (`{_nm}`): **{_nk}** chave(s) com 44 dígitos em C100/D100."
+            )
+        st.markdown(
+            f'<p style="margin:0.85rem 0 0.35rem 0;font-weight:600;">{_garim_emoji("\U0001f4d1")} Planilhas inutilizadas / canceladas</p>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Mesmo formato que na lateral direita; só linhas que, depois da leitura dos XML, forem **buraco**. "
+            "Se não tiver modelo, **baixe o Excel de exemplo** (colunas como na Sefaz) antes de preencher."
+        )
+        _cin1, _cin2 = st.columns(2)
+        with _cin1:
+            _bytes_ini_inut = bytes_modelo_planilha_inutil_sem_xml_xlsx()
+            if _bytes_ini_inut:
+                st.download_button(
+                    "Baixar modelo — inutilizadas (Excel)",
+                    data=_bytes_ini_inut,
+                    file_name="MODELO_inutilizadas_sem_XML_garimpeiro.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_modelo_inutil_garimpo_ini",
+                    width="stretch",
+                )
+            else:
+                st.warning(_msg_sem_espaco_disco_garimpeiro())
+        with _cin2:
+            _bytes_ini_canc = bytes_modelo_planilha_cancel_sem_xml_xlsx()
+            if _bytes_ini_canc:
+                st.download_button(
+                    "Baixar modelo — canceladas (Excel)",
+                    data=_bytes_ini_canc,
+                    file_name="MODELO_canceladas_sem_XML_garimpeiro.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_modelo_cancel_garimpo_ini",
+                    width="stretch",
+                )
+            else:
+                st.warning(_msg_sem_espaco_disco_garimpeiro())
         up_ini_inut = st.file_uploader(
             "Planilha(s) de inutilizadas (.csv, .xlsx, .xls)",
             type=["csv", "xlsx", "xls"],
