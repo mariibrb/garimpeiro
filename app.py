@@ -6947,6 +6947,126 @@ def _sped_chaves44_de_texto(texto: str) -> list:
     return seen
 
 
+# Texto do ficheiro SPED (.txt) guardado na sessão após «Importar» (pré ou pós-garimpo).
+SPED_SESSION_TEXT_KEY = "sped_efd_texto_sessao"
+SPED_SESSION_NAME_KEY = "sped_efd_nome_ficheiro_sessao"
+
+
+def _decode_sped_upload_bytes(raw_b: bytes) -> str:
+    if not raw_b:
+        return ""
+    for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
+        try:
+            return raw_b.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw_b.decode("latin-1", errors="replace")
+
+
+def _sped_resolver_texto_de_uploader(upload_widget) -> str:
+    """Prioridade: ficheiro anexado no widget; senão texto já importado para a sessão (`SPED_SESSION_TEXT_KEY`)."""
+    if upload_widget is not None:
+        raw_b = upload_widget.read()
+        try:
+            upload_widget.seek(0)
+        except Exception:
+            pass
+        texto = _decode_sped_upload_bytes(raw_b)
+        st.session_state[SPED_SESSION_TEXT_KEY] = texto
+        st.session_state[SPED_SESSION_NAME_KEY] = getattr(upload_widget, "name", None) or "SPED.txt"
+        return texto.strip()
+    return str(st.session_state.get(SPED_SESSION_TEXT_KEY) or "").strip()
+
+
+def _dataframe_sped_chaves_sem_xml_no_lote(texto_sped: str, matched_ch: set) -> pd.DataFrame:
+    """Uma linha por chave de 44 dígitos presente no SPED (C100/D100) e não encontrada no lote (sem XML cruzado)."""
+    regs = _sped_texto_unir_c100_d100(texto_sped)
+    seen = set()
+    rows = []
+    for r in regs:
+        ch = (r.get("CHV_NFE") or "").strip()
+        if len(ch) != 44 or not ch.isdigit():
+            continue
+        if ch in matched_ch:
+            continue
+        if ch in seen:
+            continue
+        seen.add(ch)
+        rows.append(
+            {
+                "Chave": ch,
+                "REG_SPED": r.get("REG_SPED", ""),
+                "COD_MOD": r.get("COD_MOD", ""),
+                "Serie": r.get("SER", ""),
+                "NUM_DOC": r.get("NUM_DOC", ""),
+                "Linha_SPED": r.get("Linha", ""),
+                "Motivo": "Consta no SPED (C100/D100); sem XML correspondente no lote atual",
+            }
+        )
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "Chave",
+                "REG_SPED",
+                "COD_MOD",
+                "Serie",
+                "NUM_DOC",
+                "Linha_SPED",
+                "Motivo",
+            ]
+        )
+    return pd.DataFrame(rows)
+
+
+def _extrair_pares_xml_intersecao_sped_lote(cnpj_limpo: str, texto_sped: str):
+    """
+    XML do lote cuja chave 44 está em C100/D100 do SPED.
+    Devolve (lista [(nome_arquivo, bytes)], matched_chaves_44, chaves_sped_44, erros_amostra).
+    """
+    chaves_ord = _sped_chaves44_de_texto(texto_sped)
+    ch_set = set(chaves_ord)
+    if not ch_set:
+        return [], set(), set(), []
+    cnpj = "".join(c for c in str(cnpj_limpo or "") if c.isdigit())[:14]
+    usados_nomes = set()
+    ch44_ja_gravado = set()
+    matched_ch = set()
+    pairs = []
+    erros = []
+    for fn in _lista_nomes_fontes_xml_garimpo():
+        with _abrir_fonte_xml_garimpo_stream(fn) as ft:
+            for name, data in extrair_recursivo(ft, fn):
+                try:
+                    res, _ = identify_xml_info(data, cnpj, name)
+                    ch44 = _chave44_digitos(res.get("Chave")) if res else None
+                    if res and ch44 and ch44 in ch_set:
+                        td = _tupla_dedupe_export_xml(res, ch44)
+                        if td is None or td in ch44_ja_gravado:
+                            continue
+                        ch44_ja_gravado.add(td)
+                        arc = _nome_xml_raiz_zip_unico(usados_nomes, name)
+                        raw = data if isinstance(data, (bytes, bytearray)) else bytes(data)
+                        pairs.append((arc, raw))
+                        matched_ch.add(ch44)
+                except OSError as e:
+                    erros.append(str(e))
+                finally:
+                    del data
+    return pairs, matched_ch, ch_set, erros
+
+
+def _excel_bytes_dataframe_simples(df: pd.DataFrame, sheet: str = "SPED_sem_XML") -> bytes | None:
+    if df is None or df.empty:
+        return None
+    try:
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as w:
+            df.to_excel(w, sheet_name=sheet[:31], index=False)
+        return buf.getvalue()
+    except Exception:
+        return None
+
+
 def _pasta_destino_sped_xml_para_gravar():
     """Resolve pasta em session_state['sped_xml_dest_dir'] (caminho completo obrigatório)."""
     raw = st.session_state.get("sped_xml_dest_dir")
@@ -6994,39 +7114,23 @@ def gravar_xml_lote_filtrado_por_chaves_sped(cnpj_limpo: str, texto_sped: str, p
             "Não há XML do lote em memória/pasta — faça o **garimpo** primeiro e mantenha os ficheiros acessíveis.",
         )
 
-    cnpj = "".join(c for c in str(cnpj_limpo or "") if c.isdigit())[:14]
-    usados_nomes = set()
-    ch44_ja_gravado = set()
-    matched_ch = set()
+    pairs, matched_ch, ch_set, erros = _extrair_pares_xml_intersecao_sped_lote(
+        cnpj_limpo, texto_sped
+    )
     count = 0
-    erros = []
     try:
         pasta_dest.mkdir(parents=True, exist_ok=True)
     except OSError as e:
         return 0, len(ch_set), f"Não foi possível usar a pasta: {e}"
 
-    for fn in _lista_nomes_fontes_xml_garimpo():
-        with _abrir_fonte_xml_garimpo_stream(fn) as ft:
-            for name, data in extrair_recursivo(ft, fn):
-                try:
-                    res, _ = identify_xml_info(data, cnpj, name)
-                    ch44 = _chave44_digitos(res.get("Chave")) if res else None
-                    if res and ch44 and ch44 in ch_set:
-                        td = _tupla_dedupe_export_xml(res, ch44)
-                        if td is None or td in ch44_ja_gravado:
-                            continue
-                        ch44_ja_gravado.add(td)
-                        arc = _nome_xml_raiz_zip_unico(usados_nomes, name)
-                        dest = pasta_dest / arc
-                        raw = data if isinstance(data, (bytes, bytearray)) else bytes(data)
-                        with open(dest, "wb") as wf:
-                            wf.write(raw)
-                        count += 1
-                        matched_ch.add(ch44)
-                except OSError as e:
-                    erros.append(str(e))
-                finally:
-                    del data
+    for arc, raw in pairs:
+        try:
+            dest = pasta_dest / arc
+            with open(dest, "wb") as wf:
+                wf.write(raw if isinstance(raw, (bytes, bytearray)) else bytes(raw))
+            count += 1
+        except OSError as e:
+            erros.append(str(e))
 
     n_falt_sped = len(ch_set - matched_ch)
     msg = (
@@ -7415,7 +7519,7 @@ Ficheiros e descargas que pode obter:
 • Modelo Excel para inutilizadas declaradas manualmente (quando usar essa funcionalidade).
 
 === GARIMPEIRO RAIZ (linha de comandos) vs. ESTA PÁGINA ===
-• **SPED EFD (.txt):** no **topo do painel direito** (**«Ações rápidas»**), secção **SPED EFD — XML do lote (chaves C100 / D100)**, pode anexar o texto do EFD e **gravar numa pasta à sua escolha** só os XML do lote cuja chave aparece em C100/D100. O fluxo completo «Apuração final» em ZIP (como no Garimpeiro Raiz em CLI) continua a ser outro processo; use o Raiz se precisar desse pacote integral.
+• **SPED EFD (.txt):** pode **importar o .txt para a sessão já antes do garimpo**; depois, no **topo do painel direito** (**«Ações rápidas»**), **gravar XML na pasta**, **ZIP** (cruzamento SPED×lote) e **Excel** de chaves **só no SPED** sem XML no lote (pendentes). O fluxo completo «Apuração final» em ZIP (como no Garimpeiro Raiz em CLI) continua a ser outro processo; use o Raiz se precisar desse pacote integral.
 
 === MANUAL PASSO A PASSO ===
 1. Lateral: CNPJ do emitente (cliente) — só os 14 dígitos ou cole já mascarado; clique em Liberar operação.
@@ -7425,7 +7529,7 @@ Ficheiros e descargas que pode obter:
 5. (Opcional) Lateral «Último nº por série»: afeta só o cálculo de buracos — **só as séries que preencher e guardar**; âncora por último nº e mês. O garimpo e o resumo por série continuam totais. Sem Guardar referência válida, buracos usam todo o intervalo lido em emissão própria.
 6. Inutilizadas: a partir dos buracos, por planilha (Excel/CSV) ou faixa — só números que já forem buraco listado (não alarga intervalos).
 7. Painel à direita: **Processar Dados** grava XML/ZIP extra, aplica inutilizações «sem XML» (se configurou) e recalcula a partir da pasta de uploads.
-8. Etapa 3: filtros em cascata (emissão própria e terceiros em colunas separadas). Na caixa **Tipo de exportação** escolha ZIP (tudo ou filtrado, raiz ou pastas) ou Excel (lote completo ou só filtrado). Depois use **Gerar — sua empresa**, **Gerar — terceiros** ou **Gerar os dois lados**. **SPED:** ver **Ações rápidas** no topo do painel direito (C100/D100 → XML na pasta). O menu completo da CLI Raiz tem outras opções.
+8. Etapa 3: filtros em cascata (emissão própria e terceiros em colunas separadas). Na caixa **Tipo de exportação** escolha ZIP (tudo ou filtrado, raiz ou pastas) ou Excel (lote completo ou só filtrado). Depois use **Gerar — sua empresa**, **Gerar — terceiros** ou **Gerar os dois lados**. **SPED:** importe o .txt **antes do garimpo** (opcional) ou em **Ações rápidas** — XML na pasta, **ZIP** cruzado e **Excel** de pendências (só no SPED). O menu completo da CLI Raiz tem outras opções.
 9. Lista específica (secção própria): exporte subconjuntos por chaves, faixa, período, série ou uma nota — em Excel e/ou ZIP conforme os botões apresentados.
 
 === DICAS ===
@@ -7453,7 +7557,7 @@ with st.container():
         st.markdown(
             """
         <div style="font-size:0.88rem;line-height:1.5;color:#444;margin:0 0 12px 0;padding:10px 12px;background:rgba(230,240,255,0.85);border-radius:10px;border-left:3px solid #4169E1;">
-        <b>SPED (.txt):</b> no <b>topo do painel direito</b> (Ações rápidas) pode anexar o EFD e gravar numa pasta os XML do lote que batem com chaves <b>C100/D100</b>. O pacote «Apuração final» completo do <b>Garimpeiro Raiz</b> (CLI) é um fluxo à parte.
+        <b>SPED (.txt):</b> importe <b>antes do garimpo</b> ou no painel direito (Ações rápidas): pasta no PC, <b>ZIP</b> dos XML cruzados e <b>Excel</b> de pendências (só SPED). O pacote «Apuração final» do <b>Garimpeiro Raiz</b> (CLI) é outro fluxo.
         </div>
         <div class="instrucoes-card manual-compacto">
             <p style="margin:0 0 10px 0;font-size:0.95rem;line-height:1.55;color:#333;">
@@ -9092,6 +9196,52 @@ if st.session_state.get("confirmado"):
         st.caption(
             "Carregue abaixo os ficheiros do lote; depois use **Iniciar grande garimpo** para ler e montar o relatório."
         )
+        with st.expander(
+            "SPED EFD (.txt) — importar já para a sessão (antes do garimpo)",
+            expanded=True,
+        ):
+            st.caption(
+                "O texto do SPED fica **guardado na sessão** até substituir. Depois do garimpo, no painel direito "
+                "(Ações rápidas) pode gravar XML na pasta, descarregar **ZIP** com os cruzados e o **Excel** de pendências "
+                "(chaves só no SPED, sem XML no lote) — sem voltar a anexar o .txt, se não quiser."
+            )
+            _sped_pre_up = st.file_uploader(
+                "Ficheiro SPED (.txt)",
+                type=["txt"],
+                key="sped_sessao_upload_ini",
+            )
+            _b1, _b2 = st.columns(2)
+            with _b1:
+                if st.button("Importar SPED para a sessão", key="btn_sped_import_sess_ini", width="stretch"):
+                    if _sped_pre_up is None:
+                        st.warning("Anexe um ficheiro **.txt** do SPED.")
+                    else:
+                        _rawp = _sped_pre_up.read()
+                        try:
+                            _sped_pre_up.seek(0)
+                        except Exception:
+                            pass
+                        st.session_state[SPED_SESSION_TEXT_KEY] = _decode_sped_upload_bytes(_rawp).strip()
+                        st.session_state[SPED_SESSION_NAME_KEY] = (
+                            getattr(_sped_pre_up, "name", None) or "SPED.txt"
+                        )
+                        st.success("SPED guardado na sessão.")
+                        st.rerun()
+            with _b2:
+                if st.button("Limpar SPED da sessão", key="btn_sped_clear_sess_ini", width="stretch"):
+                    st.session_state.pop(SPED_SESSION_TEXT_KEY, None)
+                    st.session_state.pop(SPED_SESSION_NAME_KEY, None)
+                    st.session_state.pop("sped_export_zip", None)
+                    st.session_state.pop("sped_export_xlsx", None)
+                    st.info("Cache SPED removido.")
+                    st.rerun()
+            _ts = st.session_state.get(SPED_SESSION_TEXT_KEY)
+            if _ts:
+                _nk = len(_sped_chaves44_de_texto(_ts))
+                _nm = st.session_state.get(SPED_SESSION_NAME_KEY) or "SPED"
+                st.success(
+                    f"**SPED na sessão** (`{_nm}`): **{_nk}** chave(s) com 44 dígitos em C100/D100."
+                )
         uploaded_files = st.file_uploader(
             "\U0001f4c2 Escolha os XML e/ou ZIP (suporta grandes volumes):",
             accept_multiple_files=True,
@@ -9845,13 +9995,22 @@ if st.session_state.get("confirmado"):
                 ):
                     st.caption(
                         "Carregue o ficheiro **texto** do SPED (pipe `|`). A app lê registos **|C100|** e **|D100|** e recolhe "
-                        "chaves de acesso de **44 dígitos**. Depois copia para a pasta que indicar **apenas** os XML já "
-                        "presentes no lote atual cujo número de chave coincide — útil para alinhar pasta física ao escriturado."
+                        "chaves de **44 dígitos**. Se já **importou o SPED antes do garimpo**, não precisa voltar a anexar — "
+                        "usa o texto na sessão. Copia para a pasta os XML **já** presentes no lote que coincidem com o SPED; "
+                        "gera também **ZIP** (interseção) e **Excel** de chaves **só no SPED** sem XML no lote."
                     )
+                    _ts_sess = st.session_state.get(SPED_SESSION_TEXT_KEY)
+                    if _ts_sess:
+                        _nk0 = len(_sped_chaves44_de_texto(_ts_sess))
+                        _nm0 = st.session_state.get(SPED_SESSION_NAME_KEY) or "SPED"
+                        st.info(
+                            f"**SPED na sessão** (`{_nm0}`): **{_nk0}** chave(s) C100/D100. "
+                            "Anexar um novo .txt abaixo substitui ao gravar/processar."
+                        )
                     if "sped_xml_dest_dir" not in st.session_state:
                         st.session_state["sped_xml_dest_dir"] = ""
                     sped_efd_up = st.file_uploader(
-                        "Ficheiro SPED (.txt)",
+                        "Ficheiro SPED (.txt) — ou use só o importado na sessão",
                         type=["txt"],
                         key="sped_c100_d100_upload",
                     )
@@ -9866,23 +10025,12 @@ if st.session_state.get("confirmado"):
                         key="btn_sped_gravar_xml_pasta",
                         width="stretch",
                     ):
-                        if sped_efd_up is None:
-                            st.warning("Anexe primeiro o ficheiro **.txt** do SPED.")
+                        texto_sped = _sped_resolver_texto_de_uploader(sped_efd_up)
+                        if not texto_sped:
+                            st.warning(
+                                "Anexe o **.txt** do SPED ou importe-o antes do garimpo (**SPED na sessão**)."
+                            )
                         else:
-                            raw_b = sped_efd_up.read()
-                            try:
-                                sped_efd_up.seek(0)
-                            except Exception:
-                                pass
-                            texto_sped = None
-                            for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
-                                try:
-                                    texto_sped = raw_b.decode(enc)
-                                    break
-                                except UnicodeDecodeError:
-                                    continue
-                            if texto_sped is None:
-                                texto_sped = raw_b.decode("latin-1", errors="replace")
                             _p_sped, _err_sped = _pasta_destino_sped_xml_para_gravar()
                             if _err_sped:
                                 st.warning(_err_sped)
@@ -9895,6 +10043,72 @@ if st.session_state.get("confirmado"):
                                     st.success(_msg_sped)
                                 else:
                                     st.warning(_msg_sped)
+
+                    st.markdown("**Exportação SPED** (ZIP com XML cruzados + Excel de pendências)")
+                    st.caption(
+                        "Gera um **.zip** só com os XML do lote que batem com C100/D100 e um **Excel** com linhas do SPED "
+                        "cuja chave **não** foi encontrada como XML no lote (pendentes)."
+                    )
+                    if st.button(
+                        "Gerar ZIP e Excel (exportação SPED)",
+                        key="btn_sped_gera_zip_xlsx",
+                        width="stretch",
+                    ):
+                        texto_sped = _sped_resolver_texto_de_uploader(sped_efd_up)
+                        if not texto_sped:
+                            st.warning(
+                                "Anexe o **.txt** do SPED ou use um ficheiro já importado para a sessão."
+                            )
+                        elif not _garimpo_existem_fontes_xml_lote():
+                            st.warning(
+                                "Não há ficheiros do lote — faça o **garimpo** primeiro."
+                            )
+                        else:
+                            n_p = n_x = 0
+                            with st.spinner("A cruzar SPED com o lote…"):
+                                pairs, matched, _ch_sped, _er = _extrair_pares_xml_intersecao_sped_lote(
+                                    cnpj_limpo, texto_sped
+                                )
+                                df_pend = _dataframe_sped_chaves_sem_xml_no_lote(texto_sped, matched)
+                                n_p = len(pairs)
+                                n_x = int(len(df_pend.index)) if df_pend is not None else 0
+                                st.session_state["sped_export_zip"] = _zip_bytes_from_arc_pairs(pairs)
+                                st.session_state["sped_export_xlsx"] = _excel_bytes_dataframe_simples(
+                                    df_pend, sheet="SPED_sem_XML_no_lote"
+                                )
+                            st.success(
+                                f"Pronto: **{n_p}** XML no ZIP; **{n_x}** linha(s) no Excel de pendências."
+                            )
+
+                    _zexp = st.session_state.get("sped_export_zip")
+                    _xexp = st.session_state.get("sped_export_xlsx")
+                    if _zexp:
+                        st.download_button(
+                            "Descarregar ZIP — XML cruzados (SPED × lote)",
+                            data=_zexp,
+                            file_name="SPED_intersecao_lote_xml.zip",
+                            mime="application/zip",
+                            key="dl_sped_zip_intersecao",
+                            width="stretch",
+                        )
+                    if _xexp:
+                        st.download_button(
+                            "Descarregar Excel — SPED sem XML no lote (pendentes)",
+                            data=_xexp,
+                            file_name="SPED_sem_XML_no_lote.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="dl_sped_xlsx_pend",
+                            width="stretch",
+                        )
+                    if st.button(
+                        "Limpar ficheiros gerados (ZIP/Excel em memória)",
+                        key="btn_sped_clear_export",
+                        width="stretch",
+                    ):
+                        st.session_state.pop("sped_export_zip", None)
+                        st.session_state.pop("sped_export_xlsx", None)
+                        st.session_state.pop("sped_export_meta", None)
+                        st.rerun()
 
                 st.markdown(
                     f'<h5>{_garim_emoji("\u2699\ufe0f")} Processar Dados (leitura completa do lote)</h5>',
