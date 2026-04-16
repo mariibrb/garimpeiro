@@ -697,6 +697,9 @@ def _lista_ficheiros_pasta_uploads():
 SESSION_KEY_FONTES_XML_MEMORIA = "_garimpo_fontes_xml_memoria"
 # SHA-256 de ficheiros já incorporados ao lote via «Incluir mais» (evita duplicar a cada rerun / duplo Processar).
 SESSION_KEY_EXTRA_DIGESTS = "_garimpo_extra_sha256_vistos"
+# Pasta opcional no 1.º passo: espelho dos XML à medida que são lidos (PC local).
+SESSION_KEY_GARIMPO_LOTE_SAVE_DIR = "garimpo_lote_save_dir"
+GARIMPE_SUBDIR_ESPELHO = "Garimpeiro_lote_espelho"
 
 
 def _session_state_get_garimpo(key, default=None):
@@ -898,6 +901,99 @@ def _v2_destino_zip_etapa3_para_gravar():
     return p, None
 
 
+def _garimpo_destino_copia_lote_opcional():
+    """
+    Pasta opcional para gravar cópias dos XML durante o garimpo (espelho em Garimpeiro_lote_espelho/).
+    Usa **mariana_zip_save_dir** (campo único no 1.º passo = destino contabilidade + leitura);
+    se vazio, tenta o legado **garimpo_lote_save_dir**.
+    Em branco → (None, None). Caminho inválido → (None, mensagem).
+    Se o utilizador preencheu mas o ambiente não grava no disco → (None, 'cloud_or_disabled').
+    """
+    s = ""
+    for _key in ("mariana_zip_save_dir", SESSION_KEY_GARIMPO_LOTE_SAVE_DIR):
+        raw = st.session_state.get(_key)
+        t = str(raw).strip().strip('"').strip("'") if raw is not None else ""
+        if t:
+            s = t
+            break
+    if not s:
+        return None, None
+    if not _is_mariana_pc_bundle():
+        return None, "cloud_or_disabled"
+    try:
+        p = Path(s).expanduser().resolve()
+    except (OSError, ValueError):
+        return None, "Caminho inválido. Use um caminho completo (ex.: D:\\Exportacoes\\Lote)."
+    if p.exists() and not p.is_dir():
+        return None, "Esse caminho já existe e não é uma pasta."
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return None, f"Não foi possível criar ou aceder à pasta: {e}"
+    return p, None
+
+
+def _garimpo_escrever_par_espelho(root: Path, chave: str, xml_data: bytes, is_p: bool) -> None:
+    """Grava o mesmo XML em xml/ e em por_origem/emissao_propria|terceiros/."""
+    base = _v2_sanitize_nome_export(str(chave).strip(), max_len=80) or "doc"
+    if not str(base).lower().endswith(".xml"):
+        fn = f"{base}.xml"
+    else:
+        fn = base
+    sub = "emissao_propria" if is_p else "terceiros"
+    d_xml = root / "xml"
+    po = root / "por_origem" / sub
+    d_xml.mkdir(parents=True, exist_ok=True)
+    po.mkdir(parents=True, exist_ok=True)
+    (d_xml / fn).write_bytes(xml_data)
+    (po / fn).write_bytes(xml_data)
+
+
+def _garimpo_resync_espelho_completo(cnpj_limpo: str) -> tuple[bool, str]:
+    """
+    Relê todas as fontes do lote e regrava o espelho (xml + por_origem), alinhado ao relatório atual após reprocessar.
+    """
+    root_s = st.session_state.get("garimpo_lote_espelho_root")
+    if not root_s:
+        return False, "Não há pasta de espelho — no próximo garimpo indique um caminho válido no 1.º passo."
+    root = Path(str(root_s))
+    cnpj = "".join(c for c in str(cnpj_limpo or "") if c.isdigit())[:14]
+    if len(cnpj) != 14:
+        return False, "CNPJ inválido na barra lateral."
+    nomes = _lista_nomes_fontes_xml_garimpo()
+    if not nomes:
+        return False, "Nenhuma fonte no lote."
+    try:
+        for sub in ("xml", "por_origem"):
+            p = root / sub
+            if p.exists():
+                shutil.rmtree(p, ignore_errors=True)
+        (root / "xml").mkdir(parents=True, exist_ok=True)
+        (root / "por_origem" / "emissao_propria").mkdir(parents=True, exist_ok=True)
+        (root / "por_origem" / "terceiros").mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return False, str(e)
+    n = 0
+    for f_name in nomes:
+        try:
+            with _abrir_fonte_xml_garimpo_stream(f_name) as file_obj:
+                todos_xmls = extrair_recursivo(file_obj, f_name)
+                for name, xml_data in todos_xmls:
+                    try:
+                        res, is_p = identify_xml_info(xml_data, cnpj, name)
+                        if res:
+                            key = res["Chave"]
+                            _garimpo_escrever_par_espelho(root, key, xml_data, is_p)
+                            n += 1
+                    finally:
+                        del xml_data
+        except Exception:
+            continue
+        if n and n % 2000 == 0:
+            gc.collect()
+    return True, f"**{n}** documento(s) XML gravados em `{root}`."
+
+
 def _v2_sanitize_nome_export(s, max_len=72):
     """Trecho seguro para nome de ficheiro (sem caminhos nem caracteres proibidos no Windows)."""
     if s is None:
@@ -956,7 +1052,7 @@ _LEIAME_ESTRUTURA_CONTABILIDADE = """Garimpeiro — Padrão de pastas e nomes (p
 ================================================================
 
 Este guia descreve ONDE os ficheiros são gravados e COMO ficam organizados quando usa
-«Gerar pacote ZIP (apuração / contabilidade)» com uma pasta de destino definida na app
+«Gerar arquivo contabilidade» com uma pasta de destino definida na app
 (caminho completo no PC, por exemplo D:\\Exportacoes\\Contabilidade).
 
 
@@ -1359,7 +1455,7 @@ def _caminho_xml_pacote_contab_raiz(res: dict, nome_xml: str) -> str:
 
 def _is_mariana_pc_bundle() -> bool:
     """
-    Mostra o bloco «Padrão contabilidade»: campo para colar a pasta no PC + «Gerar pacote ZIP».
+    Mostra o bloco «Padrão contabilidade»: campo para colar a pasta no PC + «Gerar arquivo contabilidade».
     Todo o lote lido (sem filtros da Etapa 3).
     • GARIMPEIRO_MARIANA_PC=0 — desliga o bloco em qualquer sítio.
     • GARIMPEIRO_MARIANA_PC=1 — liga (ex.: deploy com disco / necessidade explícita).
@@ -9031,14 +9127,8 @@ def _garim_etapa3_corpo(cnpj_limpo):
                 )
 
     st.markdown("---")
-    st.markdown("##### Padrão **contabilidade** (onde grava e como se chamam as pastas / ficheiros)")
-    st.caption(
-        "O ficheiro descarregável é um **guia completo**: nomes do Excel solto, de cada ZIP, e a árvore **dentro** de cada ZIP "
-        "(XML/Lote_001…, Excel na raiz, LEIAME). **Abaixo**, quando o ambiente permite gravar no disco, há um **campo para colar** "
-        "a pasta onde o Garimpeiro grava **o Excel completo e todos os ZIPs** de uma vez (mesmo critério que no guia)."
-    )
     st.download_button(
-        "Descarregar guia — pastas, nomes e estrutura ZIP (padrão contabilidade) (.txt)",
+        "Descarregar guia — estrutura ZIP / LEIAME (.txt)",
         data=_LEIAME_ESTRUTURA_CONTABILIDADE.encode("utf-8"),
         file_name="LEIAME_pacote_contabilidade.txt",
         mime="text/plain; charset=utf-8",
@@ -9046,139 +9136,128 @@ def _garim_etapa3_corpo(cnpj_limpo):
         width="stretch",
     )
 
-    if _is_mariana_pc_bundle():
-        st.markdown("---")
-        st.markdown("##### Colar pasta no PC — Excel + todos os ZIPs (contabilidade / matriz)")
-        st.caption(
-            "Cole o **caminho completo** da pasta de destino (no Explorador do Windows: abra a pasta, **Shift+clique direito** "
-            "no fundo da lista → **Copiar como caminho**, e cole aqui; pode apagar as aspas se aparecerem). "
-            "O Garimpeiro **cria a pasta se não existir** e grava **nesta pasta** o relatório Excel completo (sem Painel Fiscal) "
-            "e **todos** os ficheiros .zip do pacote (cada ZIP com as respetivas «pastinhas» **XML/Lote_001**… por dentro)."
-        )
-        if "mariana_zip_save_dir" not in st.session_state:
-            st.session_state["mariana_zip_save_dir"] = ""
-        st.text_input(
-            "Pasta onde gravar tudo (caminho completo — cole do Explorador)",
-            key="mariana_zip_save_dir",
-            help="Obrigatório antes de gerar. Uma só pasta: aqui ficam o Excel solto e todos os ZIPs Emitidas_… / Terceiros_…",
-        )
-        st.text_input(
-            "Prefixo opcional dos nomes dos ZIP (sem .zip)",
-            key="mariana_zip_basename",
-            placeholder="Opcional — ex.: ClienteABC",
-            help="Prefixo opcional dos ficheiros .zip (sanitizado). Se vazio, a app usa um nome interno.",
-        )
-        gen_pacote_matriz = st.button(
-            "Gerar pacote ZIP (apuração / contabilidade)",
-            key="v2_btn_mariana_zip",
-            disabled=_pacote_matriz_btn_dis,
-            width="stretch",
-        )
-        if gen_pacote_matriz:
-            if df_g_base is None or df_g_base.empty:
-                st.warning("Relatório geral vazio. Conclua o garimpo antes de gerar o pacote.")
-            else:
-                _pacote_matriz_rerun = False
-                try:
-                    with st.spinner("A gerar pacote ZIP…"):
-                        _out_m, _err_m = _mariana_destino_zip_para_gravar()
-                        if _err_m:
-                            st.error(_err_m)
-                        else:
-                            st.session_state.pop("mariana_zip_parts", None)
-                            st.session_state.pop("mariana_excel_completo_path", None)
-                            _mar_bn = str(
-                                st.session_state.get("mariana_zip_basename") or ""
-                            ).strip()
-                            parts_m, _xm_m, av_m, excel_m = _v2_export_zip_mariana(
-                                df_g_base,
-                                cnpj_limpo,
-                                zip_output_dir=_out_m,
-                                zip_file_stem=_mar_bn if _mar_bn else None,
-                            )
-                            if av_m and str(av_m).startswith("ERR:"):
-                                st.warning(str(av_m)[4:].strip())
-                                st.session_state["mariana_export_ready"] = False
-                                st.session_state.pop("mariana_export_sig", None)
-                                st.session_state.pop("mariana_sem_xml_msg", None)
-                                st.session_state.pop("mariana_excel_completo_path", None)
-                            elif not parts_m and not excel_m:
-                                st.warning(av_m or "Nada a exportar.")
-                                st.session_state["mariana_export_ready"] = False
-                                st.session_state.pop("mariana_export_sig", None)
-                                st.session_state.pop("mariana_sem_xml_msg", None)
-                                st.session_state.pop("mariana_excel_completo_path", None)
-                            else:
-                                st.session_state["mariana_zip_parts"] = parts_m or []
-                                if excel_m:
-                                    st.session_state["mariana_excel_completo_path"] = (
-                                        excel_m
-                                    )
-                                else:
-                                    st.session_state.pop(
-                                        "mariana_excel_completo_path", None
-                                    )
-                                st.session_state["mariana_export_ready"] = True
-                                st.session_state["mariana_export_sig"] = (
-                                    v2_assinatura_pacote_matriz_sessao(df_g_base)
-                                )
-                                if av_m:
-                                    st.session_state["mariana_sem_xml_msg"] = av_m
-                                else:
-                                    st.session_state.pop("mariana_sem_xml_msg", None)
-                                _pacote_matriz_rerun = True
-                        gc.collect()
-                except Exception as ex:
-                    if _erro_sem_espaco_disco(ex):
-                        st.error(
-                            "**Sem espaço em disco** ao gerar o Excel do pacote (errno 28). "
-                            "Liberte espaço em **C:** (pasta Temp do utilizador) e no disco onde grava o pacote; "
-                            "ou defina **TEMP** e **TMP** para uma pasta noutro disco (ex.: `D:\\Temp`) e reinicie o Garimpeiro."
-                        )
+    st.markdown("---")
+    st.markdown("##### Colar pasta no PC — Excel + todos os ZIPs (contabilidade / matriz)")
+    st.caption(
+        "Se já preencheu a pasta no **1.º passo**, o caminho aparece aqui; pode alterar antes de **Gerar arquivo contabilidade**."
+    )
+    if "mariana_zip_save_dir" not in st.session_state:
+        st.session_state["mariana_zip_save_dir"] = ""
+    st.text_input(
+        "Pasta onde gravar tudo (caminho completo — cole do Explorador)",
+        key="mariana_zip_save_dir",
+        help="Obrigatório antes de gerar. Uma só pasta: aqui ficam o Excel solto e todos os ZIPs Emitidas_… / Terceiros_…",
+    )
+    st.text_input(
+        "Prefixo opcional dos nomes dos ZIP (sem .zip)",
+        key="mariana_zip_basename",
+        placeholder="Opcional — ex.: ClienteABC",
+        help="Prefixo opcional dos ficheiros .zip (sanitizado). Se vazio, a app usa um nome interno.",
+    )
+    gen_pacote_matriz = st.button(
+        "Gerar arquivo contabilidade",
+        key="v2_btn_mariana_zip",
+        disabled=(not _is_mariana_pc_bundle()) or _pacote_matriz_btn_dis,
+        width="stretch",
+    )
+    if gen_pacote_matriz:
+        if df_g_base is None or df_g_base.empty:
+            st.warning("Relatório geral vazio. Conclua o garimpo antes de gerar o pacote.")
+        else:
+            _pacote_matriz_rerun = False
+            try:
+                with st.spinner("A gerar pacote ZIP…"):
+                    _out_m, _err_m = _mariana_destino_zip_para_gravar()
+                    if _err_m:
+                        st.error(_err_m)
                     else:
-                        st.error(f"**Erro ao gerar o pacote:** {ex}")
-                        st.exception(ex)
-                    st.session_state["mariana_export_ready"] = False
-                    st.session_state.pop("mariana_export_sig", None)
-                    st.session_state.pop("mariana_sem_xml_msg", None)
-                    st.session_state.pop("mariana_excel_completo_path", None)
-                if _pacote_matriz_rerun:
-                    st.rerun()
-        if st.session_state.get("mariana_export_ready"):
-            _mmsg = st.session_state.get("mariana_sem_xml_msg")
-            if _mmsg:
-                st.warning(_mmsg)
-            _mxp = st.session_state.get("mariana_excel_completo_path")
-            if _mxp and os.path.isfile(_mxp):
-                with open(_mxp, "rb") as _xfe:
+                        st.session_state.pop("mariana_zip_parts", None)
+                        st.session_state.pop("mariana_excel_completo_path", None)
+                        _mar_bn = str(
+                            st.session_state.get("mariana_zip_basename") or ""
+                        ).strip()
+                        parts_m, _xm_m, av_m, excel_m = _v2_export_zip_mariana(
+                            df_g_base,
+                            cnpj_limpo,
+                            zip_output_dir=_out_m,
+                            zip_file_stem=_mar_bn if _mar_bn else None,
+                        )
+                        if av_m and str(av_m).startswith("ERR:"):
+                            st.warning(str(av_m)[4:].strip())
+                            st.session_state["mariana_export_ready"] = False
+                            st.session_state.pop("mariana_export_sig", None)
+                            st.session_state.pop("mariana_sem_xml_msg", None)
+                            st.session_state.pop("mariana_excel_completo_path", None)
+                        elif not parts_m and not excel_m:
+                            st.warning(av_m or "Nada a exportar.")
+                            st.session_state["mariana_export_ready"] = False
+                            st.session_state.pop("mariana_export_sig", None)
+                            st.session_state.pop("mariana_sem_xml_msg", None)
+                            st.session_state.pop("mariana_excel_completo_path", None)
+                        else:
+                            st.session_state["mariana_zip_parts"] = parts_m or []
+                            if excel_m:
+                                st.session_state["mariana_excel_completo_path"] = (
+                                    excel_m
+                                )
+                            else:
+                                st.session_state.pop(
+                                    "mariana_excel_completo_path", None
+                                )
+                            st.session_state["mariana_export_ready"] = True
+                            st.session_state["mariana_export_sig"] = (
+                                v2_assinatura_pacote_matriz_sessao(df_g_base)
+                            )
+                            if av_m:
+                                st.session_state["mariana_sem_xml_msg"] = av_m
+                            else:
+                                st.session_state.pop("mariana_sem_xml_msg", None)
+                            _pacote_matriz_rerun = True
+                    gc.collect()
+            except Exception as ex:
+                if _erro_sem_espaco_disco(ex):
+                    st.error(
+                        "**Sem espaço em disco** ao gerar o Excel do pacote (errno 28). "
+                        "Liberte espaço em **C:** (pasta Temp do utilizador) e no disco onde grava o pacote; "
+                        "ou defina **TEMP** e **TMP** para uma pasta noutro disco (ex.: `D:\\Temp`) e reinicie o Garimpeiro."
+                    )
+                else:
+                    st.error(f"**Erro ao gerar o pacote:** {ex}")
+                    st.exception(ex)
+                st.session_state["mariana_export_ready"] = False
+                st.session_state.pop("mariana_export_sig", None)
+                st.session_state.pop("mariana_sem_xml_msg", None)
+                st.session_state.pop("mariana_excel_completo_path", None)
+            if _pacote_matriz_rerun:
+                st.rerun()
+    if st.session_state.get("mariana_export_ready"):
+        _mmsg = st.session_state.get("mariana_sem_xml_msg")
+        if _mmsg:
+            st.warning(_mmsg)
+        _mxp = st.session_state.get("mariana_excel_completo_path")
+        if _mxp and os.path.isfile(_mxp):
+            with open(_mxp, "rb") as _xfe:
+                st.download_button(
+                    "Excel completo (sem Painel Fiscal) — mesmo ficheiro da pasta",
+                    _xfe.read(),
+                    file_name=os.path.basename(_mxp),
+                    key="v2_dl_mariana_excel_completo",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch",
+                )
+        st.markdown("**Descarregar pacote (ZIP)**")
+        for _i_m, part_m in enumerate(
+            st.session_state.get("mariana_zip_parts") or []
+        ):
+            if os.path.exists(part_m):
+                with open(part_m, "rb") as fm:
                     st.download_button(
-                        "Excel completo (sem Painel Fiscal) — mesmo ficheiro da pasta",
-                        _xfe.read(),
-                        file_name=os.path.basename(_mxp),
-                        key="v2_dl_mariana_excel_completo",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        f"Contabilidade · {rotulo_download_zip_parte(part_m)}",
+                        fm.read(),
+                        file_name=os.path.basename(part_m),
+                        key=f"v2_dl_mariana_{_i_m}",
                         width="stretch",
                     )
-            st.markdown("**Descarregar pacote (ZIP)**")
-            for _i_m, part_m in enumerate(
-                st.session_state.get("mariana_zip_parts") or []
-            ):
-                if os.path.exists(part_m):
-                    with open(part_m, "rb") as fm:
-                        st.download_button(
-                            f"Contabilidade · {rotulo_download_zip_parte(part_m)}",
-                            fm.read(),
-                            file_name=os.path.basename(part_m),
-                            key=f"v2_dl_mariana_{_i_m}",
-                            width="stretch",
-                        )
-    else:
-        st.caption(
-            "O campo para **colar a pasta no PC** e gravar o pacote completo no disco não está ativo aqui "
-            "(ex.: Streamlit Community Cloud, ou **GARIMPEIRO_MARIANA_PC=0**). "
-            "Num **PC local** com `streamlit run`, esse campo aparece abaixo do guia LEIAME. "
-            "Use os descarregamentos da Etapa 3 enquanto não gravar diretamente."
-        )
 
 
 def _garim_etapa3_fragment_entry():
@@ -9196,6 +9275,33 @@ if st.session_state.get("confirmado"):
         st.caption(
             "Carregue abaixo os ficheiros do lote; depois use **Iniciar grande garimpo** para ler e montar o relatório."
         )
+        if "mariana_zip_save_dir" not in st.session_state:
+            st.session_state["mariana_zip_save_dir"] = ""
+        if "mariana_zip_basename" not in st.session_state:
+            st.session_state["mariana_zip_basename"] = ""
+        st.markdown(
+            f'<p style="margin:0.6rem 0 0.25rem 0;font-weight:700;color:#5D1B36;">'
+            f'{_garim_emoji("\U0001f4c2")} Pasta no PC — padrão contabilidade (já no início)</p>',
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "Cole **aqui** o caminho completo da pasta **antes** de iniciar o garimpo — **não** precisa esperar as análises. "
+            "Enquanto os ficheiros são lidos, gravamos cópias dos XML nessa pasta (subpasta **Garimpeiro_lote_espelho**). "
+            "Depois, o **mesmo** caminho é usado para **Gerar arquivo contabilidade** (Excel solto + ZIPs com XML/Lote_001…). "
+            "Deixe vazio para ver só no ecrã."
+        )
+        st.text_input(
+            "Pasta de destino — leitura + pacote contabilidade (caminho completo)",
+            key="mariana_zip_save_dir",
+            placeholder="Ex.: D:\\Contabilidade\\Apuracao — ou vazio para não gravar no disco",
+            help="Shift+clique direito na pasta no Explorador → Copiar como caminho. Uma pasta para espelho durante a leitura e para Excel/ZIPs contabilidade.",
+        )
+        st.text_input(
+            "Prefixo opcional dos nomes dos ZIP (sem .zip)",
+            key="mariana_zip_basename",
+            placeholder="Opcional — ex.: Cliente ou projeto",
+            help="Prefixo sanitizado dos ficheiros .zip do pacote contabilidade.",
+        )
         uploaded_files = st.file_uploader(
             "\U0001f4c2 Escolha os XML e/ou ZIP (suporta grandes volumes):",
             accept_multiple_files=True,
@@ -9205,6 +9311,33 @@ if st.session_state.get("confirmado"):
             f'<p style="margin:0.85rem 0 0.35rem 0;font-weight:600;">{_garim_emoji("\U0001f4d1")} Opcional no mesmo passo</p>',
             unsafe_allow_html=True,
         )
+        _cin1, _cin2 = st.columns(2)
+        with _cin1:
+            _bytes_ini_inut = bytes_modelo_planilha_inutil_sem_xml_xlsx()
+            if _bytes_ini_inut:
+                st.download_button(
+                    "Baixar modelo — inutilizadas (Excel)",
+                    data=_bytes_ini_inut,
+                    file_name="MODELO_inutilizadas_sem_XML_garimpeiro.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_modelo_inutil_garimpo_ini",
+                    width="stretch",
+                )
+            else:
+                st.warning(_msg_sem_espaco_disco_garimpeiro())
+        with _cin2:
+            _bytes_ini_canc = bytes_modelo_planilha_cancel_sem_xml_xlsx()
+            if _bytes_ini_canc:
+                st.download_button(
+                    "Baixar modelo — canceladas (Excel)",
+                    data=_bytes_ini_canc,
+                    file_name="MODELO_canceladas_sem_XML_garimpeiro.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_modelo_cancel_garimpo_ini",
+                    width="stretch",
+                )
+            else:
+                st.warning(_msg_sem_espaco_disco_garimpeiro())
         up_ini_inut = st.file_uploader(
             "Planilha(s) de inutilizadas (.csv, .xlsx, .xls)",
             type=["csv", "xlsx", "xls"],
@@ -9243,6 +9376,29 @@ if st.session_state.get("confirmado"):
                 )
             else:
                 st.session_state.pop("_garimpo_zero_docs_msg", None)
+                _esp_base, _esp_err = _garimpo_destino_copia_lote_opcional()
+                st.session_state.pop("garimpo_lote_espelho_root", None)
+                st.session_state.pop("garimpo_lote_save_resolved", None)
+                if _esp_err and _esp_err != "cloud_or_disabled":
+                    st.error(_esp_err)
+                    st.stop()
+                if _esp_err == "cloud_or_disabled":
+                    st.warning(
+                        "A pasta para cópia dos XML **não será usada** neste ambiente (ex.: Cloud). "
+                        "Num **PC local** pode gravar o espelho na pasta indicada."
+                    )
+                if _esp_base is not None:
+                    try:
+                        _root = _esp_base / GARIMPE_SUBDIR_ESPELHO
+                        shutil.rmtree(_root, ignore_errors=True)
+                        (_root / "xml").mkdir(parents=True, exist_ok=True)
+                        (_root / "por_origem" / "emissao_propria").mkdir(parents=True, exist_ok=True)
+                        (_root / "por_origem" / "terceiros").mkdir(parents=True, exist_ok=True)
+                        st.session_state["garimpo_lote_espelho_root"] = str(_root)
+                        st.session_state["garimpo_lote_save_resolved"] = str(_esp_base)
+                    except OSError as e:
+                        st.error(f"Não foi possível preparar a pasta de espelho: {e}")
+                        st.stop()
                 limpar_arquivos_temp()
                 _mem_lote = {}
                 if not _garimpo_analise_sem_pasta_local_projeto():
@@ -9332,6 +9488,17 @@ if st.session_state.get("confirmado"):
                                                 lote_dict[key] = (res, is_p)
                                         else:
                                             lote_dict[key] = (res, is_p)
+                                        _esp_root = st.session_state.get("garimpo_lote_espelho_root")
+                                        if _esp_root and res:
+                                            try:
+                                                _garimpo_escrever_par_espelho(
+                                                    Path(_esp_root),
+                                                    res["Chave"],
+                                                    xml_data,
+                                                    is_p,
+                                                )
+                                            except OSError:
+                                                pass
                                     del xml_data 
                         except Exception as e: 
                             continue
@@ -9549,6 +9716,43 @@ if st.session_state.get("confirmado"):
                 st.rerun()
     else:
         # --- RESULTADOS TELA INICIAL (cartões por série só no PDF; aqui só tabela de resumo e abas) ---
+        _fb_sync = st.session_state.pop("_garimpo_sync_feedback", None)
+        if _fb_sync:
+            _kind, _txt = _fb_sync
+            if _kind == "ok":
+                st.success(_txt)
+            else:
+                st.error(_txt)
+
+        if st.session_state.get("garimpo_lote_save_resolved"):
+            _esp_show = st.session_state.get("garimpo_lote_espelho_root") or ""
+            st.caption(
+                f"Espelho XML em disco: `{_esp_show}`. Depois de buracos/planilhas, use **Processar dados** na lateral e depois **Atualizar dados e sincronizar pasta XML** aqui."
+            )
+            if st.button(
+                "Atualizar dados e sincronizar pasta XML",
+                key="btn_garim_resync_espelho",
+                help="Relê o lote, recalcula tabelas (mantém registos manuais sem XML) e regrava as pastas xml/ e por_origem/ no espelho.",
+                width="stretch",
+            ):
+                footer_sync = st.empty()
+                t0 = time.perf_counter()
+                okp, msgp = reprocessar_garimpeiro_a_partir_do_disco(
+                    cnpj_limpo, footer_ph=footer_sync, t_start=t0
+                )
+                if okp:
+                    okr, msgr = _garimpo_resync_espelho_completo(cnpj_limpo)
+                    if okr:
+                        st.session_state["_garimpo_sync_feedback"] = ("ok", f"{msgp}\n\n{msgr}")
+                    else:
+                        st.session_state["_garimpo_sync_feedback"] = (
+                            "ok",
+                            f"{msgp}\n\n⚠ **Pasta:** {msgr}",
+                        )
+                else:
+                    st.session_state["_garimpo_sync_feedback"] = ("err", msgp)
+                st.rerun()
+
         _gcm, _gcr = st.columns([2.95, 1.55], gap="large")
         with _gcm:
             st.markdown(
@@ -9945,120 +10149,6 @@ if st.session_state.get("confirmado"):
                     f'<h5>{_garim_emoji("\U0001f4e4")} Uploads e validação</h5>',
                     unsafe_allow_html=True,
                 )
-                # =====================================================================
-                # AÇÕES RÁPIDAS — SPED + Processar Dados (topo do painel; leitura completa sem scroll)
-                # =====================================================================
-                st.markdown(
-                    f'<h5>{_garim_emoji("\u26a1")} Ações rápidas</h5>',
-                    unsafe_allow_html=True,
-                )
-                st.markdown(
-                    '<h5>SPED EFD (.txt) — XML do lote (chaves C100 / D100)</h5>',
-                    unsafe_allow_html=True,
-                )
-                with st.expander(
-                    "Anexar EFD ICMS/IPI e gravar no PC só os XML do garimpo cuja chave aparece nos blocos C100 ou D100",
-                    expanded=True,
-                ):
-                    if "sped_xml_dest_dir" not in st.session_state:
-                        st.session_state["sped_xml_dest_dir"] = ""
-                    sped_efd_up = st.file_uploader(
-                        "Ficheiro SPED (.txt) — ou use o anexado no 1.º passo (sessão)",
-                        type=["txt"],
-                        key="sped_c100_d100_upload",
-                    )
-                    st.text_input(
-                        "Pasta no disco onde gravar os XML (caminho completo)",
-                        key="sped_xml_dest_dir",
-                        placeholder="Ex.: D:\\Contabilidade\\XML_do_SPED",
-                        help="A pasta é criada se não existir. Os ficheiros ficam na raiz desta pasta (sem subpastas automáticas).",
-                    )
-                    if st.button(
-                        "Gravar XML do lote (interseção com chaves C100/D100)",
-                        key="btn_sped_gravar_xml_pasta",
-                        width="stretch",
-                    ):
-                        texto_sped = _sped_resolver_texto_de_uploader(sped_efd_up)
-                        if not texto_sped:
-                            st.warning(
-                                "Anexe o **.txt** do SPED aqui ou no **opcional do primeiro passo** (fica na sessão ao iniciar o garimpo)."
-                            )
-                        else:
-                            _p_sped, _err_sped = _pasta_destino_sped_xml_para_gravar()
-                            if _err_sped:
-                                st.warning(_err_sped)
-                            else:
-                                with st.spinner("A ler SPED e a gravar XML…"):
-                                    _ng, _nf, _msg_sped = gravar_xml_lote_filtrado_por_chaves_sped(
-                                        cnpj_limpo, texto_sped, _p_sped
-                                    )
-                                if _ng > 0:
-                                    st.success(_msg_sped)
-                                else:
-                                    st.warning(_msg_sped)
-
-                    st.markdown("**Exportação SPED** (ZIP com XML cruzados + Excel de pendências)")
-                    if st.button(
-                        "Gerar ZIP e Excel (exportação SPED)",
-                        key="btn_sped_gera_zip_xlsx",
-                        width="stretch",
-                    ):
-                        texto_sped = _sped_resolver_texto_de_uploader(sped_efd_up)
-                        if not texto_sped:
-                            st.warning(
-                                "Anexe o **.txt** do SPED aqui ou use o do **opcional do 1.º passo** (sessão)."
-                            )
-                        elif not _garimpo_existem_fontes_xml_lote():
-                            st.warning(
-                                "Não há ficheiros do lote — faça o **garimpo** primeiro."
-                            )
-                        else:
-                            n_p = n_x = 0
-                            with st.spinner("A cruzar SPED com o lote…"):
-                                pairs, matched, _ch_sped, _er = _extrair_pares_xml_intersecao_sped_lote(
-                                    cnpj_limpo, texto_sped
-                                )
-                                df_pend = _dataframe_sped_chaves_sem_xml_no_lote(texto_sped, matched)
-                                n_p = len(pairs)
-                                n_x = int(len(df_pend.index)) if df_pend is not None else 0
-                                st.session_state["sped_export_zip"] = _zip_bytes_from_arc_pairs(pairs)
-                                st.session_state["sped_export_xlsx"] = _excel_bytes_dataframe_simples(
-                                    df_pend, sheet="SPED_sem_XML_no_lote"
-                                )
-                            st.success(
-                                f"Pronto: **{n_p}** XML no ZIP; **{n_x}** linha(s) no Excel de pendências."
-                            )
-
-                    _zexp = st.session_state.get("sped_export_zip")
-                    _xexp = st.session_state.get("sped_export_xlsx")
-                    if _zexp:
-                        st.download_button(
-                            "Descarregar ZIP — XML cruzados (SPED × lote)",
-                            data=_zexp,
-                            file_name="SPED_intersecao_lote_xml.zip",
-                            mime="application/zip",
-                            key="dl_sped_zip_intersecao",
-                            width="stretch",
-                        )
-                    if _xexp:
-                        st.download_button(
-                            "Descarregar Excel — SPED sem XML no lote (pendentes)",
-                            data=_xexp,
-                            file_name="SPED_sem_XML_no_lote.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="dl_sped_xlsx_pend",
-                            width="stretch",
-                        )
-                    if st.button(
-                        "Limpar ficheiros gerados (ZIP/Excel em memória)",
-                        key="btn_sped_clear_export",
-                        width="stretch",
-                    ):
-                        st.session_state.pop("sped_export_zip", None)
-                        st.session_state.pop("sped_export_xlsx", None)
-                        st.session_state.pop("sped_export_meta", None)
-                        st.rerun()
-
                 st.markdown(
                     f'<h5>{_garim_emoji("\u2699\ufe0f")} Processar Dados (leitura completa do lote)</h5>',
                     unsafe_allow_html=True,
@@ -10839,5 +10929,150 @@ if st.session_state.get("confirmado"):
                                     key=f"btn_dl_dom_{part}",
                                     width="stretch",
                                 )
+
+        # =====================================================================
+        # SPED — fim do painel direito (após EXPORTAR LISTA ESPECÍFICA)
+        # =====================================================================
+        st.divider()
+        st.markdown(
+            f'<h5>{_garim_emoji("\u26a1")} Ações rápidas</h5>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<h5>SPED EFD (.txt) — XML do lote (chaves C100 / D100)</h5>',
+            unsafe_allow_html=True,
+        )
+        with st.expander(
+            "Anexar EFD ICMS/IPI e gravar no PC só os XML do garimpo cuja chave aparece nos blocos C100 ou D100",
+            expanded=False,
+        ):
+            if "sped_xml_dest_dir" not in st.session_state:
+                st.session_state["sped_xml_dest_dir"] = ""
+            sped_efd_up = st.file_uploader(
+                "Ficheiro SPED (.txt) — ou use o anexado no 1.º passo (sessão)",
+                type=["txt"],
+                key="sped_c100_d100_upload",
+            )
+            st.text_input(
+                "Pasta no PC onde gravar (ZIP, Excel e/ou XML — caminho completo)",
+                key="sped_xml_dest_dir",
+                placeholder="Ex.: D:\\Contabilidade\\XML_do_SPED",
+                help="Usada ao gravar XML soltos **e** ao gerar ZIP/Excel (exportação SPED): os ficheiros são gravados **nesta pasta** no disco. "
+                "Se ficar vazio, o ZIP e o Excel só aparecem nos botões de descarregar abaixo.",
+            )
+            if st.button(
+                "Gravar XML do lote (interseção com chaves C100/D100)",
+                key="btn_sped_gravar_xml_pasta",
+                width="stretch",
+            ):
+                texto_sped = _sped_resolver_texto_de_uploader(sped_efd_up)
+                if not texto_sped:
+                    st.warning(
+                        "Anexe o **.txt** do SPED aqui ou no **opcional do primeiro passo** (fica na sessão ao iniciar o garimpo)."
+                    )
+                else:
+                    _p_sped, _err_sped = _pasta_destino_sped_xml_para_gravar()
+                    if _err_sped:
+                        st.warning(_err_sped)
+                    else:
+                        with st.spinner("A ler SPED e a gravar XML…"):
+                            _ng, _nf, _msg_sped = gravar_xml_lote_filtrado_por_chaves_sped(
+                                cnpj_limpo, texto_sped, _p_sped
+                            )
+                        if _ng > 0:
+                            st.success(_msg_sped)
+                        else:
+                            st.warning(_msg_sped)
+
+            st.markdown(
+                "**Exportação SPED** (ZIP com XML cruzados + Excel de pendências). "
+                "Se preencheu a **pasta** acima, o ZIP e o Excel são gravados **no disco** nessa pasta; "
+                "sempre pode também usar os botões de descarregar."
+            )
+            if st.button(
+                "Gerar ZIP e Excel (exportação SPED)",
+                key="btn_sped_gera_zip_xlsx",
+                width="stretch",
+            ):
+                texto_sped = _sped_resolver_texto_de_uploader(sped_efd_up)
+                if not texto_sped:
+                    st.warning(
+                        "Anexe o **.txt** do SPED aqui ou use o do **opcional do 1.º passo** (sessão)."
+                    )
+                elif not _garimpo_existem_fontes_xml_lote():
+                    st.warning(
+                        "Não há ficheiros do lote — faça o **garimpo** primeiro."
+                    )
+                else:
+                    n_p = n_x = 0
+                    zip_b = b""
+                    xlsx_b = None
+                    with st.spinner("A cruzar SPED com o lote…"):
+                        pairs, matched, _ch_sped, _er = _extrair_pares_xml_intersecao_sped_lote(
+                            cnpj_limpo, texto_sped
+                        )
+                        df_pend = _dataframe_sped_chaves_sem_xml_no_lote(texto_sped, matched)
+                        n_p = len(pairs)
+                        n_x = int(len(df_pend.index)) if df_pend is not None else 0
+                        zip_b = _zip_bytes_from_arc_pairs(pairs)
+                        xlsx_b = _excel_bytes_dataframe_simples(
+                            df_pend, sheet="SPED_sem_XML_no_lote"
+                        )
+                        st.session_state["sped_export_zip"] = zip_b
+                        st.session_state["sped_export_xlsx"] = xlsx_b
+                    _disk_extra = ""
+                    _raw_pd = st.session_state.get("sped_xml_dest_dir")
+                    _want_disk = bool(
+                        str(_raw_pd).strip().strip('"').strip("'") if _raw_pd is not None else ""
+                    )
+                    if _want_disk:
+                        _p_sped, _err_sped = _pasta_destino_sped_xml_para_gravar()
+                        if _err_sped:
+                            _disk_extra = f"\n\n**Pasta no disco:** {_err_sped}"
+                        elif _p_sped:
+                            try:
+                                _fz = _p_sped / "SPED_intersecao_lote_xml.zip"
+                                _fx = _p_sped / "SPED_sem_XML_no_lote.xlsx"
+                                _fz.write_bytes(zip_b)
+                                if xlsx_b:
+                                    _fx.write_bytes(xlsx_b)
+                                _disk_extra = (
+                                    f"\n\nGravado no PC em `{_p_sped}`: **{_fz.name}**, **{_fx.name}**."
+                                )
+                            except OSError as e:
+                                _disk_extra = f"\n\n**Erro ao gravar na pasta:** {e}"
+                    st.success(
+                        f"Pronto: **{n_p}** XML no ZIP; **{n_x}** linha(s) no Excel de pendências.{_disk_extra}"
+                    )
+
+            _zexp = st.session_state.get("sped_export_zip")
+            _xexp = st.session_state.get("sped_export_xlsx")
+            if _zexp:
+                st.download_button(
+                    "Descarregar ZIP — XML cruzados (SPED × lote)",
+                    data=_zexp,
+                    file_name="SPED_intersecao_lote_xml.zip",
+                    mime="application/zip",
+                    key="dl_sped_zip_intersecao",
+                    width="stretch",
+                )
+            if _xexp:
+                st.download_button(
+                    "Descarregar Excel — SPED sem XML no lote (pendentes)",
+                    data=_xexp,
+                    file_name="SPED_sem_XML_no_lote.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_sped_xlsx_pend",
+                    width="stretch",
+                )
+            if st.button(
+                "Limpar ficheiros gerados (ZIP/Excel em memória)",
+                key="btn_sped_clear_export",
+                width="stretch",
+            ):
+                st.session_state.pop("sped_export_zip", None)
+                st.session_state.pop("sped_export_xlsx", None)
+                st.session_state.pop("sped_export_meta", None)
+                st.rerun()
 else:
     st.warning("\U0001f448 Insira o CNPJ lateral para começar.")
