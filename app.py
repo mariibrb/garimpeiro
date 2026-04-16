@@ -952,25 +952,86 @@ def _nome_excel_pacote_contab_dentro_zip(slug: str) -> str:
         base = f"{base}.xlsx"
     return base
 
-_LEIAME_ESTRUTURA_CONTABILIDADE = """Pacote Garimpeiro — contabilidade / matriz
-========================================
+_LEIAME_ESTRUTURA_CONTABILIDADE = """Garimpeiro — Padrão de pastas e nomes (pacote contabilidade / matriz)
+================================================================
 
-Na **pasta que escolheu** para guardar o pacote:
-  • **Um Excel solto** — ex.: «nome_do_pacote_relatorio_garimpeiro_completo.xlsx» (Geral, Buracos, status, Terceiros, Dashboard, etc.; **sem** folha Painel Fiscal).
-  • Vários **ficheiros .zip** (grupos Emitidas / Terceiros).
+Este guia descreve ONDE os ficheiros são gravados e COMO ficam organizados quando usa
+«Gerar pacote ZIP (apuração / contabilidade)» com uma pasta de destino definida na app
+(caminho completo no PC, por exemplo D:\\Exportacoes\\Contabilidade).
 
-Cada ficheiro ZIP contém:
-  • **Pasta XML** — dentro dela, subpastas **Lote_001**, **Lote_002**, … com até 10 000 XML cada. O nome do .xml costuma ser a chave de 44 dígitos (ou `…_cancelamento.xml` / `…_denegada.xml` / `…_rejeitada.xml` quando for evento distinto da mesma chave), ou INUT_….
-  • **relatorio_garimpeiro_…xlsx** — na **raiz** do ZIP (nome inclui série/mês/grupo como o .zip; sem folha Painel Fiscal).
 
-Nome do ficheiro .zip no disco (quando há notas no relatório): inclui **nota inicial e nota final** daquele grupo, ex.: …_Emitidas_Autorizadas_Serie_1_notas_1500_96842.zip
+1) Pasta no disco (escolha sua)
+---------------------------------
+• Indique uma pasta **com caminho completo**. A app **cria a pasta se não existir** e grava **tudo diretamente nessa pasta** (não acrescenta automaticamente subpastas como \\Garimpeiro por baixo do caminho — se quiser, inclua-as no caminho).
 
-Vários ZIP (só são criados se existir XML naquele grupo):
-  • **Emitidas** (sua empresa), por série **e mês de emissão** — ex.: Emitidas_Autorizadas_Serie_1_Mes_2024_03, …
-    (evita misturar no mesmo ZIP notas de meses diferentes). Dentro: pasta XML/Lote_001… (10 000 XML por pasta).
-  • **Terceiros**, por modelo e status (sem separação por mês) — ex.: Terceiros_NFe_Autorizadas, …
+• Nessa pasta ficam:
+  (a) **Um Excel solto** com o relatório completo do lote (sem folha «Painel Fiscal»):
+      nome típico:
+        <nome_base>_relatorio_garimpeiro_completo.xlsx
+      «nome_base» = texto opcional que preencher em «Nome base do ZIP» na app; se vazio, usa-se um nome interno
+      (ex.: pacote_apuracao_relatorio_garimpeiro_completo.xlsx — o prefixo exacto depende do que a app sanitizar).
 
-O Excel em cada ZIP é o **mesmo conteúdo** (todo o lote lido), mas o **nome do ficheiro** muda por grupo para não se sobrepor ao extrair.
+  (b) **Um ou mais ficheiros .zip** (um por grupo de documentos — ver abaixo). Todos na **mesma** pasta.
+
+
+2) Nome dos ficheiros .zip na pasta (padrão)
+--------------------------------------------
+Cada ZIP chama-se assim (tudo numa linha, sem espaços):
+
+  <nome_base>__<grupo><sufixo_notas>.zip
+
+• <nome_base> — igual ao prefixo opcional da app (sanitizado: sem \\ / : * ? \" < > |).
+• <grupo> — identifica o conjunto de XML:
+    Emissão própria (emitidas):
+      Emitidas_<Status>_Serie_<série>_Mes_AAAA_MM
+      Ex.: Emitidas_Autorizadas_Serie_1_Mes_2024_03
+      Há **um ZIP por combinação** série + status + **mês de emissão** (para não misturar meses).
+    Terceiros:
+      Terceiros_<TipoDoc>_<Status>
+      Ex.: Terceiros_NFe_Autorizadas  (NFe, NFCe, CTe, MDFe, NFSe, CTeOS ou Outros, conforme o modelo.)
+
+• <sufixo_notas> (quando há intervalo de numeração nesse grupo):
+      _notas_<menor_nº>_<maior_nº>
+      Ex.: _notas_1500_96842
+
+Exemplo de nome completo no disco:
+  ClienteABC__Emitidas_Autorizadas_Serie_1_Mes_2024_03_notas_5040_5869.zip
+
+
+3) O que há DENTRO de cada ficheiro .zip
+----------------------------------------
+Na **raiz** do ZIP:
+  • LEIAME_pacote_contabilidade.txt  (este texto, copiado para dentro do pacote)
+  • relatorio_garimpeiro_<grupo>.xlsx — Excel respeitante a esse grupo (conteúdo alinhado ao lote; nome varia para não
+    sobrepôr ao extrair vários ZIPs para a mesma pasta). **Sem** folha Painel Fiscal.
+
+Pastas de XML (sempre com este padrão):
+  XML/
+    Lote_001/   … até 10 000 ficheiros .xml por pasta
+    Lote_002/
+    …
+
+Cada .xml dentro de XML/Lote_NNN/:
+  • Chave 44 dígitos:  <chave>.xml
+  • Cancelamento:      <chave>_cancelamento.xml
+  • Denegação:         <chave>_denegada.xml
+  • Rejeição:          <chave>_rejeitada.xml
+  • Inutilização:      ficheiro derivado de INUT_… (nome seguro no ZIP)
+
+O Excel **solto** na pasta do disco (item 1a) repete o relatório completo do lote; o .xlsx **dentro** de cada ZIP
+repete a mesma lógica de dados mas com nome próprio por grupo.
+
+
+4) Limites
+----------
+• Até 10 000 XML por subpasta Lote_NNN; abre-se Lote seguinte quando enche.
+• Só são criados ZIP para grupos em que exista pelo menos um XML no lote processado.
+
+
+5) Nota — Etapa 3 (exportação filtrada)
+---------------------------------------
+A «Etapa 3» pode gravar outros ZIP noutra pasta (campo próprio). Esse fluxo é **independente** deste pacote de
+contabilidade; este guia refere-se ao bloco «Pacote para contabilidade / matriz» / geração no disco descrita acima.
 """
 
 
@@ -6760,6 +6821,222 @@ def escrever_zip_dominio_por_chaves(cnpj_limpo, chaves_lista, df_geral=None):
     return parts, count_xml
 
 
+def _sped_c100_chave_nos_campos(parts: list, cod_mod: str) -> str:
+    """CHV_NFE (C100) ou CHV_CTE (D100): 44 dígitos nos campos típicos ou na linha."""
+    for idx in (9, 10, 11, 8):
+        if len(parts) <= idx:
+            continue
+        s = parts[idx].strip()
+        if len(s) == 44 and s.isdigit():
+            if not cod_mod or s[20:22] == cod_mod:
+                return s
+    linha = "|".join(parts)
+    cands = re.findall(r"\d{44}", linha)
+    if not cands:
+        return ""
+    if cod_mod and len(cod_mod) == 2:
+        for c in cands:
+            if c[20:22] == cod_mod:
+                return c
+    return cands[0]
+
+
+def _sped_iter_registros_c100(texto: str) -> list:
+    out = []
+    for n_lin, line in enumerate(texto.splitlines(), 1):
+        if "C100" not in line:
+            continue
+        parts = line.split("|")
+        if len(parts) < 9:
+            continue
+        reg = (parts[1] or "").strip().upper()
+        if reg != "C100":
+            continue
+        cod_mod = (parts[5] if len(parts) > 5 else "").strip()
+        if not cod_mod:
+            continue
+        ser = (parts[7] if len(parts) > 7 else "").strip()
+        num_doc = (parts[8] if len(parts) > 8 else "").strip()
+        ind_oper = (parts[2] if len(parts) > 2 else "").strip()
+        ind_emit = (parts[3] if len(parts) > 3 else "").strip()
+        chave = _sped_c100_chave_nos_campos(parts, cod_mod)
+        out.append(
+            {
+                "Linha": n_lin,
+                "REG_SPED": "C100",
+                "COD_MOD": cod_mod,
+                "SER": ser,
+                "NUM_DOC": num_doc,
+                "CHV_NFE": chave,
+                "IND_OPER": ind_oper,
+                "IND_EMIT": ind_emit,
+            }
+        )
+    return out
+
+
+def _sped_iter_registros_d100(texto: str) -> list:
+    out = []
+    for n_lin, line in enumerate(texto.splitlines(), 1):
+        if "D100" not in line:
+            continue
+        parts = line.split("|")
+        if len(parts) < 10:
+            continue
+        reg = (parts[1] or "").strip().upper()
+        if reg != "D100":
+            continue
+        cod_mod = (parts[5] if len(parts) > 5 else "").strip()
+        if not cod_mod:
+            continue
+        ser = (parts[7] if len(parts) > 7 else "").strip()
+        num_doc = (parts[9] if len(parts) > 9 else "").strip()
+        ind_oper = (parts[2] if len(parts) > 2 else "").strip()
+        ind_emit = (parts[3] if len(parts) > 3 else "").strip()
+        chave = _sped_c100_chave_nos_campos(parts, cod_mod)
+        out.append(
+            {
+                "Linha": n_lin,
+                "REG_SPED": "D100",
+                "COD_MOD": cod_mod,
+                "SER": ser,
+                "NUM_DOC": num_doc,
+                "CHV_NFE": chave,
+                "IND_OPER": ind_oper,
+                "IND_EMIT": ind_emit,
+            }
+        )
+    return out
+
+
+def _sped_dedupe_regs(regs: list) -> list:
+    visto = set()
+    unicos = []
+    for r in regs:
+        ch = (r.get("CHV_NFE") or "").strip()
+        if len(ch) == 44 and ch.isdigit():
+            k = ("K", ch)
+        else:
+            k = ("M", r.get("COD_MOD", ""), r.get("SER", ""), r.get("NUM_DOC", ""))
+        if k in visto:
+            continue
+        visto.add(k)
+        unicos.append(r)
+    return unicos
+
+
+def _sped_texto_unir_c100_d100(texto: str) -> list:
+    return _sped_dedupe_regs(_sped_iter_registros_c100(texto) + _sped_iter_registros_d100(texto))
+
+
+def _sped_chaves44_de_texto(texto: str) -> list:
+    """Chaves de 44 dígitos extraídas dos registos C100/D100 com CHV preenchida."""
+    regs = _sped_texto_unir_c100_d100(texto)
+    seen = []
+    ok = set()
+    for r in regs:
+        ch = (r.get("CHV_NFE") or "").strip()
+        if len(ch) == 44 and ch.isdigit():
+            if ch not in ok:
+                ok.add(ch)
+                seen.append(ch)
+    return seen
+
+
+def _pasta_destino_sped_xml_para_gravar():
+    """Resolve pasta em session_state['sped_xml_dest_dir'] (caminho completo obrigatório)."""
+    raw = st.session_state.get("sped_xml_dest_dir")
+    s = (str(raw).strip().strip('"').strip("'") if raw is not None else "")
+    if not s:
+        return (
+            None,
+            "Indique a **pasta completa** onde gravar os XML (o campo não pode ficar em branco).",
+        )
+    try:
+        p = Path(s).expanduser().resolve()
+    except (OSError, ValueError):
+        return None, "Caminho inválido. Use um caminho completo (ex.: D:\\Exportacoes\\XML_SPED)."
+    if p.exists() and not p.is_dir():
+        return (
+            None,
+            "Esse caminho já existe e não é uma pasta (é um ficheiro). Escolha outra pasta.",
+        )
+    try:
+        p.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return None, f"Não foi possível criar ou aceder à pasta: {e}"
+    return p, None
+
+
+def gravar_xml_lote_filtrado_por_chaves_sped(cnpj_limpo: str, texto_sped: str, pasta_dest: Path):
+    """
+    Grava na pasta_dest os XML do lote atual cuja chave 44 consta em C100/D100 do SPED (campo CHV).
+    Devolve (n_ficheiros_gravados, n_chaves_sped_sem_xml_no_lote, mensagem_markdown).
+    """
+    if not texto_sped or not str(texto_sped).strip():
+        return 0, 0, "Ficheiro SPED vazio."
+    chaves_ord = _sped_chaves44_de_texto(texto_sped)
+    ch_set = set(chaves_ord)
+    if not ch_set:
+        return (
+            0,
+            0,
+            "Nenhuma chave de 44 dígitos encontrada nos blocos C100/D100 (confirme que o .txt é EFD ICMS/IPI e tem CHV).",
+        )
+    if not _garimpo_existem_fontes_xml_lote():
+        return (
+            0,
+            len(ch_set),
+            "Não há XML do lote em memória/pasta — faça o **garimpo** primeiro e mantenha os ficheiros acessíveis.",
+        )
+
+    cnpj = "".join(c for c in str(cnpj_limpo or "") if c.isdigit())[:14]
+    usados_nomes = set()
+    ch44_ja_gravado = set()
+    matched_ch = set()
+    count = 0
+    erros = []
+    try:
+        pasta_dest.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return 0, len(ch_set), f"Não foi possível usar a pasta: {e}"
+
+    for fn in _lista_nomes_fontes_xml_garimpo():
+        with _abrir_fonte_xml_garimpo_stream(fn) as ft:
+            for name, data in extrair_recursivo(ft, fn):
+                try:
+                    res, _ = identify_xml_info(data, cnpj, name)
+                    ch44 = _chave44_digitos(res.get("Chave")) if res else None
+                    if res and ch44 and ch44 in ch_set:
+                        td = _tupla_dedupe_export_xml(res, ch44)
+                        if td is None or td in ch44_ja_gravado:
+                            continue
+                        ch44_ja_gravado.add(td)
+                        arc = _nome_xml_raiz_zip_unico(usados_nomes, name)
+                        dest = pasta_dest / arc
+                        raw = data if isinstance(data, (bytes, bytearray)) else bytes(data)
+                        with open(dest, "wb") as wf:
+                            wf.write(raw)
+                        count += 1
+                        matched_ch.add(ch44)
+                except OSError as e:
+                    erros.append(str(e))
+                finally:
+                    del data
+
+    n_falt_sped = len(ch_set - matched_ch)
+    msg = (
+        f"Gravados **{count}** ficheiro(s) em `{pasta_dest}`. "
+        f"No SPED (C100/D100): **{len(ch_set)}** chave(s) de 44 dígitos; "
+        f"com XML no lote e gravadas: **{len(matched_ch)}**."
+    )
+    if n_falt_sped:
+        msg += f" **{n_falt_sped}** chave(s) do SPED **sem** ficheiro correspondente no lote atual."
+    if erros:
+        msg += f" Erros ao gravar (amostra): {erros[:3]}"
+    return count, n_falt_sped, msg
+
+
 def _zip_bytes_from_arc_pairs(pairs: list) -> bytes:
     """Um único .zip em memória a partir de [(nome_interno, bytes), …]."""
     if not pairs:
@@ -7134,7 +7411,7 @@ Ficheiros e descargas que pode obter:
 • Modelo Excel para inutilizadas declaradas manualmente (quando usar essa funcionalidade).
 
 === GARIMPEIRO RAIZ (linha de comandos) vs. ESTA PÁGINA ===
-• No programa Garimpeiro Raiz (CLI) existe o fluxo «Apuração final» com leitura de ficheiro(s) SPED EFD (.txt) e geração da pasta/ZIP «APURAÇÃO FINAL». Isto não está no Garimpeiro On-Line: aqui não há campo para anexar o .txt do SPED. Para esse modo use o Raiz no PC.
+• **SPED EFD (.txt):** no painel direito, secção **«SPED EFD — XML do lote (chaves C100 / D100)»**, pode anexar o texto do EFD e **gravar numa pasta à sua escolha** só os XML do lote cuja chave aparece em C100/D100. O fluxo completo «Apuração final» em ZIP (como no Garimpeiro Raiz em CLI) continua a ser outro processo; use o Raiz se precisar desse pacote integral.
 
 === MANUAL PASSO A PASSO ===
 1. Lateral: CNPJ do emitente (cliente) — só os 14 dígitos ou cole já mascarado; clique em Liberar operação.
@@ -7144,7 +7421,7 @@ Ficheiros e descargas que pode obter:
 5. (Opcional) Lateral «Último nº por série»: afeta só o cálculo de buracos — **só as séries que preencher e guardar**; âncora por último nº e mês. O garimpo e o resumo por série continuam totais. Sem Guardar referência válida, buracos usam todo o intervalo lido em emissão própria.
 6. Inutilizadas: a partir dos buracos, por planilha (Excel/CSV) ou faixa — só números que já forem buraco listado (não alarga intervalos).
 7. Painel à direita: **Processar Dados** grava XML/ZIP extra, aplica inutilizações «sem XML» (se configurou) e recalcula a partir da pasta de uploads.
-8. Etapa 3: filtros em cascata (emissão própria e terceiros em colunas separadas). Na caixa **Tipo de exportação** escolha ZIP (tudo ou filtrado, raiz ou pastas) ou Excel (lote completo ou só filtrado). Depois use **Gerar — sua empresa**, **Gerar — terceiros** ou **Gerar os dois lados**. Isto cobre em parte os modos de exportação do Raiz, mas não o menu completo da CLI (nem SPED).
+8. Etapa 3: filtros em cascata (emissão própria e terceiros em colunas separadas). Na caixa **Tipo de exportação** escolha ZIP (tudo ou filtrado, raiz ou pastas) ou Excel (lote completo ou só filtrado). Depois use **Gerar — sua empresa**, **Gerar — terceiros** ou **Gerar os dois lados**. **SPED:** ver painel direito (C100/D100 → XML na pasta). O menu completo da CLI Raiz tem outras opções.
 9. Lista específica (secção própria): exporte subconjuntos por chaves, faixa, período, série ou uma nota — em Excel e/ou ZIP conforme os botões apresentados.
 
 === DICAS ===
@@ -7172,7 +7449,7 @@ with st.container():
         st.markdown(
             """
         <div style="font-size:0.88rem;line-height:1.5;color:#444;margin:0 0 12px 0;padding:10px 12px;background:rgba(230,240,255,0.85);border-radius:10px;border-left:3px solid #4169E1;">
-        <b>SPED (.txt) e «Apuração final»:</b> estão no <b>Garimpeiro Raiz</b> (programa por linha de comandos), não nesta página. Aqui só trabalha com XML/ZIP e exportações; não há upload do ficheiro EFD.
+        <b>SPED (.txt):</b> no painel direito pode anexar o EFD e gravar numa pasta os XML do lote que batem com chaves <b>C100/D100</b>. O pacote «Apuração final» completo do <b>Garimpeiro Raiz</b> (CLI) é um fluxo à parte.
         </div>
         <div class="instrucoes-card manual-compacto">
             <p style="margin:0 0 10px 0;font-size:0.95rem;line-height:1.55;color:#333;">
@@ -8646,16 +8923,16 @@ def _garim_etapa3_corpo(cnpj_limpo):
                 )
 
     st.markdown("---")
-    st.markdown("##### Padrão **contabilidade** (referência)")
+    st.markdown("##### Padrão **contabilidade** (onde grava e como se chamam as pastas / ficheiros)")
     st.caption(
-        "Descrição da estrutura dos ficheiros ZIP e Excel no **modo contabilidade / matriz** "
-        "(pastas XML/Lote_001…, nomes dos ZIP por série/mês, Excel sem Painel Fiscal). "
-        "Pode descarregar este texto em qualquer ambiente. "
-        "O **gerador do pacote completo** (ZIP no disco + Excel) só aparece abaixo quando a instalação "
-        "está configurada para isso (PC local / variável GARIMPEIRO_MARIANA_PC / ficheiro .mariana_pc)."
+        "O ficheiro descarregável é um **guia completo** (não é só um aviso curto): indica **em que pasta do PC** "
+        "o pacote é gravado (a que você indicar na app), **como se nomeiam** o Excel solto e cada ZIP, e **a árvore "
+        "dentro de cada ZIP** (XML/Lote_001…, Excel na raiz, LEIAME incluído). "
+        "O **botão para gerar** o pacote no disco só aparece abaixo quando o ambiente está configurado "
+        "(PC local / GARIMPEIRO_MARIANA_PC / ficheiro .mariana_pc)."
     )
     st.download_button(
-        "Descarregar LEIAME — padrão contabilidade (.txt)",
+        "Descarregar guia — pastas, nomes e estrutura ZIP (padrão contabilidade) (.txt)",
         data=_LEIAME_ESTRUTURA_CONTABILIDADE.encode("utf-8"),
         file_name="LEIAME_pacote_contabilidade.txt",
         mime="text/plain; charset=utf-8",
@@ -9599,6 +9876,70 @@ if st.session_state.get("confirmado"):
                         st.success(
                             "Última comparação de autenticidade: **sem divergências** (ou planilha vazia após cruzamento)."
                         )
+
+                # =====================================================================
+                # SPED EFD — XML do lote que constam em C100/D100 (gravar em pasta)
+                # =====================================================================
+                st.markdown(
+                    '<h5>SPED EFD (.txt) — XML do lote (chaves C100 / D100)</h5>',
+                    unsafe_allow_html=True,
+                )
+                with st.expander(
+                    "Anexar EFD ICMS/IPI e gravar no PC só os XML do garimpo cuja chave aparece nos blocos C100 ou D100",
+                    expanded=False,
+                ):
+                    st.caption(
+                        "Carregue o ficheiro **texto** do SPED (pipe `|`). A app lê registos **|C100|** e **|D100|** e recolhe "
+                        "chaves de acesso de **44 dígitos**. Depois copia para a pasta que indicar **apenas** os XML já "
+                        "presentes no lote atual cujo número de chave coincide — útil para alinhar pasta física ao escriturado."
+                    )
+                    if "sped_xml_dest_dir" not in st.session_state:
+                        st.session_state["sped_xml_dest_dir"] = ""
+                    sped_efd_up = st.file_uploader(
+                        "Ficheiro SPED (.txt)",
+                        type=["txt"],
+                        key="sped_c100_d100_upload",
+                    )
+                    st.text_input(
+                        "Pasta no disco onde gravar os XML (caminho completo)",
+                        key="sped_xml_dest_dir",
+                        placeholder="Ex.: D:\\Contabilidade\\XML_do_SPED",
+                        help="A pasta é criada se não existir. Os ficheiros ficam na raiz desta pasta (sem subpastas automáticas).",
+                    )
+                    if st.button(
+                        "Gravar XML do lote (interseção com chaves C100/D100)",
+                        key="btn_sped_gravar_xml_pasta",
+                        width="stretch",
+                    ):
+                        if sped_efd_up is None:
+                            st.warning("Anexe primeiro o ficheiro **.txt** do SPED.")
+                        else:
+                            raw_b = sped_efd_up.read()
+                            try:
+                                sped_efd_up.seek(0)
+                            except Exception:
+                                pass
+                            texto_sped = None
+                            for enc in ("utf-8-sig", "utf-8", "latin-1", "cp1252"):
+                                try:
+                                    texto_sped = raw_b.decode(enc)
+                                    break
+                                except UnicodeDecodeError:
+                                    continue
+                            if texto_sped is None:
+                                texto_sped = raw_b.decode("latin-1", errors="replace")
+                            _p_sped, _err_sped = _pasta_destino_sped_xml_para_gravar()
+                            if _err_sped:
+                                st.warning(_err_sped)
+                            else:
+                                with st.spinner("A ler SPED e a gravar XML…"):
+                                    _ng, _nf, _msg_sped = gravar_xml_lote_filtrado_por_chaves_sped(
+                                        cnpj_limpo, texto_sped, _p_sped
+                                    )
+                                if _ng > 0:
+                                    st.success(_msg_sped)
+                                else:
+                                    st.warning(_msg_sped)
 
                 # =====================================================================
                 # MÃ“DULO: DECLARAR INUTILIZADAS MANUAIS
