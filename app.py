@@ -9239,16 +9239,6 @@ def _garim_etapa3_contabilidade_corpo(cnpj_limpo):
             "**Na web**, clique em **Gerar pacote para descarregar** e use os botões **Descarregar** (não é preciso colar caminho `D:\\`)."
         )
 
-    with st.expander("Guia LEIAME — estrutura dos ZIPs (opcional)", expanded=False):
-        st.download_button(
-            "Descarregar guia — estrutura ZIP / LEIAME (.txt)",
-            data=_LEIAME_ESTRUTURA_CONTABILIDADE.encode("utf-8"),
-            file_name="LEIAME_pacote_contabilidade.txt",
-            mime="text/plain; charset=utf-8",
-            key="v2_dl_leiame_padrao_contabilidade",
-            width="stretch",
-        )
-
     if "mariana_zip_save_dir" not in st.session_state:
         st.session_state["mariana_zip_save_dir"] = ""
     if "mariana_zip_basename" not in st.session_state:
