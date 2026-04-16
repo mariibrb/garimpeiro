@@ -4068,9 +4068,65 @@ def dataframe_de_upload_inutil(uploaded_file, max_linhas=50000):
             return None, f"Erro ao ler Excel: {e}"
     else:
         return None, "Use ficheiro **.csv**, **.xlsx** ou **.xls**."
+    df = _df_inutil_expandir_layout_sefaz_se_aplicavel(df)
     if len(df) > max_linhas:
         return None, f"No máximo {max_linhas} linhas por ficheiro."
     return df, None
+
+
+def _try_expand_sefaz_inutil_num_inicial_final(df: pd.DataFrame):
+    """
+    Exportação típica da Sefaz (inutilizadas): colunas como Ano, Modelo, Série,
+    Número Inicial, Número Final, Protocolo, …
+    Devolve DataFrame com colunas Modelo, Série, Nota (uma linha por nota no intervalo)
+    ou None se o cabeçalho não for este formato.
+    """
+    if df is None or df.empty:
+        return None
+    ren = {c: _norm_cab_inutil_col(c) for c in df.columns}
+    d2 = df.rename(columns=ren)
+    obr = ("modelo", "serie", "numero_inicial", "numero_final")
+    if not all(k in d2.columns for k in obr):
+        return None
+    rows = []
+    lim_faixa = 5000  # alinhado a _MAX_FAIXA_EXPORT_DOM / faixa inutil na UI
+    for _, row in d2.iterrows():
+        if row.isna().all():
+            continue
+        m = row.get("modelo")
+        s = row.get("serie")
+        n0r = row.get("numero_inicial")
+        n1r = row.get("numero_final")
+        try:
+            n0 = int(float(n0r))
+            n1 = int(float(n1r))
+        except (TypeError, ValueError):
+            continue
+        if n0 <= 0 or n1 <= 0:
+            continue
+        if n0 > n1:
+            n0, n1 = n1, n0
+        if (n1 - n0 + 1) > lim_faixa:
+            n1 = n0 + lim_faixa - 1
+        mod = _normaliza_modelo_filtro(m)
+        ser = _normaliza_serie_filtro(s)
+        if not mod or not ser:
+            continue
+        for n in range(n0, n1 + 1):
+            rows.append({"Modelo": mod, "Série": ser, "Nota": int(n)})
+    if not rows:
+        return None
+    return pd.DataFrame(rows)
+
+
+def _df_inutil_expandir_layout_sefaz_se_aplicavel(df: pd.DataFrame):
+    """Após ler Excel/CSV ou texto: se for grelha Sefaz inutil., expande para Modelo/Série/Nota."""
+    if df is None or df.empty:
+        return df
+    exp = _try_expand_sefaz_inutil_num_inicial_final(df)
+    if exp is not None and not exp.empty:
+        return exp
+    return df
 
 
 def dataframe_de_texto_colar_planilha(texto: str, max_linhas: int = 50000):
@@ -4089,6 +4145,7 @@ def dataframe_de_texto_colar_planilha(texto: str, max_linhas: int = 50000):
         try:
             df = pd.read_csv(io.StringIO(buf), sep=sep, engine="python")
             if df is not None and not df.empty and len(df.columns) >= 2:
+                df = _df_inutil_expandir_layout_sefaz_se_aplicavel(df)
                 if len(df) > max_linhas:
                     return None, f"No máximo {max_linhas} linhas."
                 return df, None
@@ -4097,6 +4154,7 @@ def dataframe_de_texto_colar_planilha(texto: str, max_linhas: int = 50000):
     try:
         df = pd.read_csv(io.StringIO(buf), sep=r"\s+", engine="python")
         if df is not None and not df.empty and len(df.columns) >= 3:
+            df = _df_inutil_expandir_layout_sefaz_se_aplicavel(df)
             if len(df) > max_linhas:
                 return None, f"No máximo {max_linhas} linhas."
             return df, None
@@ -4104,8 +4162,9 @@ def dataframe_de_texto_colar_planilha(texto: str, max_linhas: int = 50000):
         pass
     return (
         None,
-        "Não consegui separar colunas. Cole a **tabela com cabeçalho** (1.ª linha: Modelo, Série, Nota ou equivalente). "
-        "No site, selecione a grelha e copie; no Excel use tabulação entre colunas.",
+        "Não consegui separar colunas. Cole a **tabela com cabeçalho** na 1.ª linha "
+        "(Modelo, Série, Nota **ou** Número Inicial / Número Final como na lista de inutilizadas da Sefaz). "
+        "Selecione a grelha no site, Ctrl+C; as colunas devem estar separadas por tabulação.",
     )
 
 
@@ -9588,10 +9647,10 @@ if st.session_state.get("confirmado"):
                     with tab_p:
                         st.markdown("**Subir tabela** com inutilizadas a declarar")
                         st.caption(
-                            "Colunas (1.ª linha = cabeçalho): **Modelo** = código Sefaz (**55** NF-e, **65** NFC-e, **57** CT-e, **67** CT-e OS, **58** MDF-e) "
-                            "ou nome NF-e / NFC-e…; **Série**; **Nota** (ou Número / Num_Faltante). "
-                            "Pode **colar direto do site** no campo abaixo (selecione a grelha na Sefaz, Ctrl+C) **ou** subir ficheiro. "
-                            "Só entram linhas que já forem **buraco** no garimpeiro."
+                            "Colunas (1.ª linha = cabeçalho): **Modelo** + **Série** + **Nota** (ou Número / Num_Faltante), **ou** "
+                            "a lista do portal com **Número Inicial** e **Número Final** (exportação de inutilizadas — uma nota ou faixa por linha). "
+                            "Pode **colar direto do site** no campo abaixo (Ctrl+C na grelha) **ou** subir ficheiro. "
+                            "Só entram notas que já forem **buraco** no garimpeiro."
                         )
                         _bytes_m_inut = bytes_modelo_planilha_inutil_sem_xml_xlsx()
                         if _bytes_m_inut:
@@ -9613,10 +9672,10 @@ if st.session_state.get("confirmado"):
                             "Colar tabela (site Sefaz ou Excel)",
                             height=130,
                             key="inut_planilha_paste",
-                            placeholder="1.ª linha = cabeçalho (Modelo, Série, Nota). Depois uma linha por nota.",
+                            placeholder="Ex.: colunas Ano, Modelo, Série, Número Inicial, Número Final… (cópia da lista de inutilizadas).",
                             help=(
-                                "Na Sefaz: selecione a tabela incluindo o cabeçalho, Ctrl+C, e cole aqui. "
-                                "A separação entre colunas costuma ser tabulação (como ao copiar do Excel)."
+                                "Aceita a grelha do portal com **Número Inicial** e **Número Final** (e Modelo/Série), "
+                                "ou tabela só com Modelo, Série e Nota. Cabeçalho na 1.ª linha; colunas separadas por tab."
                             ),
                         )
                         _up_inut = st.file_uploader(
