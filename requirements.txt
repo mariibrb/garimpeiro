@@ -1,7 +1,0 @@
-streamlit
-pandas
-xlsxwriter
-openpyxl
-pdfplumber
-fpdf2
-streamlit-aggrid
