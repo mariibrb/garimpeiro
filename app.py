@@ -5394,7 +5394,7 @@ def _v2_export_zip_etapa3(
     *,
     xml_respeita_filtro: bool,
     df_filtrado_para_excel_bloco=None,
-    excel_um_sÃ³_completo: bool,
+    excel_um_so_completo: bool,
     df_excel_completo: pd.DataFrame,
     v2_zip_org: bool,
     v2_zip_plano: bool,
@@ -5410,7 +5410,7 @@ def _v2_export_zip_etapa3(
     Escreve ZIP(s) em disco (org / plano).
     Devolve (org_parts, todos_parts, xml_matched, aviso_sem_xml|None, excel_pacote_matriz_solta|None).
     xml_respeita_filtro=False â†’ todos os XML cujo resumo estÃ¡ em df_g_base.
-    excel_um_sÃ³_completo=True â†’ em cada parte, o mesmo Excel com df_excel_completo (relatÃ³rio inteiro).
+    excel_um_so_completo=True â†’ em cada parte, o mesmo Excel com df_excel_completo (relatÃ³rio inteiro).
     zip_tag: ex. Â«propriaÂ» / Â«terceirosÂ» para nomes z_org_propria_pt1.zip (dois lotes independentes).
     zip_output_dir: pasta onde gravar os .zip (None = diretÃ³rio de trabalho atual).
     zip_nome_ficheiro: opcional â€” base do nome (ex.: GarimpoMarco â†’ GarimpoMarco_org_propria_pt1.zip).
@@ -5451,13 +5451,13 @@ def _v2_export_zip_etapa3(
 
     excel_fn_completo = (
         _PACOTE_CONTAB_NOME_EXCEL_RAIZ
-        if pacote_pastas_contabilidade and excel_um_sÃ³_completo
+        if pacote_pastas_contabilidade and excel_um_so_completo
         else "RELATORIO_GARIMPEIRO/relatorio_geral_completo.xlsx"
     )
 
     xb_completo = None
     aviso_sem_espaco_excel = None
-    if excel_um_sÃ³_completo:
+    if excel_um_so_completo:
         if pacote_pastas_contabilidade:
             df_xml_plan = (
                 df_filtrado_para_excel_bloco
@@ -5515,7 +5515,7 @@ def _v2_export_zip_etapa3(
     }
 
     def _fechar_bloco_zip():
-        if excel_um_sÃ³_completo:
+        if excel_um_so_completo:
             excel_fn = excel_fn_completo
             xb = xb_completo
         else:
@@ -5620,10 +5620,10 @@ def _v2_export_zip_etapa3(
     ):
         excel_fn_last = (
             excel_fn_completo
-            if excel_um_sÃ³_completo
+            if excel_um_so_completo
             else f"RELATORIO_GARIMPEIRO/relatorio_filtrado_pt{Z['seq_bloco']:03d}.xlsx"
         )
-        if excel_um_sÃ³_completo:
+        if excel_um_so_completo:
             xb_last = xb_completo
         else:
             xb_last = excel_bytes_relatorio_bloco(
@@ -5679,7 +5679,7 @@ def _v2_export_zip_mariana(
         df_geral,
         xml_respeita_filtro=False,
         df_filtrado_para_excel_bloco=df_geral,
-        excel_um_sÃ³_completo=True,
+        excel_um_so_completo=True,
         df_excel_completo=df_geral,
         v2_zip_org=True,
         v2_zip_plano=False,
@@ -8095,7 +8095,7 @@ def _garim_etapa3_corpo(cnpj_limpo):
                                 df_filtrado_para_excel_bloco=(
                                     df_sl if _xml_filt else None
                                 ),
-                                excel_um_sÃ³_completo=_fmt_run.startswith(
+                                excel_um_so_completo=_fmt_run.startswith(
                                     "zip_tudo"
                                 ),
                                 df_excel_completo=df_sl,
