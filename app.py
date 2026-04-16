@@ -6947,7 +6947,7 @@ def _sped_chaves44_de_texto(texto: str) -> list:
     return seen
 
 
-# Texto do ficheiro SPED (.txt) guardado na sessão após «Importar» (pré ou pós-garimpo).
+# Texto do ficheiro SPED (.txt) na sessão (anexo no 1.º passo ao iniciar garimpo, ou no painel direito).
 SPED_SESSION_TEXT_KEY = "sped_efd_texto_sessao"
 SPED_SESSION_NAME_KEY = "sped_efd_nome_ficheiro_sessao"
 
@@ -7519,7 +7519,7 @@ Ficheiros e descargas que pode obter:
 • Modelo Excel para inutilizadas declaradas manualmente (quando usar essa funcionalidade).
 
 === GARIMPEIRO RAIZ (linha de comandos) vs. ESTA PÁGINA ===
-• **SPED EFD (.txt):** pode **importar o .txt para a sessão já antes do garimpo**; depois, no **topo do painel direito** (**«Ações rápidas»**), **gravar XML na pasta**, **ZIP** (cruzamento SPED×lote) e **Excel** de chaves **só no SPED** sem XML no lote (pendentes). O fluxo completo «Apuração final» em ZIP (como no Garimpeiro Raiz em CLI) continua a ser outro processo; use o Raiz se precisar desse pacote integral.
+• **SPED EFD (.txt):** pode anexar no **opcional do primeiro passo** (com as planilhas) ou no **fim do painel direito** — **gravar XML na pasta**, **ZIP** (cruzamento SPED×lote) e **Excel** de pendências (só no SPED). O pacote «Apuração final» em ZIP (Garimpeiro Raiz CLI) é outro fluxo.
 
 === MANUAL PASSO A PASSO ===
 1. Lateral: CNPJ do emitente (cliente) — só os 14 dígitos ou cole já mascarado; clique em Liberar operação.
@@ -7529,7 +7529,7 @@ Ficheiros e descargas que pode obter:
 5. (Opcional) Lateral «Último nº por série»: afeta só o cálculo de buracos — **só as séries que preencher e guardar**; âncora por último nº e mês. O garimpo e o resumo por série continuam totais. Sem Guardar referência válida, buracos usam todo o intervalo lido em emissão própria.
 6. Inutilizadas: a partir dos buracos, por planilha (Excel/CSV) ou faixa — só números que já forem buraco listado (não alarga intervalos).
 7. Painel à direita: **Processar Dados** grava XML/ZIP extra, aplica inutilizações «sem XML» (se configurou) e recalcula a partir da pasta de uploads.
-8. Etapa 3: filtros em cascata (emissão própria e terceiros em colunas separadas). Na caixa **Tipo de exportação** escolha ZIP (tudo ou filtrado, raiz ou pastas) ou Excel (lote completo ou só filtrado). Depois use **Gerar — sua empresa**, **Gerar — terceiros** ou **Gerar os dois lados**. **SPED:** importe o .txt **antes do garimpo** (opcional) ou em **Ações rápidas** — XML na pasta, **ZIP** cruzado e **Excel** de pendências (só no SPED). O menu completo da CLI Raiz tem outras opções.
+8. Etapa 3: filtros em cascata (emissão própria e terceiros em colunas separadas). Na caixa **Tipo de exportação** escolha ZIP (tudo ou filtrado, raiz ou pastas) ou Excel (lote completo ou só filtrado). Depois use **Gerar — sua empresa**, **Gerar — terceiros** ou **Gerar os dois lados**. **SPED:** anexe o `.txt` no **opcional** do 1.º passo ou no **fim do painel direito** — XML na pasta, **ZIP** e **Excel** de pendências. O menu completo da CLI Raiz tem outras opções.
 9. Lista específica (secção própria): exporte subconjuntos por chaves, faixa, período, série ou uma nota — em Excel e/ou ZIP conforme os botões apresentados.
 
 === DICAS ===
@@ -7557,7 +7557,7 @@ with st.container():
         st.markdown(
             """
         <div style="font-size:0.88rem;line-height:1.5;color:#444;margin:0 0 12px 0;padding:10px 12px;background:rgba(230,240,255,0.85);border-radius:10px;border-left:3px solid #4169E1;">
-        <b>SPED (.txt):</b> importe <b>antes do garimpo</b> ou no painel direito (Ações rápidas): pasta no PC, <b>ZIP</b> dos XML cruzados e <b>Excel</b> de pendências (só SPED). O pacote «Apuração final» do <b>Garimpeiro Raiz</b> (CLI) é outro fluxo.
+        <b>SPED (.txt):</b> anexo opcional no <b>primeiro passo</b> ou no <b>fim do painel direito</b> — pasta no PC, <b>ZIP</b> e <b>Excel</b> de pendências. O pacote «Apuração final» do <b>Garimpeiro Raiz</b> (CLI) é outro fluxo.
         </div>
         <div class="instrucoes-card manual-compacto">
             <p style="margin:0 0 10px 0;font-size:0.95rem;line-height:1.55;color:#333;">
@@ -9205,92 +9205,6 @@ if st.session_state.get("confirmado"):
             f'<p style="margin:0.85rem 0 0.35rem 0;font-weight:600;">{_garim_emoji("\U0001f4d1")} Opcional no mesmo passo</p>',
             unsafe_allow_html=True,
         )
-        st.caption(
-            "Relatórios **inutilizadas** e **canceladas** (mesmo formato que na lateral direita). "
-            "Só entram linhas que, **depois** de ler os XML, apareçam como **buraco** — igual ao **Processar Dados**. "
-            "**SPED:** pode importar o `.txt` para a sessão aqui; depois do garimpo use o bloco SPED no **fim do painel direito** "
-            "para gravar na pasta, ZIP e Excel de pendências."
-        )
-        st.markdown(
-            f'<p style="margin:0.65rem 0 0.25rem 0;font-weight:600;font-size:0.95rem;">'
-            f'{_garim_emoji("\U0001f4c4")} SPED EFD (.txt) — opcional</p>',
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "O texto fica **na sessão** até substituir. Não é obrigatório para a equipa; útil para cruzar C100/D100 com o lote mais tarde."
-        )
-        _sped_pre_up = st.file_uploader(
-            "Ficheiro SPED (.txt)",
-            type=["txt"],
-            key="sped_sessao_upload_ini",
-        )
-        _b1, _b2 = st.columns(2)
-        with _b1:
-            if st.button("Importar SPED para a sessão", key="btn_sped_import_sess_ini", width="stretch"):
-                if _sped_pre_up is None:
-                    st.warning("Anexe um ficheiro **.txt** do SPED.")
-                else:
-                    _rawp = _sped_pre_up.read()
-                    try:
-                        _sped_pre_up.seek(0)
-                    except Exception:
-                        pass
-                    st.session_state[SPED_SESSION_TEXT_KEY] = _decode_sped_upload_bytes(_rawp).strip()
-                    st.session_state[SPED_SESSION_NAME_KEY] = (
-                        getattr(_sped_pre_up, "name", None) or "SPED.txt"
-                    )
-                    st.success("SPED guardado na sessão.")
-                    st.rerun()
-        with _b2:
-            if st.button("Limpar SPED da sessão", key="btn_sped_clear_sess_ini", width="stretch"):
-                st.session_state.pop(SPED_SESSION_TEXT_KEY, None)
-                st.session_state.pop(SPED_SESSION_NAME_KEY, None)
-                st.session_state.pop("sped_export_zip", None)
-                st.session_state.pop("sped_export_xlsx", None)
-                st.info("Cache SPED removido.")
-                st.rerun()
-        _ts = st.session_state.get(SPED_SESSION_TEXT_KEY)
-        if _ts:
-            _nk = len(_sped_chaves44_de_texto(_ts))
-            _nm = st.session_state.get(SPED_SESSION_NAME_KEY) or "SPED"
-            st.success(
-                f"**SPED na sessão** (`{_nm}`): **{_nk}** chave(s) com 44 dígitos em C100/D100."
-            )
-        st.markdown(
-            f'<p style="margin:0.85rem 0 0.35rem 0;font-weight:600;">{_garim_emoji("\U0001f4d1")} Planilhas inutilizadas / canceladas</p>',
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "Mesmo formato que na lateral direita; só linhas que, depois da leitura dos XML, forem **buraco**. "
-            "Se não tiver modelo, **baixe o Excel de exemplo** (colunas como na Sefaz) antes de preencher."
-        )
-        _cin1, _cin2 = st.columns(2)
-        with _cin1:
-            _bytes_ini_inut = bytes_modelo_planilha_inutil_sem_xml_xlsx()
-            if _bytes_ini_inut:
-                st.download_button(
-                    "Baixar modelo — inutilizadas (Excel)",
-                    data=_bytes_ini_inut,
-                    file_name="MODELO_inutilizadas_sem_XML_garimpeiro.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_modelo_inutil_garimpo_ini",
-                    width="stretch",
-                )
-            else:
-                st.warning(_msg_sem_espaco_disco_garimpeiro())
-        with _cin2:
-            _bytes_ini_canc = bytes_modelo_planilha_cancel_sem_xml_xlsx()
-            if _bytes_ini_canc:
-                st.download_button(
-                    "Baixar modelo — canceladas (Excel)",
-                    data=_bytes_ini_canc,
-                    file_name="MODELO_canceladas_sem_XML_garimpeiro.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="dl_modelo_cancel_garimpo_ini",
-                    width="stretch",
-                )
-            else:
-                st.warning(_msg_sem_espaco_disco_garimpeiro())
         up_ini_inut = st.file_uploader(
             "Planilha(s) de inutilizadas (.csv, .xlsx, .xls)",
             type=["csv", "xlsx", "xls"],
@@ -9302,6 +9216,11 @@ if st.session_state.get("confirmado"):
             type=["csv", "xlsx", "xls"],
             accept_multiple_files=True,
             key="garimpo_ini_canc",
+        )
+        st.file_uploader(
+            "SPED EFD — texto (.txt), opcional",
+            type=["txt"],
+            key="sped_sessao_upload_ini",
         )
         if st.button("INICIAR GRANDE GARIMPO"):
             # No mesmo rerun do clique o file_uploader por vezes devolve vazio — usar session_state (igual ao «Processar Dados»).
@@ -9565,6 +9484,23 @@ if st.session_state.get("confirmado"):
                         )
                     )
     
+                _sped_u_ini = st.session_state.get("sped_sessao_upload_ini")
+                if _sped_u_ini is not None:
+                    try:
+                        _rsped_b = _sped_u_ini.read()
+                        try:
+                            _sped_u_ini.seek(0)
+                        except Exception:
+                            pass
+                        st.session_state[SPED_SESSION_TEXT_KEY] = _decode_sped_upload_bytes(
+                            _rsped_b
+                        ).strip()
+                        st.session_state[SPED_SESSION_NAME_KEY] = getattr(
+                            _sped_u_ini, "name", None
+                        ) or "SPED.txt"
+                    except Exception:
+                        pass
+
                 _u_inut = up_ini_inut or st.session_state.get("garimpo_ini_inut")
                 _u_canc = up_ini_canc or st.session_state.get("garimpo_ini_canc")
                 _pl_ini = _garimpo_aplicar_planilhas_inutil_cancel_no_relatorio(
@@ -10009,11 +9945,6 @@ if st.session_state.get("confirmado"):
                     f'<h5>{_garim_emoji("\U0001f4e4")} Uploads e validação</h5>',
                     unsafe_allow_html=True,
                 )
-                st.caption(
-                    "**Primeiro:** pode **subir o SPED** e **gravar XML** (C100/D100) e/ou carregar em **Processar Dados** "
-                    "para reler o lote com tudo o que configurar mais abaixo (XML extra, autenticidade, inutilizadas…). "
-                    "Os blocos detalhados continuam mais em baixo na mesma coluna."
-                )
                 # =====================================================================
                 # AÇÕES RÁPIDAS — SPED + Processar Dados (topo do painel; leitura completa sem scroll)
                 # =====================================================================
@@ -10029,24 +9960,10 @@ if st.session_state.get("confirmado"):
                     "Anexar EFD ICMS/IPI e gravar no PC só os XML do garimpo cuja chave aparece nos blocos C100 ou D100",
                     expanded=True,
                 ):
-                    st.caption(
-                        "Carregue o ficheiro **texto** do SPED (pipe `|`). A app lê registos **|C100|** e **|D100|** e recolhe "
-                        "chaves de **44 dígitos**. Se já **importou o SPED antes do garimpo**, não precisa voltar a anexar — "
-                        "usa o texto na sessão. Copia para a pasta os XML **já** presentes no lote que coincidem com o SPED; "
-                        "gera também **ZIP** (interseção) e **Excel** de chaves **só no SPED** sem XML no lote."
-                    )
-                    _ts_sess = st.session_state.get(SPED_SESSION_TEXT_KEY)
-                    if _ts_sess:
-                        _nk0 = len(_sped_chaves44_de_texto(_ts_sess))
-                        _nm0 = st.session_state.get(SPED_SESSION_NAME_KEY) or "SPED"
-                        st.info(
-                            f"**SPED na sessão** (`{_nm0}`): **{_nk0}** chave(s) C100/D100. "
-                            "Anexar um novo .txt abaixo substitui ao gravar/processar."
-                        )
                     if "sped_xml_dest_dir" not in st.session_state:
                         st.session_state["sped_xml_dest_dir"] = ""
                     sped_efd_up = st.file_uploader(
-                        "Ficheiro SPED (.txt) — ou use só o importado na sessão",
+                        "Ficheiro SPED (.txt) — ou use o anexado no 1.º passo (sessão)",
                         type=["txt"],
                         key="sped_c100_d100_upload",
                     )
@@ -10064,7 +9981,7 @@ if st.session_state.get("confirmado"):
                         texto_sped = _sped_resolver_texto_de_uploader(sped_efd_up)
                         if not texto_sped:
                             st.warning(
-                                "Anexe o **.txt** do SPED ou importe-o antes do garimpo (**SPED na sessão**)."
+                                "Anexe o **.txt** do SPED aqui ou no **opcional do primeiro passo** (fica na sessão ao iniciar o garimpo)."
                             )
                         else:
                             _p_sped, _err_sped = _pasta_destino_sped_xml_para_gravar()
@@ -10081,10 +9998,6 @@ if st.session_state.get("confirmado"):
                                     st.warning(_msg_sped)
 
                     st.markdown("**Exportação SPED** (ZIP com XML cruzados + Excel de pendências)")
-                    st.caption(
-                        "Gera um **.zip** só com os XML do lote que batem com C100/D100 e um **Excel** com linhas do SPED "
-                        "cuja chave **não** foi encontrada como XML no lote (pendentes)."
-                    )
                     if st.button(
                         "Gerar ZIP e Excel (exportação SPED)",
                         key="btn_sped_gera_zip_xlsx",
@@ -10093,7 +10006,7 @@ if st.session_state.get("confirmado"):
                         texto_sped = _sped_resolver_texto_de_uploader(sped_efd_up)
                         if not texto_sped:
                             st.warning(
-                                "Anexe o **.txt** do SPED ou use um ficheiro já importado para a sessão."
+                                "Anexe o **.txt** do SPED aqui ou use o do **opcional do 1.º passo** (sessão)."
                             )
                         elif not _garimpo_existem_fontes_xml_lote():
                             st.warning(
@@ -10338,12 +10251,6 @@ if st.session_state.get("confirmado"):
 
                     with tab_p:
                         st.markdown("**Subir tabela** com inutilizadas a declarar")
-                        st.caption(
-                            "Colunas (1.ª linha = cabeçalho): **Modelo** + **Série** + **Nota** (ou Número / Num_Faltante), **ou** "
-                            "a lista do portal com **Número Inicial** e **Número Final** (exportação de inutilizadas — uma nota ou faixa por linha). "
-                            "Pode **colar direto do site** no campo abaixo (Ctrl+C na grelha) **ou** subir ficheiro. "
-                            "Só entram notas que já forem **buraco** no garimpeiro."
-                        )
                         _bytes_m_inut = bytes_modelo_planilha_inutil_sem_xml_xlsx()
                         if _bytes_m_inut:
                             st.download_button(
@@ -10356,10 +10263,6 @@ if st.session_state.get("confirmado"):
                             )
                         else:
                             st.warning(_msg_sem_espaco_disco_garimpeiro())
-                        st.caption(
-                            "No modelo Excel: **Modelo** em número (55, 65, 57, 67, 58) como na Sefaz; **Série** e **Nota**. "
-                            "Substitua ou apague as linhas de exemplo e guarde antes de importar."
-                        )
                         st.text_area(
                             "Colar tabela (site Sefaz ou Excel)",
                             height=130,
