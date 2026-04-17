@@ -8628,8 +8628,28 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
                 '<h3 class="garim-sec">Como usar — passo a passo</h3>',
                 unsafe_allow_html=True,
             )
-            st.markdown(
-                """
+            if _streamlit_likely_community_cloud():
+                st.markdown(
+                    """
+            <div class="instrucoes-card manual-compacto">
+                <ol style="margin:0;padding-left:1.25rem;line-height:1.6;font-size:0.93rem;color:#333;">
+                    <li style="margin-bottom:8px;"><b>CNPJ na lateral:</b> introduza <b>só os 14 dígitos</b> do emitente (cliente) ou cole já mascarado; clique em <b>Liberar operação</b>.</li>
+                    <li style="margin-bottom:8px;"><b>Lote:</b> envie ficheiros <b>ZIP</b> ou <b>XML</b> soltos — volumes grandes são suportados.</li>
+                    <li style="margin-bottom:8px;"><b>Garimpo:</b> <b>Iniciar grande garimpo</b> e aguarde até aparecerem os resultados.</li>
+                    <li style="margin-bottom:8px;"><b>Mais ficheiros:</b> no <b>topo da área de resultados</b>, pode acrescentar ZIP/XML <b>sem reiniciar</b> o processamento anterior.</li>
+                    <li style="margin-bottom:8px;"><b>(Opcional)</b> <b>Último nº por série</b> (lateral): altera apenas o cálculo de <b>buracos</b> — <b>só para as séries que indicar e guardar</b> (âncora por último número e mês). O garimpo e o resumo por série mantêm-se <b>totais</b>. Sem <b>Guardar referência</b> com linhas válidas, os buracos consideram toda a numeração lida em emissão própria.</li>
+                    <li style="margin-bottom:8px;"><b>Processar Dados</b> (painel à direita): incorpora ficheiros extra anexados, aplica inutilizações configuradas e recalcula o relatório.</li>
+                    <li style="margin-bottom:8px;"><b>Inutilizadas:</b> a partir dos <b>buracos</b>, use <b>planilha</b> (Excel/CSV) ou <b>faixa</b> — só entram números que já forem buraco listado (não alarga intervalos).</li>
+                    <li style="margin-bottom:8px;"><b>Etapa 3 — filtros e exportação:</b> refine por emissão própria e/ou terceiros; escolha um dos <b>seis</b> modos (ZIP tudo raiz/pastas, ZIP filtrado pastas/raiz, Excel lote completo, Excel só filtrado) e gere as partes quando a app repartir o lote.</li>
+                    <li style="margin-bottom:0;"><b>Lista específica:</b> use a secção dedicada para extrair subconjuntos por chaves, faixa, período, série ou uma nota — nos formatos indicados pelos botões dessa zona.</li>
+                </ol>
+            </div>
+            """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    """
             <div class="instrucoes-card manual-compacto">
                 <ol style="margin:0;padding-left:1.25rem;line-height:1.6;font-size:0.93rem;color:#333;">
                     <li style="margin-bottom:8px;"><b>CNPJ na lateral:</b> introduza <b>só os 14 dígitos</b> do emitente (cliente) ou cole já mascarado; clique em <b>Liberar operação</b>.</li>
@@ -8644,8 +8664,8 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
                 </ol>
             </div>
             """,
-                unsafe_allow_html=True,
-            )
+                    unsafe_allow_html=True,
+                )
             st.markdown(
                 """
             <div style="font-size:0.88rem;line-height:1.5;color:#555;margin:6px 0 12px 0;padding:10px 12px;background:rgba(255,240,248,0.6);border-radius:10px;border-left:3px solid #FF69B4;">
@@ -9025,8 +9045,26 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
             )
         # Não usar st.expander aqui: esta função corre dentro do expander «Etapa 3» (Streamlit proíbe expanders aninhados).
         if st.checkbox("\U0001f4d6 Como isto funciona", value=False, key="garim_e3_como_funciona"):
-            st.markdown(
-                """
+            if _streamlit_likely_community_cloud():
+                st.markdown(
+                    """
+        <div style="background:#fff8fc;border:1px solid #f8bbd9;border-radius:10px;padding:14px 16px;margin-bottom:14px;font-size:0.93rem;line-height:1.55;color:#333;">
+        <b>Filtros</b><br/>
+        • <b>Emissão própria (esquerda):</b> só a sua empresa — status (inclui <b>Denegadas</b> e <b>Rejeitadas</b> em separado de canceladas/inutilizadas), tipo, operação, datas, série, n.º, UF destino, nota por chave ou n.º+série. Vazio = não filtra por estes campos.<br/>
+        • <b>Terceiros (direita):</b> só documentos recebidos — os mesmos tipos de status quando aplicável, tipo, operação, período.<br/><br/>
+        <b>Exportar</b><br/>
+        • <b>ZIP todo o lote</b> — ignora filtros para escolher XML; Excel completo dentro de cada ZIP.<br/>
+        • <b>ZIP filtrado</b> — só XML que passam nos filtros; Excel coerente com esse conjunto.<br/>
+        • <b>Só Excel</b> — sem XML.<br/><br/>
+        <b>Descargas</b> — use os botões <b>Descarregar</b> no fim desta secção (dois lados: própria e terceiros, quando aplicável). Em cada ZIP, o Excel está em <code>RELATORIO_GARIMPEIRO/</code> (até 10&nbsp;000 XML por parte).<br/><br/>
+        <b>Pacote contabilidade / matriz</b> (secção abaixo) — exporta o lote lido; filtros da Etapa 3 <b>não</b> cortam. Clique em <b>Gerar pacote para descarregar</b> e depois nos botões para obter o Excel e os ZIP.
+        </div>
+                """,
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    """
         <div style="background:#fff8fc;border:1px solid #f8bbd9;border-radius:10px;padding:14px 16px;margin-bottom:14px;font-size:0.93rem;line-height:1.55;color:#333;">
         <b>Filtros</b><br/>
         • <b>Emissão própria (esquerda):</b> só a sua empresa — status (inclui <b>Denegadas</b> e <b>Rejeitadas</b> em separado de canceladas/inutilizadas), tipo, operação, datas, série, n.º, UF destino, nota por chave ou n.º+série. Vazio = não filtra por estes campos.<br/>
@@ -9039,8 +9077,8 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
         <b>Pacote contabilidade / matriz</b> (secção <b>Pacote contabilidade</b>, logo abaixo do quadro ZIP/Excel) — exporta o lote lido; filtros da Etapa 3 <b>não</b> cortam. Na pasta escolhida: <b>Excel solto</b> (<code>…_relatorio_garimpeiro_completo.xlsx</code>, sem folha Painel Fiscal) + ZIPs. Em cada ZIP: pasta <code>XML/Lote_001</code>, <code>Lote_002</code>, … (até 10&nbsp;000 XML por pasta) + Excel na raiz com nome <code>relatorio_garimpeiro_…</code> (inclui série/mês/grupo, para não se sobrepor ao extrair); o .zip pode incluir <code>_notas_</code> inicial–final. <b>Emitidas</b>: um ZIP por série, status e <b>mês de emissão</b> (<code>Mes_AAAA_MM</code>); <b>Terceiros</b>: por modelo e status (sem mês).
         </div>
                 """,
-                unsafe_allow_html=True,
-            )
+                    unsafe_allow_html=True,
+                )
 
         st.session_state.pop("v2_f_mes", None)
         st.session_state.pop("v2_f_mod", None)
@@ -10195,8 +10233,13 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
             _mxp = st.session_state.get("mariana_excel_completo_path")
             if _mxp and os.path.isfile(_mxp):
                 with open(_mxp, "rb") as _xfe:
+                    _lbl_excel_mar = (
+                        "Excel completo (sem Painel Fiscal) — mesmo ficheiro da pasta"
+                        if _btn_pc
+                        else "Excel completo (sem Painel Fiscal)"
+                    )
                     st.download_button(
-                        "Excel completo (sem Painel Fiscal) — mesmo ficheiro da pasta",
+                        _lbl_excel_mar,
                         _xfe.read(),
                         file_name=os.path.basename(_mxp),
                         key="v2_dl_mariana_excel_completo",
