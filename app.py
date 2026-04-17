@@ -1984,7 +1984,16 @@ def _espelho_regravar_excels_pacote_em_pasta(
         return
     mapa_slug = _montar_mapa_chave_slug_contab(df_ref, filtro_chaves)
     slug_ranges = _pacote_contab_notas_min_max_por_slug(df_ref, mapa_slug, filtro_chaves)
-    slugs = {v["slug"] for v in mapa_slug.values()}
+    slugs = set()
+    for v in mapa_slug.values():
+        if not v:
+            continue
+        if isinstance(v, dict):
+            s = v.get("slug")
+            if s:
+                slugs.add(str(s))
+        else:
+            slugs.add(str(v))
     for slug in sorted(slugs):
         combo = _combo_nome_pacote_contab(stem_org, slug, slug_ranges)
         folder = out_dir / combo
@@ -2254,6 +2263,33 @@ def _chave44_do_nome_arquivo(nome_puro: str):
     return cand if cand.isdigit() and len(cand) == 44 else None
 
 
+def _xml_tp_evento_codigo(tag_l: str, codigo: str) -> bool:
+    """
+    Detecta tpEvento com o código SEFAZ (ex.: 110111 cancelamento, 110110 CCe).
+    `tag_l` está em minúsculas (tpevento, não tpEvento). Evita falso positivo quando
+    o mesmo dígito aparece na chave de 44 posições ou noutros campos numéricos.
+    """
+    if len(codigo) != 6 or not codigo.isdigit():
+        return False
+    return bool(re.search(rf"[\w:]*tpevento>{codigo}</", tag_l))
+
+
+def _xml_cancelamento_por_evento_ou_retorno(tag_l: str) -> bool:
+    """Cancelamento homologado: evento 110111 ou retorno de evento com cStat 101 em contexto de evento."""
+    if _xml_tp_evento_codigo(tag_l, "110111"):
+        return True
+    if "<cstat>101</cstat>" not in tag_l:
+        return False
+    # cStat 101 isolado pode aparecer noutros retornos; restringe a XML de evento/cancelamento.
+    return bool(
+        re.search(
+            r"proceventonfe|proceventocte|proceventomdfe|retenvevento|infevento|"
+            r"descevento>cancelamento",
+            tag_l,
+        )
+    )
+
+
 def identify_xml_info(content_bytes, client_cnpj, file_name):
     client_cnpj_clean = "".join(filter(str.isdigit, str(client_cnpj))) if client_cnpj else ""
     nome_puro = os.path.basename(file_name)
@@ -2460,9 +2496,9 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
                     tipo = "NFS-e"
             
             status = "NORMAIS"
-            if '110111' in tag_l or '<cstat>101</cstat>' in tag_l: 
+            if _xml_cancelamento_por_evento_ou_retorno(tag_l):
                 status = "CANCELADOS"
-            elif '110110' in tag_l: 
+            elif _xml_tp_evento_codigo(tag_l, "110110"):
                 status = "CARTA_CORRECAO"
             elif re.search(r"<cstat>110</cstat>", tag_l) or "deneg" in tag_l:
                 status = "DENEGADOS"
@@ -7855,13 +7891,34 @@ def _garimpo_escrita_espelho_final_continua_ativa() -> bool:
 
 
 def _garimpo_flush_interval_chaves_espelho() -> int:
-    """Nº mínimo de chaves novas entre flushes parciais dentro do mesmo ZIP (1–5000). Env: GARIMPEIRO_ESPELHO_FLUSH_CADA_CHAVES (omissão 100)."""
-    raw = (os.environ.get("GARIMPEIRO_ESPELHO_FLUSH_CADA_CHAVES") or "100").strip()
+    """Nº mínimo de chaves novas entre flushes parciais dentro do mesmo ZIP (1–5000). Env: GARIMPEIRO_ESPELHO_FLUSH_CADA_CHAVES (omissão 500 — valores baixos sobrecarregam disco/UI)."""
+    raw = (os.environ.get("GARIMPEIRO_ESPELHO_FLUSH_CADA_CHAVES") or "500").strip()
     try:
         n = int(raw)
     except ValueError:
-        n = 100
+        n = 500
     return max(1, min(n, 5000))
+
+
+def _garimpo_flush_incremental_durante_leitura_ativo() -> bool:
+    """
+    Flushes a meio da leitura (espelho + ZIP) — pesado; pode desligar com GARIMPEIRO_ESPELHO_FLUSH_INCREMENTAL=0
+    (mantém só a gravação no fim do garimpo).
+    """
+    if not _garimpo_escrita_espelho_final_continua_ativa():
+        return False
+    v = (os.environ.get("GARIMPEIRO_ESPELHO_FLUSH_INCREMENTAL") or "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def _garimpo_flush_min_seg_entre_gravacoes_espelho() -> float:
+    """Segundos mínimos entre dois flushes incrementais (0 = sem limite). Env: GARIMPEIRO_ESPELHO_FLUSH_MIN_SEG (omissão 12)."""
+    raw = (os.environ.get("GARIMPEIRO_ESPELHO_FLUSH_MIN_SEG") or "12").strip().replace(",", ".")
+    try:
+        x = float(raw)
+    except ValueError:
+        x = 12.0
+    return max(0.0, min(x, 600.0))
 
 
 def _garimpo_hidratar_sped_sessao_do_widget_ini() -> None:
@@ -7908,6 +7965,28 @@ def _garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict(
     if (_pl.get("inut", 0) + _pl.get("canc", 0)) > 0:
         reconstruir_dataframes_relatorio_simples()
     _garimpo_gravar_espelho_layout_contabilidade(cnpj_limpo)
+
+
+def _garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict_safe(
+    lote_dict: dict, cnpj_limpo: str, up_inut, up_canc
+) -> None:
+    """
+    Igual a _garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict, mas **nunca** deixa exceções subir —
+    um erro a meio do grande garimpo não deve abortar a leitura nem impedir o ecrã final.
+    """
+    try:
+        _garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict(
+            lote_dict, cnpj_limpo, up_inut, up_canc
+        )
+    except Exception as e:
+        try:
+            prev = str(st.session_state.get("_garimpo_espelho_flush_erro") or "")
+            msg = str(e)
+            st.session_state["_garimpo_espelho_flush_erro"] = (
+                (prev + "\n") if prev else ""
+            ) + msg
+        except Exception:
+            pass
 
 
 def _dataframe_sped_chaves_sem_xml_no_lote(texto_sped: str, matched_ch: set) -> pd.DataFrame:
@@ -8763,6 +8842,13 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
             st.warning(
                 "Não foi possível gerar todos os ZIPs do pacote na pasta **Garimpeiro_lote_espelho**: "
                 + str(_zip_err_ui)
+            )
+        _esp_flush_err = st.session_state.pop("_garimpo_espelho_flush_erro", None)
+        if _esp_flush_err:
+            st.warning(
+                "Durante a leitura, uma ou mais gravações incrementais na pasta **Garimpeiro_lote_espelho** falharam "
+                "(o relatório no ecrã segue completo). Detalhe:\n\n"
+                + str(_esp_flush_err)
             )
 
     with st.sidebar:
@@ -10431,6 +10517,7 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
                     )
                 else:
                     st.session_state.pop("_garimpo_zero_docs_msg", None)
+                    st.session_state.pop("_garimpo_espelho_flush_erro", None)
                     _esp_base, _esp_err = _garimpo_destino_copia_lote_opcional()
                     st.session_state.pop("garimpo_lote_espelho_root", None)
                     st.session_state.pop("garimpo_espelho_indice_td", None)
@@ -10543,6 +10630,9 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
                         total_salvos = len(lista_salvos)
                         _last_flush_chaves = 0
                         _flush_iv_ch = _garimpo_flush_interval_chaves_espelho()
+                        _flush_incr = _garimpo_flush_incremental_durante_leitura_ativo()
+                        _flush_min_s = _garimpo_flush_min_seg_entre_gravacoes_espelho()
+                        _last_flush_mono = 0.0
                         if _garimpo_escrita_espelho_final_continua_ativa():
                             _garimpo_hidratar_sped_sessao_do_widget_ini()
 
@@ -10578,29 +10668,41 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
                                                     lote_dict[key] = (res, is_p)
                                             else:
                                                 lote_dict[key] = (res, is_p)
-                                            if _garimpo_escrita_espelho_final_continua_ativa():
+                                            if (
+                                                _flush_incr
+                                                and _garimpo_escrita_espelho_final_continua_ativa()
+                                            ):
                                                 _nk = len(lote_dict)
                                                 if _nk >= _last_flush_chaves + _flush_iv_ch:
-                                                    _garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict(
-                                                        lote_dict,
-                                                        cnpj_limpo,
-                                                        up_ini_inut,
-                                                        up_ini_canc,
-                                                    )
-                                                    _last_flush_chaves = _nk
+                                                    _now_f = time.perf_counter()
+                                                    if _flush_min_s <= 0 or (
+                                                        _now_f - _last_flush_mono
+                                                    ) >= _flush_min_s:
+                                                        _garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict_safe(
+                                                            lote_dict,
+                                                            cnpj_limpo,
+                                                            up_ini_inut,
+                                                            up_ini_canc,
+                                                        )
+                                                        _last_flush_chaves = _nk
+                                                        _last_flush_mono = _now_f
                                         del xml_data 
                             except Exception as e: 
                                 continue
-                            if _garimpo_escrita_espelho_final_continua_ativa():
+                            if (
+                                _flush_incr
+                                and _garimpo_escrita_espelho_final_continua_ativa()
+                            ):
                                 _nk2 = len(lote_dict)
                                 if _nk2 > _last_flush_chaves:
-                                    _garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict(
+                                    _garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict_safe(
                                         lote_dict,
                                         cnpj_limpo,
                                         up_ini_inut,
                                         up_ini_canc,
                                     )
                                     _last_flush_chaves = _nk2
+                                    _last_flush_mono = time.perf_counter()
 
                         status_box.update(label="\u2705 Leitura Concluída!", state="complete", expanded=False)
                         progresso_bar.empty()

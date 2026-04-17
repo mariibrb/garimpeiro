@@ -131,7 +131,15 @@ def main() -> int:
         default="",
         help="Nome base dos ZIPs do pacote (omissão: pacote_apuracao).",
     )
+    p.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Sem mensagens de progresso na consola (só erros no stderr e resumo final).",
+    )
     args = p.parse_args()
+
+    if args.quiet:
+        os.environ["GARIMPEIRO_CLI_QUIET"] = "1"
 
     os.environ["GARIMPEIRO_HEADLESS"] = "1"
     os.environ.setdefault("GARIMPEIRO_ANALISE_SEM_DISCO_LOCAL", "0")

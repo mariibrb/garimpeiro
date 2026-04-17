@@ -25,5 +25,5 @@ $args = @(
 )
 if ($Codigo) { $args += @("--codigo", $Codigo) }
 if ($Stem) { $args += @("--stem", $Stem) }
-& py -3 $cli @args
+& py -3 -u $cli @args
 exit $LASTEXITCODE

@@ -7,10 +7,26 @@ from __future__ import annotations
 import gc
 import os
 import shutil
+import time
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+
+def _cli_quiet() -> bool:
+    return (os.environ.get("GARIMPEIRO_CLI_QUIET") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def _cli_log(msg: str) -> None:
+    """Saída para consola/PowerShell com flush imediato (use `python -u` ou py -3 -u)."""
+    if _cli_quiet():
+        return
+    print(msg, flush=True)
 
 
 def _file_shim(path: Path):
@@ -136,6 +152,14 @@ def run_garimpeiro_local(
     if not arquivos:
         return {"ok": False, "erro": "Nenhum .xml ou .zip na pasta de entrada (recursivo)."}
 
+    _t_ini = time.perf_counter()
+    _cli_log("")
+    _cli_log("=== Garimpeiro LOCAL (CLI) ===")
+    _cli_log(f"Entrada:  {entrada_p}")
+    _cli_log(f"Saída:    {saida_p}")
+    _cli_log(f"Modo:     {modo_n}" + (f"  (código SPED: {codigo_sped})" if modo_n == "sped" else ""))
+    _cli_log(f"Ficheiros .xml/.zip encontrados: {len(arquivos)}  →  a copiar para área temporária…")
+
     for i, src in enumerate(arquivos, start=1):
         key = ap._garimpo_nome_chave_upload(i, src.name)
         shutil.copy2(src, os.path.join(ap.TEMP_UPLOADS_DIR, key))
@@ -143,6 +167,10 @@ def run_garimpeiro_local(
     lista_salvos = ap._lista_nomes_fontes_xml_garimpo()
     if not lista_salvos:
         return {"ok": False, "erro": "Lote interno vazio após preparar TEMP."}
+
+    total_ls = len(lista_salvos)
+    _cli_log(f"Cópia concluída. Fila de leitura: {total_ls} ficheiro(s).")
+    _cli_log("")
 
     espelho = saida_p / ap.GARIMPE_SUBDIR_ESPELHO
     try:
@@ -160,7 +188,12 @@ def run_garimpeiro_local(
     lote_dict: dict = {}
     _last_flush_chaves = 0
     _flush_iv_ch = ap._garimpo_flush_interval_chaves_espelho()
-    for f_name in lista_salvos:
+    _flush_incr = ap._garimpo_flush_incremental_durante_leitura_ativo()
+    _flush_min_s = ap._garimpo_flush_min_seg_entre_gravacoes_espelho()
+    _last_flush_mono = 0.0
+    _falhas_leitura = 0
+    for idx_f, f_name in enumerate(lista_salvos, start=1):
+        _cli_log(f"[{idx_f}/{total_ls}] A ler: {f_name}")
         try:
             with ap._abrir_fonte_xml_garimpo_stream(f_name) as file_obj:
                 for name, xml_data in ap.extrair_recursivo(file_obj, f_name):
@@ -177,29 +210,55 @@ def run_garimpeiro_local(
                                 lote_dict[key] = (res, is_p)
                         else:
                             lote_dict[key] = (res, is_p)
-                        if ap._garimpo_escrita_espelho_final_continua_ativa():
+                        if (
+                            _flush_incr
+                            and ap._garimpo_escrita_espelho_final_continua_ativa()
+                        ):
                             _nk = len(lote_dict)
                             if _nk >= _last_flush_chaves + _flush_iv_ch:
-                                ap._garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict(
-                                    lote_dict, cnpj_limpo, up_inut, up_canc
-                                )
-                                _last_flush_chaves = _nk
+                                _now_f = time.perf_counter()
+                                if _flush_min_s <= 0 or (
+                                    _now_f - _last_flush_mono
+                                ) >= _flush_min_s:
+                                    _cli_log(
+                                        f"    … gravar espelho incremental ({_nk} doc. únicos até agora)…"
+                                    )
+                                    ap._garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict_safe(
+                                        lote_dict, cnpj_limpo, up_inut, up_canc
+                                    )
+                                    _last_flush_chaves = _nk
+                                    _last_flush_mono = _now_f
                     del xml_data
-        except Exception:
+        except Exception as ex:
+            _falhas_leitura += 1
+            _cli_log(f"    AVISO: falha ao processar este ficheiro ({ex}). Continua…")
             continue
-        if ap._garimpo_escrita_espelho_final_continua_ativa():
+        _cli_log(
+            f"    → ficheiro concluído — {len(lote_dict)} documento(s) único(s) no acumulado."
+        )
+        if _flush_incr and ap._garimpo_escrita_espelho_final_continua_ativa():
             _nk2 = len(lote_dict)
             if _nk2 > _last_flush_chaves:
-                ap._garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict(
+                _cli_log("    … gravar espelho após este ficheiro…")
+                ap._garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict_safe(
                     lote_dict, cnpj_limpo, up_inut, up_canc
                 )
                 _last_flush_chaves = _nk2
+                _last_flush_mono = time.perf_counter()
+
+    if _falhas_leitura and not _cli_quiet():
+        _cli_log(f"Aviso: {_falhas_leitura} ficheiro(s) com erro (ignorados).")
 
     if not lote_dict:
         return {
             "ok": False,
             "erro": "0 documentos reconhecidos — confirme o CNPJ emitente e os XML.",
         }
+
+    _cli_log("")
+    _cli_log(
+        f"Leitura de XML terminada em {time.perf_counter() - _t_ini:.1f}s — a montar resumo, buracos e tabelas…"
+    )
 
     rel_list = []
     ref_ar, ref_mr, ref_map = ap.buraco_ctx_sessao()
@@ -373,6 +432,7 @@ def run_garimpeiro_local(
             "erro": "Nenhuma chave para exportar o pacote contabilidade (com SPED: cruza vazio?).",
         }
 
+    _cli_log("A gravar pacote contabilidade em Garimpeiro_lote_espelho (pastas + ZIP + Excel)…")
     ap._garimpo_gravar_espelho_layout_contabilidade(cnpj_limpo)
 
     try:
@@ -395,6 +455,8 @@ def run_garimpeiro_local(
     gc.collect()
     avisos = list(st.session_state.get("_garimpo_cli_avisos_planilhas") or [])
     sped_xlsx = st.session_state.get(ap.SPED_FALTANTES_XLSX_PATH_KEY)
+    _cli_log(f"Concluído em {time.perf_counter() - _t_ini:.1f}s no total.")
+    _cli_log("")
     return {
         "ok": True,
         "saida": str(saida_p),
