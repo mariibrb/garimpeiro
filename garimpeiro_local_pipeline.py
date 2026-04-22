@@ -29,6 +29,16 @@ def _cli_log(msg: str) -> None:
     print(msg, flush=True)
 
 
+def _cli_xml_progress_cada() -> int:
+    """Log de progresso a cada N XML lidos (chaves únicas podem subir devagar por duplicados)."""
+    raw = (os.environ.get("GARIMPEIRO_CLI_PROGRESS_XML_CADA") or "8000").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        n = 8000
+    return max(1000, min(n, 250000))
+
+
 def _file_shim(path: Path):
     class _F:
         name = str(path.name)
@@ -172,7 +182,8 @@ def run_garimpeiro_local(
     _cli_log(f"Cópia concluída. Fila de leitura: {total_ls} ficheiro(s).")
     _cli_log("")
 
-    espelho = saida_p / ap.GARIMPE_SUBDIR_ESPELHO
+    _subdir_esp = ap.garimpe_subdir_espelho_nome(com_sped=(modo_n == "sped"))
+    espelho = saida_p / _subdir_esp
     try:
         shutil.rmtree(espelho, ignore_errors=True)
         espelho.mkdir(parents=True, exist_ok=True)
@@ -192,11 +203,19 @@ def run_garimpeiro_local(
     _flush_min_s = ap._garimpo_flush_min_seg_entre_gravacoes_espelho()
     _last_flush_mono = 0.0
     _falhas_leitura = 0
+    _prog_xml_iv = _cli_xml_progress_cada()
     for idx_f, f_name in enumerate(lista_salvos, start=1):
         _cli_log(f"[{idx_f}/{total_ls}] A ler: {f_name}")
         try:
+            _xml_lidos_ficheiro = 0
             with ap._abrir_fonte_xml_garimpo_stream(f_name) as file_obj:
                 for name, xml_data in ap.extrair_recursivo(file_obj, f_name):
+                    _xml_lidos_ficheiro += 1
+                    if _xml_lidos_ficheiro % _prog_xml_iv == 0:
+                        _cli_log(
+                            f"    … {_xml_lidos_ficheiro} XML processados neste ficheiro · "
+                            f"{len(lote_dict)} chaves únicas no acumulado…"
+                        )
                     res, is_p = ap.identify_xml_info(xml_data, cnpj_limpo, name)
                     if res:
                         key = res["Chave"]
@@ -223,8 +242,12 @@ def run_garimpeiro_local(
                                     _cli_log(
                                         f"    … gravar espelho incremental ({_nk} doc. únicos até agora)…"
                                     )
+                                    _t_fl = time.perf_counter()
                                     ap._garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict_safe(
                                         lote_dict, cnpj_limpo, up_inut, up_canc
+                                    )
+                                    _cli_log(
+                                        f"    … espelho incremental gravado em {time.perf_counter() - _t_fl:.1f}s"
                                     )
                                     _last_flush_chaves = _nk
                                     _last_flush_mono = _now_f
@@ -236,13 +259,16 @@ def run_garimpeiro_local(
         _cli_log(
             f"    → ficheiro concluído — {len(lote_dict)} documento(s) único(s) no acumulado."
         )
-        if _flush_incr and ap._garimpo_escrita_espelho_final_continua_ativa():
+        # Com flush incremental=0 ainda gravamos ao fim de cada ZIP/XML de topo (recuperação + visível na rede).
+        if ap._garimpo_escrita_espelho_final_continua_ativa():
             _nk2 = len(lote_dict)
             if _nk2 > _last_flush_chaves:
                 _cli_log("    … gravar espelho após este ficheiro…")
+                _t_fl = time.perf_counter()
                 ap._garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict_safe(
                     lote_dict, cnpj_limpo, up_inut, up_canc
                 )
+                _cli_log(f"    … espelho gravado em {time.perf_counter() - _t_fl:.1f}s")
                 _last_flush_chaves = _nk2
                 _last_flush_mono = time.perf_counter()
 
@@ -432,7 +458,9 @@ def run_garimpeiro_local(
             "erro": "Nenhuma chave para exportar o pacote contabilidade (com SPED: cruza vazio?).",
         }
 
-    _cli_log("A gravar pacote contabilidade em Garimpeiro_lote_espelho (pastas + ZIP + Excel)…")
+    _cli_log(
+        f"A gravar pacote contabilidade em {espelho.name}/ dentro da saída (pastas + ZIP + Excel)…"
+    )
     ap._garimpo_gravar_espelho_layout_contabilidade(cnpj_limpo)
 
     try:

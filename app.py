@@ -769,7 +769,16 @@ SESSION_KEY_EXTRA_DIGESTS = "_garimpo_extra_sha256_vistos"
 SESSION_KEY_GARIMPO_LOTE_SAVE_DIR = "garimpo_lote_save_dir"
 # Pasta no **servidor** (Streamlit) com XML/ZIP — leitura recursiva sem upload pelo browser (híbrido / PC).
 SESSION_KEY_GARIMPO_LOTE_FONTE_DIR = "garimpo_lote_fonte_dir"
-GARIMPE_SUBDIR_ESPELHO = "Garimpeiro_lote_espelho"
+
+
+def garimpe_subdir_espelho_nome(*, com_sped: bool) -> str:
+    """Subpasta sob a pasta de destino: conforme SPED (.txt) no início do garimpo."""
+    return "Garimpeiro_Local_Com_SPED" if com_sped else "Garimpeiro_Local_Sem_SPED"
+
+
+# Durante um único .zip enorme o ciclo interno demora muito; sem refrescos o rodapé fica em «0s» e a barra em 50% (1/2 ficheiros).
+# Intervalo alto o bastante para não sobrecarregar o Streamlit com milhares de deltas ao browser.
+_GARIM_GRANDE_GARIMPO_REFRESH_XML_A_CADA = 1200
 
 
 def _session_state_get_garimpo(key, default=None):
@@ -1064,7 +1073,7 @@ def _v2_destino_zip_etapa3_para_gravar():
 
 def _garimpo_destino_copia_lote_opcional():
     """
-    Pasta opcional para gravar o espelho do lote em Garimpeiro_lote_espelho/ (mesmo layout que o pacote contabilidade,
+    Pasta opcional para gravar o espelho do lote em Garimpeiro_Local_Com_SPED ou Garimpeiro_Local_Sem_SPED/ (mesmo layout que o pacote contabilidade,
     após concluir a leitura e montar o relatório). Com SPED na sessão, exporta só o cruzamento C100/D100.
     Usa **mariana_zip_save_dir** (1.º passo) ou **garimpo_lote_save_dir** (legado).
     Em branco → (None, None). Caminho inválido → (None, mensagem).
@@ -1191,7 +1200,7 @@ def _garimpo_exportar_zips_pacote_contab_pasta_base(
     df_geral: pd.DataFrame,
 ) -> None:
     """
-    Gera os .zip do padrão contabilidade **dentro** de `Garimpeiro_lote_espelho` (ao lado das pastas abertas),
+    Gera os .zip do padrão contabilidade **dentro** da subpasta do espelho (`Garimpeiro_Local_…`, ao lado das pastas abertas),
     para o utilizador encontrar tudo no mesmo sítio (híbrido / rede).
     """
     try:
@@ -1246,9 +1255,9 @@ def _garimpo_gravar_excel_todo_o_lote_lido_sped(
 
 def _garimpo_gravar_espelho_layout_contabilidade(cnpj_limpo: str) -> None:
     """
-    Após o df_geral estar na sessão: grava em Garimpeiro_lote_espelho o mesmo layout que o pacote contabilidade
+    Após o df_geral estar na sessão: grava na subpasta do espelho (Garimpeiro_Local_…) o mesmo layout que o pacote contabilidade
     (pastas por grupo + XML/Lote_NNN + Excel por pasta + Excel completo na raiz).
-    Gera também os .zip do pacote **dentro** de Garimpeiro_lote_espelho (junto das pastas).
+    Gera também os .zip do pacote **dentro** dessa subpasta (junto das pastas).
     Com SPED: pastas/ZIP seguem só chaves C100/D100; grava-se também `…_relatorio_garimpeiro_todo_o_lote_lido.xlsx`
     com **todo** o lido na sessão (inclui terceiros que o SPED não cruze).
     """
@@ -1315,7 +1324,7 @@ def _garimpo_gravar_espelho_layout_contabilidade(cnpj_limpo: str) -> None:
 
 def _garimpo_resync_espelho_completo(cnpj_limpo: str) -> tuple[bool, str]:
     """
-    Regrava o espelho no disco com o mesmo layout do pacote contabilidade (pastas + ZIPs em Garimpeiro_lote_espelho/),
+    Regrava o espelho no disco com o mesmo layout do pacote contabilidade (pastas + ZIPs na subpasta Garimpeiro_Local_…),
     alinhado ao relatório atual após reprocessar (inclui Excel extra «todo o lote lido» quando há SPED).
     """
     root_s = st.session_state.get("garimpo_lote_espelho_root")
@@ -1620,11 +1629,9 @@ def _v2_export_pacote_contab_por_dimensoes(
 
     def _ensure_zip(slug: str):
         if slug not in zips_abertos:
-            lo_hi = slug_ranges.get(slug)
-            suf = ""
-            if lo_hi and lo_hi[0] is not None and lo_hi[1] is not None:
-                suf = f"_notas_{int(lo_hi[0])}_{int(lo_hi[1])}"
-            combo = _v2_sanitize_nome_export(f"{stem_org}__{slug}{suf}", max_len=200) or "pacote"
+            combo = _combo_nome_pacote_contab(
+                stem_org, slug, slug_ranges, incluir_sufixo_notas=True
+            )
             path = out_dir / f"{combo}.zip"
             zf = _zipfile_open_write_export(path)
             zips_abertos[slug] = zf
@@ -1748,7 +1755,7 @@ def _v2_export_pacote_contab_em_pasta(
     """
     Igual a _v2_export_pacote_contab_por_dimensoes, mas grava em disco pastas com o mesmo conteúdo
     que cada .zip descompactado (relatorio_garimpeiro_<grupo>.xlsx + XML/Lote_NNN/…).
-    O nome de cada pasta = nome do .zip sem extensão (<nome_base>__<grupo><_notas_…>).
+    O nome de cada pasta é `<nome_base>__<grupo>` (sem sufixo `_notas_…`, ao contrário do .zip exportado).
     Devolve (paths pastas, [], matched, aviso, caminho_excel_solta|None, indice_td_paths).
     indice_td_paths: td_serial -> {"path": rel, "slug": str}.
     """
@@ -1776,11 +1783,11 @@ def _v2_export_pacote_contab_em_pasta(
 
     def _ensure_pasta(slug: str):
         if slug not in pastas_abertos:
-            lo_hi = slug_ranges.get(slug)
-            suf = ""
-            if lo_hi and lo_hi[0] is not None and lo_hi[1] is not None:
-                suf = f"_notas_{int(lo_hi[0])}_{int(lo_hi[1])}"
-            combo = _v2_sanitize_nome_export(f"{stem_org}__{slug}{suf}", max_len=200) or "pacote"
+            # Sem sufixo _notas_min_max: com flush incremental o intervalo mudava e criava pastas duplicadas
+            # (ex.: várias «Canceladas» mesma série/mês com _notas_1_100 vs _notas_1_500).
+            combo = _combo_nome_pacote_contab(
+                stem_org, slug, slug_ranges, incluir_sufixo_notas=False
+            )
             path_dir = out_dir / combo
             path_dir.mkdir(parents=True, exist_ok=True)
             pastas_abertos[slug] = path_dir
@@ -1886,11 +1893,23 @@ def _v2_export_pacote_contab_em_pasta(
     return _paths_list, [], xml_matched, aviso, excel_solta_path, indice_td
 
 
-def _combo_nome_pacote_contab(stem_org: str, slug: str, slug_ranges: dict) -> str:
-    lo_hi = slug_ranges.get(slug)
+def _combo_nome_pacote_contab(
+    stem_org: str,
+    slug: str,
+    slug_ranges: dict,
+    *,
+    incluir_sufixo_notas: bool = True,
+) -> str:
+    """
+    Nome da pasta ZIP ou do diretório sob a subpasta do espelho (`stem__Emitidas_…`).
+    O sufixo `_notas_min_max` distingue ZIPs extraídos para a mesma pasta; no **espelho em disco**
+    fica desligado (`incluir_sufixo_notas=False`) para um único diretório por grupo (série×status×mês).
+    """
     suf = ""
-    if lo_hi and lo_hi[0] is not None and lo_hi[1] is not None:
-        suf = f"_notas_{int(lo_hi[0])}_{int(lo_hi[1])}"
+    if incluir_sufixo_notas:
+        lo_hi = slug_ranges.get(slug)
+        if lo_hi and lo_hi[0] is not None and lo_hi[1] is not None:
+            suf = f"_notas_{int(lo_hi[0])}_{int(lo_hi[1])}"
     return _v2_sanitize_nome_export(f"{stem_org}__{slug}{suf}", max_len=200) or "pacote"
 
 
@@ -1995,7 +2014,9 @@ def _espelho_regravar_excels_pacote_em_pasta(
         else:
             slugs.add(str(v))
     for slug in sorted(slugs):
-        combo = _combo_nome_pacote_contab(stem_org, slug, slug_ranges)
+        combo = _combo_nome_pacote_contab(
+            stem_org, slug, slug_ranges, incluir_sufixo_notas=False
+        )
         folder = out_dir / combo
         if not folder.is_dir():
             continue
@@ -2082,7 +2103,9 @@ def _v2_export_pacote_contab_em_pasta_delta(
         if not meta:
             continue
         slug = meta["slug"]
-        combo = _combo_nome_pacote_contab(stem_org, slug, slug_ranges)
+        combo = _combo_nome_pacote_contab(
+            stem_org, slug, slug_ranges, incluir_sufixo_notas=False
+        )
         folder = out_dir / combo
         try:
             folder.mkdir(parents=True, exist_ok=True)
@@ -2268,26 +2291,52 @@ def _xml_tp_evento_codigo(tag_l: str, codigo: str) -> bool:
     Detecta tpEvento com o código SEFAZ (ex.: 110111 cancelamento, 110110 CCe).
     `tag_l` está em minúsculas (tpevento, não tpEvento). Evita falso positivo quando
     o mesmo dígito aparece na chave de 44 posições ou noutros campos numéricos.
+    Aceita XML formatado (espaços/newlines entre tags e o código).
     """
     if len(codigo) != 6 or not codigo.isdigit():
         return False
-    return bool(re.search(rf"[\w:]*tpevento>{codigo}</", tag_l))
+    return bool(re.search(rf"[\w:]*tpevento>\s*{codigo}\s*</", tag_l))
 
 
 def _xml_cancelamento_por_evento_ou_retorno(tag_l: str) -> bool:
     """Cancelamento homologado: evento 110111 ou retorno de evento com cStat 101 em contexto de evento."""
     if _xml_tp_evento_codigo(tag_l, "110111"):
         return True
-    if "<cstat>101</cstat>" not in tag_l:
+    if not re.search(r"<cstat>\s*101\s*</cstat>", tag_l):
         return False
     # cStat 101 isolado pode aparecer noutros retornos; restringe a XML de evento/cancelamento.
     return bool(
         re.search(
             r"proceventonfe|proceventocte|proceventomdfe|retenvevento|infevento|"
-            r"descevento>cancelamento",
+            r"descevento>\s*cancelamento",
             tag_l,
         )
     )
+
+
+def _emit_cnpj_bloco_principal_fiscal(tag_l: str, tipo: str) -> str:
+    """
+    CNPJ do emitente **dentro** do infNFe / infCte / infMDFe do documento.
+    O regex global `<emit>…<cnpj>` apanha por vezes o primeiro `<emit>` de **evento**, **retorno**
+    ou outro anexo antes do documento — CT-e/NF-e de terceiros acabavam como «emissão própria».
+    """
+    if tipo in ("CT-e", "CT-e OS"):
+        open_pat = r"<(?:\w+:)?infcte\b[^>]*>"
+    elif tipo == "MDF-e":
+        open_pat = r"<(?:\w+:)?infmdfe\b[^>]*>"
+    elif tipo in ("NF-e", "NFC-e"):
+        open_pat = r"<(?:\w+:)?infnfe\b[^>]*>"
+    else:
+        return ""
+    m = re.search(open_pat, tag_l, re.I)
+    if not m:
+        return ""
+    chunk = tag_l[m.start() : m.start() + 600000]
+    em = re.search(
+        r"(?:<\w+:emit\b|<emit\b)[^>]*>[\s\S]{0,12000}?(?:<\w+:cnpj>|<cnpj>)(\d{11,14})</(?:\w+:cnpj|cnpj)>",
+        chunk,
+    )
+    return em.group(1) if em else ""
 
 
 def identify_xml_info(content_bytes, client_cnpj, file_name):
@@ -2509,6 +2558,9 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
                 
             resumo["Tipo"] = tipo
             resumo["Status"] = status
+            _emit_bloco = _emit_cnpj_bloco_principal_fiscal(tag_l, tipo)
+            if _emit_bloco:
+                resumo["CNPJ_Emit"] = _emit_bloco
             # Carta de correção (evento 110110): não entra no lote nem no dashboard/PDF.
             if status == "CARTA_CORRECAO":
                 return None, False
@@ -2534,7 +2586,8 @@ def identify_xml_info(content_bytes, client_cnpj, file_name):
         if resumo["Ano"] == "0000": 
             resumo["Ano"] = "2000"
 
-        is_p = (resumo["CNPJ_Emit"] == client_cnpj_clean)
+        _emit_cmp = "".join(c for c in str(resumo["CNPJ_Emit"] or "") if c.isdigit())[:14]
+        is_p = bool(client_cnpj_clean) and len(client_cnpj_clean) == 14 and _emit_cmp == client_cnpj_clean
         
         if is_p:
             resumo["Pasta"] = f"EMITIDOS_CLIENTE/{resumo['Operacao']}/{resumo['Tipo']}/{resumo['Status']}/{resumo['Ano']}/{resumo['Mes']}/Serie_{resumo['Série']}"
@@ -5602,7 +5655,7 @@ def _garim_footer_elapsed_txt(t_start):
         return "—"
     e = time.perf_counter() - float(t_start)
     if e < 60:
-        return f"{e:.0f}s"
+        return f"{e:.1f}s" if e < 12 else f"{e:.0f}s"
     if e < 3600:
         m = int(e // 60)
         s = int(e % 60)
@@ -5685,7 +5738,21 @@ def reprocessar_garimpeiro_a_partir_do_disco(cnpj_limpo: str, footer_ph=None, t_
         try:
             with _abrir_fonte_xml_garimpo_stream(f_name) as file_obj:
                 todos_xmls = extrair_recursivo(file_obj, f_name)
+                _inner_xml_n = 0
                 for name, xml_data in todos_xmls:
+                    _inner_xml_n += 1
+                    if (
+                        _inner_xml_n % _GARIM_GRANDE_GARIMPO_REFRESH_XML_A_CADA
+                        == 0
+                    ):
+                        _garim_footer_render(
+                            footer_ph,
+                            i + 1,
+                            total_n,
+                            f_name,
+                            f"A reler… {_inner_xml_n} XML neste ZIP · {len(lote_dict)} chaves",
+                            t_start,
+                        )
                     res, is_p = identify_xml_info(xml_data, cnpj, name)
                     if res:
                         key = res["Chave"]
@@ -7880,6 +7947,24 @@ def _sped_resolver_texto_de_uploader(upload_widget) -> str:
     return str(st.session_state.get(SPED_SESSION_TEXT_KEY) or "").strip()
 
 
+def _garimpo_tem_sped_no_inicio_grand_garimpo() -> bool:
+    """SPED no 1.º passo: texto já na sessão ou ficheiro anexado no widget antes de «Iniciar grande garimpo»."""
+    if str(st.session_state.get(SPED_SESSION_TEXT_KEY) or "").strip():
+        return True
+    w = st.session_state.get("sped_sessao_upload_ini")
+    if w is None:
+        return False
+    try:
+        raw = w.read()
+        try:
+            w.seek(0)
+        except Exception:
+            pass
+        return bool(_decode_sped_upload_bytes(raw).strip()) if raw else False
+    except Exception:
+        return False
+
+
 def _garimpo_escrita_espelho_final_continua_ativa() -> bool:
     """
     PC local ou servidor próprio com pasta de destino (híbrido): durante o grande garimpo o disco
@@ -7902,12 +7987,13 @@ def _garimpo_flush_interval_chaves_espelho() -> int:
 
 def _garimpo_flush_incremental_durante_leitura_ativo() -> bool:
     """
-    Flushes a meio da leitura (espelho + ZIP) — pesado; pode desligar com GARIMPEIRO_ESPELHO_FLUSH_INCREMENTAL=0
-    (mantém só a gravação no fim do garimpo).
+    Flushes **a meio** de cada ZIP (espelho + ZIP a cada N chaves) — pesado em rede.
+    Por omissão fica **desligado** (ler o lote e gravar o espelho ao fim de cada ficheiro ZIP/XML de topo
+    e de novo ao concluir o relatório). Para reativar: `GARIMPEIRO_ESPELHO_FLUSH_INCREMENTAL=1`.
     """
     if not _garimpo_escrita_espelho_final_continua_ativa():
         return False
-    v = (os.environ.get("GARIMPEIRO_ESPELHO_FLUSH_INCREMENTAL") or "1").strip().lower()
+    v = (os.environ.get("GARIMPEIRO_ESPELHO_FLUSH_INCREMENTAL") or "0").strip().lower()
     return v not in ("0", "false", "no", "off")
 
 
@@ -7944,7 +8030,7 @@ def _garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict(
     lote_dict: dict, cnpj_limpo: str, up_inut, up_canc
 ) -> None:
     """
-    Atualiza `relatorio` + dataframes como no fim do garimpo e regrava `Garimpeiro_lote_espelho/` (pastas + ZIP + Excel).
+    Atualiza `relatorio` + dataframes como no fim do garimpo e regrava a subpasta do espelho (pastas + ZIP + Excel).
     Usado durante a leitura em modo local/híbrido com pasta de destino.
     """
     if not lote_dict:
@@ -8840,13 +8926,13 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
         _zip_err_ui = st.session_state.pop("_garimpo_export_zip_erro", None)
         if _zip_err_ui:
             st.warning(
-                "Não foi possível gerar todos os ZIPs do pacote na pasta **Garimpeiro_lote_espelho**: "
+                "Não foi possível gerar todos os ZIPs do pacote na pasta do espelho (**Garimpeiro_Local_…**): "
                 + str(_zip_err_ui)
             )
         _esp_flush_err = st.session_state.pop("_garimpo_espelho_flush_erro", None)
         if _esp_flush_err:
             st.warning(
-                "Durante a leitura, uma ou mais gravações incrementais na pasta **Garimpeiro_lote_espelho** falharam "
+                "Durante a leitura, uma ou mais gravações incrementais na pasta do espelho (**Garimpeiro_Local_…**) falharam "
                 "(o relatório no ecrã segue completo). Detalhe:\n\n"
                 + str(_esp_flush_err)
             )
@@ -10470,9 +10556,9 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
                 )
                 st.caption(
                     "Cole **aqui** o caminho da pasta **antes** de **Iniciar grande garimpo** — em **PC local ou servidor próprio** (não Community Cloud), "
-                    "com esta pasta preenchida, o disco é atualizado **durante a leitura** para o mesmo resultado «final» (pastas, **XML/Lote_NNN**, Excel, **.zip** "
-                    "em **Garimpeiro_lote_espelho**). **Se anexar SPED (.txt) abaixo**, pastas/ZIPs seguem o cruzamento **C100/D100**; nesse caso grava-se também "
-                    "**…_relatorio_garimpeiro_todo_o_lote_lido.xlsx** com **tudo** o lido. Depois de acrescentar XML ou alterar estados, use **Atualizar dados e sincronizar pasta XML**. "
+                    "com esta pasta preenchida, o espelho grava-se **ao fim de cada** ZIP/XML de topo e ao **terminar** o relatório (pastas, **XML/Lote_NNN**, Excel, **.zip** "
+                    "em **Garimpeiro_Local_Com_SPED** ou **Garimpeiro_Local_Sem_SPED** conforme anexar ou não o SPED neste passo). Opcional: `GARIMPEIRO_ESPELHO_FLUSH_INCREMENTAL=1` para gravar também **a meio** de ZIPs muito grandes. **Se anexar SPED (.txt) abaixo**, pastas/ZIPs seguem o cruzamento **C100/D100**; nesse caso grava-se também "
+                    "**…_relatorio_garimpeiro_todo_o_lote_lido.xlsx** com **tudo** o lido. Depois de **Incluir mais XML**, alterar estados ou planilhas, use **Atualizar arquivos salvos na pasta** (relê o lote e sincroniza o espelho). "
                     "No **Windows local** use `C:\\…` ou `D:\\…`. Em **servidor Linux** (não Cloud), use o caminho desse sistema. "
                     "O mesmo campo serve para **Gerar arquivo contabilidade**. Vazio = só ecrã."
                 )
@@ -10480,7 +10566,7 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
                     "Pasta de destino — leitura + pacote contabilidade (caminho completo)",
                     key="mariana_zip_save_dir",
                     placeholder="Ex.: D:\\Contabilidade\\Apuracao — ou vazio para não gravar no disco",
-                    help="Shift+clique direito na pasta no Explorador → Copiar como caminho. Pasta base: espelho em Garimpeiro_lote_espelho/, Excel e ZIPs do pacote também lá dentro.",
+                    help="Shift+clique direito na pasta no Explorador → Copiar como caminho. Dentro dela: subpasta Garimpeiro_Local_Com_SPED ou Garimpeiro_Local_Sem_SPED (conforme SPED .txt neste passo), Excel e ZIPs do pacote.",
                 )
                 st.text_input(
                     "Prefixo opcional dos nomes dos ZIP (sem .zip)",
@@ -10527,7 +10613,10 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
                         st.stop()
                     if _esp_base is not None:
                         try:
-                            _root = _esp_base / GARIMPE_SUBDIR_ESPELHO
+                            _sub_esp = garimpe_subdir_espelho_nome(
+                                com_sped=_garimpo_tem_sped_no_inicio_grand_garimpo()
+                            )
+                            _root = _esp_base / _sub_esp
                             shutil.rmtree(_root, ignore_errors=True)
                             _root.mkdir(parents=True, exist_ok=True)
                             st.session_state["garimpo_lote_espelho_root"] = str(_root)
@@ -10654,7 +10743,31 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
                             try:
                                 with _abrir_fonte_xml_garimpo_stream(f_name) as file_obj:
                                     todos_xmls = extrair_recursivo(file_obj, f_name)
+                                    _inner_xml_n = 0
                                     for name, xml_data in todos_xmls:
+                                        _inner_xml_n += 1
+                                        if (
+                                            _inner_xml_n % _GARIM_GRANDE_GARIMPO_REFRESH_XML_A_CADA
+                                            == 0
+                                        ):
+                                            _nk_live = len(lote_dict)
+                                            _fn_short = (
+                                                (f_name[:72] + "…")
+                                                if len(str(f_name)) > 75
+                                                else str(f_name)
+                                            )
+                                            status_text.text(
+                                                f"\u26cf\ufe0f {_fn_short} — {_inner_xml_n} XML extraídos "
+                                                f"deste ficheiro · {_nk_live} doc. únicos no acumulado"
+                                            )
+                                            _garim_footer_render(
+                                                footer_bar,
+                                                i + 1,
+                                                total_salvos,
+                                                f_name,
+                                                f"A extrair XML… {_inner_xml_n} neste ZIP · {_nk_live} chaves",
+                                                _t_garim,
+                                            )
                                         res, is_p = identify_xml_info(xml_data, cnpj_limpo, name)
                                         if res:
                                             key = res["Chave"]
@@ -10689,10 +10802,9 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
                                         del xml_data 
                             except Exception as e: 
                                 continue
-                            if (
-                                _flush_incr
-                                and _garimpo_escrita_espelho_final_continua_ativa()
-                            ):
+                            # Com flush incremental=0 não gravamos a meio do ZIP; gravamos aqui após cada ficheiro de topo.
+                            # Com incremental=1 já gravámos no loop; se entraram chaves novas desde o último flush, gravamos outra vez.
+                            if _garimpo_escrita_espelho_final_continua_ativa():
                                 _nk2 = len(lote_dict)
                                 if _nk2 > _last_flush_chaves:
                                     _garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict_safe(
@@ -10932,9 +11044,9 @@ if (__name__ == "__main__") and (not os.environ.get("GARIMPEIRO_HEADLESS")):
 
             if st.session_state.get("garimpo_lote_save_resolved") and not _streamlit_likely_community_cloud():
                 if st.button(
-                    "Atualizar dados e sincronizar pasta XML",
+                    "Atualizar arquivos salvos na pasta",
                     key="btn_garim_resync_espelho",
-                    help="Só em execução com disco (PC local ou híbrido): relê o lote, recalcula tabelas (mantém registos manuais sem XML) e atualiza Garimpeiro_lote_espelho (pastas, Excel, ZIPs) quando o relatório mudou.",
+                    help="Só com pasta de destino definida no 1.º passo: relê todos os XML/ZIP do lote (incl. «Incluir mais»), recalcula tabelas — mantém inutilizadas/canceladas manuais sem XML — e regrava a subpasta do espelho (Garimpeiro_Local_…) já usada neste trabalho.",
                 ):
                     footer_sync = st.empty()
                     t0 = time.perf_counter()

@@ -82,7 +82,7 @@ Dentro de cada ZIP de grupo, os Excels seguem o padrão `relatorio_garimpeiro_<g
 
 - Pastas abertas com XML organizados por grupo (critério atual do Garimpeiro).
 - Ficheiros `.zip` correspondentes (incl. partes `pt1`, `pt2`, … quando o lote é grande).
-- Estrutura espelhada na subpasta típica `Garimpeiro_lote_espelho` (ou equivalente definido no CLI), **dentro da pasta de saída** do trabalho.
+- Estrutura espelhada na subpasta **`Garimpeiro_Local_Com_SPED`** ou **`Garimpeiro_Local_Sem_SPED`** (CLI: com SPED se `--modo sped`; app: conforme anexo SPED no 1.º passo), **dentro da pasta de saída** do trabalho.
 
 ### 4.3 SPED — o que foi lido / o que faltou
 
@@ -134,7 +134,7 @@ Variável de ambiente interna: `GARIMPEIRO_HEADLESS=1` (definida pelo script) pa
 | Parâmetro | Obrigatório | Descrição |
 |-----------|-------------|-----------|
 | `--entrada` | sim | Pasta raiz do lote (varredura recursiva de `.xml` e `.zip`). |
-| `--saida` | sim | Pasta onde gravar `relatorio_garimpeiro_completo.xlsx`, `canceladas.xlsx` / `inutilizadas.xlsx` se houver dados, o Excel de SPED faltantes (modo SPED), e a árvore `Garimpeiro_lote_espelho` + ZIPs na pasta de saída. |
+| `--saida` | sim | Pasta onde gravar `relatorio_garimpeiro_completo.xlsx`, `canceladas.xlsx` / `inutilizadas.xlsx` se houver dados, o Excel de SPED faltantes (modo SPED), e a árvore `Garimpeiro_Local_Com_SPED` ou `Garimpeiro_Local_Sem_SPED` + ZIPs na pasta de saída. |
 | `--cnpj` | sim | CNPJ do emitente (14 dígitos). |
 | `--modo` | não | `pasta` (omissão) ou `sped`. |
 | `--codigo` | com `--modo sped` | Sufixo do ficheiro `SPED_<codigo>.txt` (ex.: `578`). |
