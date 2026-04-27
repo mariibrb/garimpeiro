@@ -3,6 +3,7 @@
 Garimpeiro local — linha de comandos (sem servidor Streamlit).
 Uso: py -3 garimpeiro_cli.py --entrada "D:\\lote" --saida "D:\\out" --cnpj 12345678000199 --modo pasta
      py -3 garimpeiro_cli.py --entrada "D:\\lote" --saida "D:\\out" --cnpj ... --modo sped --codigo 578
+     py -3 garimpeiro_cli.py --entrada "D:\\lote" ... --extracao dominio
 """
 from __future__ import annotations
 
@@ -132,6 +133,12 @@ def main() -> int:
         help="Nome base dos ZIPs do pacote (omissão: pacote_apuracao).",
     )
     p.add_argument(
+        "--extracao",
+        choices=("matriosca", "dominio"),
+        default="matriosca",
+        help="matriosca=omissão; dominio=ZIP pacote contab: XML+Excel na raiz, até 10000 XML/ficheiro, nome com _notas_min_max da faixa dentro do zip; relatório completo solto na saída.",
+    )
+    p.add_argument(
         "--quiet",
         action="store_true",
         help="Sem mensagens de progresso na consola (só erros no stderr e resumo final).",
@@ -155,6 +162,7 @@ def main() -> int:
         modo=args.modo,
         codigo_sped=args.codigo.strip() or None,
         stem_zip=args.stem.strip() or None,
+        extracao=args.extracao,
     )
     if not r.get("ok"):
         print("ERRO:", r.get("erro", "desconhecido"), file=sys.stderr)

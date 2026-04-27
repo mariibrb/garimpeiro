@@ -85,6 +85,7 @@ def run_garimpeiro_local(
     modo: str,
     codigo_sped: str | None,
     stem_zip: str | None,
+    extracao: str | None = None,
 ) -> dict:
     import app as ap
 
@@ -101,6 +102,9 @@ def run_garimpeiro_local(
     modo_n = (modo or "pasta").strip().lower()
     if modo_n not in ("pasta", "sped"):
         return {"ok": False, "erro": "modo deve ser 'pasta' ou 'sped'."}
+    extr_n = (extracao or "matriosca").strip().lower()
+    if extr_n not in ("matriosca", "dominio"):
+        return {"ok": False, "erro": "extracao deve ser 'matriosca' ou 'dominio'."}
 
     skip_paths: set[Path] = set()
     texto_sped = ""
@@ -161,14 +165,17 @@ def run_garimpeiro_local(
     arquivos = _iter_xml_zip(entrada_p, skip_paths)
     if not arquivos:
         return {"ok": False, "erro": "Nenhum .xml ou .zip na pasta de entrada (recursivo)."}
-
     _t_ini = time.perf_counter()
     _cli_log("")
     _cli_log("=== Garimpeiro LOCAL (CLI) ===")
     _cli_log(f"Entrada:  {entrada_p}")
     _cli_log(f"Saída:    {saida_p}")
-    _cli_log(f"Modo:     {modo_n}" + (f"  (código SPED: {codigo_sped})" if modo_n == "sped" else ""))
-    _cli_log(f"Ficheiros .xml/.zip encontrados: {len(arquivos)}  →  a copiar para área temporária…")
+    _cli_log(
+        f"Modo:     {modo_n}"
+        + (f"  (código SPED: {codigo_sped})" if modo_n == "sped" else "")
+        + f"  |  extração: {extr_n}"
+    )
+    _cli_log(f"Ficheiros .xml/.zip encontrados na entrada: {len(arquivos)}  →  a copiar para área temporária…")
 
     for i, src in enumerate(arquivos, start=1):
         key = ap._garimpo_nome_chave_upload(i, src.name)
@@ -195,21 +202,21 @@ def run_garimpeiro_local(
     st.session_state["mariana_zip_basename"] = u_stem if u_stem else "pacote_apuracao"
     st.session_state["cnpj_widget"] = ap.format_cnpj_visual(cnpj_limpo)
     st.session_state.pop("garimpo_espelho_indice_td", None)
+    st.session_state[ap.SESSION_KEY_GARIMPO_EXTRACAO_LOTE] = extr_n
 
     lote_dict: dict = {}
-    _last_flush_chaves = 0
-    _flush_iv_ch = ap._garimpo_flush_interval_chaves_espelho()
-    _flush_incr = ap._garimpo_flush_incremental_durante_leitura_ativo()
-    _flush_min_s = ap._garimpo_flush_min_seg_entre_gravacoes_espelho()
-    _last_flush_mono = 0.0
     _falhas_leitura = 0
     _prog_xml_iv = _cli_xml_progress_cada()
+    if ap._garimpo_escrita_espelho_final_continua_ativa():
+        _cli_log(
+            "Espelho em disco: gravação **apenas** após ler todo o lote e montar as tabelas (nada durante a leitura)."
+        )
     for idx_f, f_name in enumerate(lista_salvos, start=1):
         _cli_log(f"[{idx_f}/{total_ls}] A ler: {f_name}")
         try:
             _xml_lidos_ficheiro = 0
             with ap._abrir_fonte_xml_garimpo_stream(f_name) as file_obj:
-                for name, xml_data in ap.extrair_recursivo(file_obj, f_name):
+                for name, xml_data in ap.extrair_fonte_xml_garimpo(file_obj, f_name):
                     _xml_lidos_ficheiro += 1
                     if _xml_lidos_ficheiro % _prog_xml_iv == 0:
                         _cli_log(
@@ -229,28 +236,6 @@ def run_garimpeiro_local(
                                 lote_dict[key] = (res, is_p)
                         else:
                             lote_dict[key] = (res, is_p)
-                        if (
-                            _flush_incr
-                            and ap._garimpo_escrita_espelho_final_continua_ativa()
-                        ):
-                            _nk = len(lote_dict)
-                            if _nk >= _last_flush_chaves + _flush_iv_ch:
-                                _now_f = time.perf_counter()
-                                if _flush_min_s <= 0 or (
-                                    _now_f - _last_flush_mono
-                                ) >= _flush_min_s:
-                                    _cli_log(
-                                        f"    … gravar espelho incremental ({_nk} doc. únicos até agora)…"
-                                    )
-                                    _t_fl = time.perf_counter()
-                                    ap._garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict_safe(
-                                        lote_dict, cnpj_limpo, up_inut, up_canc
-                                    )
-                                    _cli_log(
-                                        f"    … espelho incremental gravado em {time.perf_counter() - _t_fl:.1f}s"
-                                    )
-                                    _last_flush_chaves = _nk
-                                    _last_flush_mono = _now_f
                     del xml_data
         except Exception as ex:
             _falhas_leitura += 1
@@ -259,18 +244,6 @@ def run_garimpeiro_local(
         _cli_log(
             f"    → ficheiro concluído — {len(lote_dict)} documento(s) único(s) no acumulado."
         )
-        # Com flush incremental=0 ainda gravamos ao fim de cada ZIP/XML de topo (recuperação + visível na rede).
-        if ap._garimpo_escrita_espelho_final_continua_ativa():
-            _nk2 = len(lote_dict)
-            if _nk2 > _last_flush_chaves:
-                _cli_log("    … gravar espelho após este ficheiro…")
-                _t_fl = time.perf_counter()
-                ap._garimpo_flush_relatorio_dfs_e_espelho_de_lote_dict_safe(
-                    lote_dict, cnpj_limpo, up_inut, up_canc
-                )
-                _cli_log(f"    … espelho gravado em {time.perf_counter() - _t_fl:.1f}s")
-                _last_flush_chaves = _nk2
-                _last_flush_mono = time.perf_counter()
 
     if _falhas_leitura and not _cli_quiet():
         _cli_log(f"Aviso: {_falhas_leitura} ficheiro(s) com erro (ignorados).")
